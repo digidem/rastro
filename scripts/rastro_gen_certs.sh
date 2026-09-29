@@ -6,7 +6,8 @@
 #   deploy/mosquitto/certs/server.{crt,key}
 # Validade: CA 3650 dias; servidor 825 dias.
 # SAN: localhost, 127.0.0.1, hostname curto e FQDN, e "mosquitto" (nome do serviço compose —
-# o ingester conecta por esse hostname com verificação ON; sem ele cairíamos em TLS_INSECURE).
+# o ingester conecta por esse hostname com verificação de certificado SEMPRE LIGADA —
+# não há como desligá-la, o SAN precisa bater).
 # Uso: scripts/rastro_gen_certs.sh [--force] [--yes]
 #   --force regenera tudo do zero; copia deploy/ca e deploy/mosquitto/certs para
 #           <dir>.bak-<epoch> (gitignored) ANTES de apagar, e exige confirmação

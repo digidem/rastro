@@ -39,7 +39,7 @@ def main() -> int:
         log.error("FALHA: configuração inválida: %s", exc)
         return 2
 
-    # fleet.json lido uma vez no boot (é o cache daqui pra frente).
+    # Arquivo de nomes da frota (opcional) lido uma vez no boot (é o cache daqui pra frente).
     names = fleet_names.load_fleet_names()
     fleet_ids = fleet_names.load_fleet_ids()
     # Boot log SEM senha — host/porta/db são ok, credenciais nunca.

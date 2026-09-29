@@ -41,7 +41,6 @@ class MqttConfig:
     client_id: str
     topic_prefix: str
     keepalive_secs: int
-    tls_insecure: bool
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "MqttConfig":
@@ -56,10 +55,6 @@ class MqttConfig:
             or f"rastro-ingest-{socket.gethostname()}",
             topic_prefix=env.get("RASTRO_MQTT_TOPIC_PREFIX", "rastro"),
             keepalive_secs=int(env.get("RASTRO_MQTT_KEEPALIVE_SECS", "60")),
-            tls_insecure=env.get("RASTRO_MQTT_TLS_INSECURE", "")
-            .strip()
-            .lower()
-            in ("1", "true", "yes"),
         )
 
 
@@ -76,9 +71,6 @@ def build_client(cfg: MqttConfig) -> mqtt.Client:
     # TLS sempre — o broker não tem listener em texto plano (plano Fase 1).
     # Sem CA configurada usa-se a store do sistema; na bancada a CA é a nossa.
     client.tls_set(ca_certs=cfg.ca_cert)
-    if cfg.tls_insecure:
-        client.tls_insecure_set(True)
-        log.warning("AVISO: TLS sem verificação — SOMENTE bancada")
     # Ack manual: o PUBACK só sai depois do commit no Postgres (ver Ingester.flush).
     client.manual_ack_set(True)
     client.enable_logger(log)  # falhas de TLS/handshake deixam de ser silenciosas

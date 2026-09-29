@@ -1,12 +1,18 @@
-"""Nomes amigáveis do registry da frota (``devices/fleet.json``).
+"""Nomes amigáveis da frota lidos de um arquivo JSON **opcional**.
 
-Shape REAL do arquivo (a fonte da verdade — ver devices/fleet.json):
+O caminho vem do argumento ``path`` ou, na falta dele, do env
+``RASTRO_FLEET_NAMES_FILE``. Nenhum dos dois é obrigatório: sem arquivo
+configurado não há nomes e as funções voltam ``{}`` sem avisar nada — esse é
+um estado normal (frota sem registry). Arquivo CONFIGURADO que está ausente ou
+malformado é um problema e continua avisado no log.
+
+Shape do arquivo (o mesmo do registry da frota):
 
     {"schema_version": 1,
-     "devices": [{"id": "heltec-v4-e5d0",
+     "devices": [{"id": "heltec-v4-fee0",
                   "identity": {"node_num": 202374880,      # int
-                               "long_name": "Meshtastic e5d0",
-                               "short_name": "e5d0", ...}}, ...]}
+                               "long_name": "Meshtastic fee0",
+                               "short_name": "fee0", ...}}, ...]}
 
 Sem PSK, sem coordenadas aqui — só nomes e ids de nó.
 """
@@ -19,23 +25,27 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# services/rastro_gateway/common/fleet_names.py → parents[3] = raiz do repo
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_PATH = _REPO_ROOT / "devices" / "fleet.json"
 
+def _fleet_path(path: str | None) -> Path | None:
+    """Caminho configurado: argumento → env ``RASTRO_FLEET_NAMES_FILE``.
 
-def _fleet_path(path: str | None) -> Path:
+    ``None`` quando nada foi configurado — que é o padrão (arquivo opcional).
+    """
     if path:
         return Path(path)
-    env = os.environ.get("RASTRO_FLEET_JSON")
-    if env:
-        return Path(env)
-    return _DEFAULT_PATH
+    env = os.environ.get("RASTRO_FLEET_NAMES_FILE")
+    return Path(env) if env else None
 
 
 def _load_fleet(path: str | None) -> dict[int, dict]:
-    """Registry → {node_num: device_dict}; arquivo ausente/malformado → {} com AVISO."""
+    """Registry → {node_num: device_dict}.
+
+    Sem arquivo configurado → ``{}`` SEM avisar (frota sem nomes é estado
+    normal). Arquivo configurado ausente/malformado → ``{}`` com AVISO.
+    """
     p = _fleet_path(path)
+    if p is None:
+        return {}
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -84,7 +94,7 @@ def load_fleet_names(path: str | None = None) -> dict[int, tuple[str, str]]:
 
 
 def load_fleet_ids(path: str | None = None) -> dict[int, str]:
-    """{node_num: id do device no fleet.json} — preenche ``nodes.fleet_id``."""
+    """{node_num: id do dispositivo no arquivo de nomes} — preenche ``nodes.fleet_id``."""
     ids: dict[int, str] = {}
     for num, dev in _load_fleet(path).items():
         dev_id = dev.get("id")

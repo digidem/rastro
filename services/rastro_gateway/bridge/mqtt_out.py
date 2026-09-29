@@ -54,7 +54,6 @@ class MqttConfig:
     client_id: str
     topic_prefix: str
     keepalive_secs: int
-    tls_insecure: bool
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "MqttConfig":
@@ -69,10 +68,6 @@ class MqttConfig:
             or f"rastro-gateway-{socket.gethostname()}",
             topic_prefix=env.get("RASTRO_MQTT_TOPIC_PREFIX", "rastro"),
             keepalive_secs=int(env.get("RASTRO_MQTT_KEEPALIVE_SECS", "60")),
-            tls_insecure=env.get("RASTRO_MQTT_TLS_INSECURE", "")
-            .strip()
-            .lower()
-            in ("1", "true", "yes"),
         )
 
 
@@ -90,9 +85,6 @@ def build_client(cfg: MqttConfig) -> mqtt.Client:
     # Sem CA configurada usa a store do sistema; na bancada a CA é a nossa.
     client.max_queued_messages_set(1000)  # rede de segurança: rc QUEUE_SIZE → retry
     client.tls_set(ca_certs=cfg.ca_cert)
-    if cfg.tls_insecure:
-        client.tls_insecure_set(True)
-        log.warning("AVISO: TLS sem verificação — SOMENTE bancada")
     client.enable_logger(log)  # TLS/handshake deixam de ser silenciosos
     return client
 

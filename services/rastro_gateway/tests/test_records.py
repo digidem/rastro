@@ -23,7 +23,7 @@ def make_position(**over):
         hop_limit=3,
         snr=9.5,
         rssi=-81,
-        friendly_name="Meshtastic e5d0",
+        friendly_name="Meshtastic fee0",
     )
     base.update(over)
     return PositionRecord(**base)
@@ -40,7 +40,7 @@ def make_telemetry(**over):
         channel_util=12.4,
         air_util_tx=8.1,
         uptime_s=3600,
-        friendly_name="Meshtastic e5d0",
+        friendly_name="Meshtastic fee0",
     )
     base.update(over)
     return TelemetryRecord(**base)
@@ -63,7 +63,7 @@ def test_position_payload_schema_fields_and_order():
     assert obj["hop_limit"] == 3
     assert obj["snr"] == 9.5
     assert obj["rssi"] == -81
-    assert obj["friendly_name"] == "Meshtastic e5d0"
+    assert obj["friendly_name"] == "Meshtastic fee0"
     assert obj["time"] == 1727184000
 
 
@@ -82,7 +82,7 @@ def test_position_geojson_feature():
     props = feature["properties"]
     assert props["node_num"] == 202374880
     assert props["node_id"] == "!0c0ffee0"
-    assert props["friendly_name"] == "Meshtastic e5d0"
+    assert props["friendly_name"] == "Meshtastic fee0"
     assert props["time"] == 1727184000
     assert props["time_source"] == "device"
     assert props["altitude_m"] == 95

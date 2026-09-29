@@ -27,7 +27,6 @@ def _cfg():
         client_id="t",
         topic_prefix="rastro",
         keepalive_secs=60,
-        tls_insecure=False,
     )
 
 

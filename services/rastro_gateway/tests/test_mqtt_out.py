@@ -39,7 +39,7 @@ def make_out(tmp_path, spool):
     from rastro_gateway.bridge.mqtt_out import MqttConfig
     cfg = MqttConfig(
         host="x", port=1, username=None, password=None, ca_cert=None,
-        client_id="t", topic_prefix="rastro", keepalive_secs=60, tls_insecure=False,
+        client_id="t", topic_prefix="rastro", keepalive_secs=60,
     )
     return MqttOut(cfg, spool)
 

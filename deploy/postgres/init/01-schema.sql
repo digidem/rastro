@@ -6,8 +6,8 @@
 CREATE TABLE IF NOT EXISTS nodes (
     node_num      BIGINT PRIMARY KEY,              -- packet "from" (int)
     node_id       TEXT NOT NULL UNIQUE,            -- packet "fromId", ex. '!0badf00d' (a lib injeta; pode chegar atrasado)
-    friendly_name TEXT,                            -- de devices/fleet.json via fleet_names.py (bridge/logs/ingest)
-    fleet_id      TEXT,                            -- "id" em devices/fleet.json quando o nó é registrado
+    friendly_name TEXT,                            -- nome amigável opcional (arquivo de nomes da frota)
+    fleet_id      TEXT,                            -- id do dispositivo no arquivo de nomes, quando houver
     hw_model      TEXT,                            -- opcional, do registry
     first_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen     TIMESTAMPTZ NOT NULL DEFAULT now(),
