@@ -34,7 +34,7 @@ Fora de escopo: adversário com o rádio em mãos; host do gateway ou do servido
 - Token Bearer comparado com `compare_digest`; sem token → 401. Checagem de HTTPS antes da de token.
 - Token nunca persiste no navegador e nunca entra no bundle de produção.
 - 401 limpa o estado e para o polling.
-- CSP estrita no proxy (sem inline, sem terceiros); basemap e fontes servidos do mesmo domínio.
+- CSP estrita no proxy (sem inline, sem terceiros); basemap e fontes servidos do mesmo domínio (tiles do OSM passam pela API autenticada, que não loga coordenadas de tile; ver docs/OPERACAO-caprover.md §4).
 
 ### Repositório
 - `.gitignore` cobre `.env`, `passwd`, certificados, CA, backups e tiles.

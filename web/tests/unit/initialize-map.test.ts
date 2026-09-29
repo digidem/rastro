@@ -54,6 +54,16 @@ vi.mock("maplibre-gl", () => {
     getSource(nome: string) {
       return this.sources.get(nome);
     }
+
+    addSource = vi.fn((nome: string, _def: unknown) => {
+      this.sources.set(nome, { setData: vi.fn() });
+    });
+    addLayer = vi.fn();
+    getLayer = vi.fn(() => ({}));
+    setLayoutProperty = vi.fn();
+    once(ev: string, cb: (e: unknown) => void) {
+      this.on(ev, cb);
+    }
   }
 
   class FakePopup {
@@ -92,6 +102,9 @@ vi.mock("pmtiles", () => ({
 type FakeSource = { setData: ReturnType<typeof vi.fn> };
 
 interface FakeMapLike {
+  addSource: ReturnType<typeof vi.fn>;
+  addLayer: ReturnType<typeof vi.fn>;
+  setLayoutProperty: ReturnType<typeof vi.fn>;
   handlers: Map<string, Array<(e: unknown) => void>>;
   sources: Map<string, FakeSource>;
   flyTo: ReturnType<typeof vi.fn>;
@@ -268,5 +281,44 @@ describe("InitializeMap — popup", () => {
     // Logout: a geração avança e o popup da sessão velha fecha.
     LocalState.bumpPollingGeracao();
     expect(popupAberto().remove).toHaveBeenCalledOnce();
+  });
+});
+
+describe("InitializeMap — basemap padrão OSM", () => {
+  const prepara = () => {
+    montar({} as DataValue["api"]);
+    return mapa();
+  };
+
+  it("sem o basemap próprio (erro na source basemap) troca para OSM via API", () => {
+    const m = prepara();
+    m.emit("error", { sourceId: "basemap", error: new Error("404") });
+    expect(m.addSource).toHaveBeenCalledTimes(1);
+    const [nome, def] = m.addSource.mock.calls[0] as [
+      string,
+      { type: string; tiles: string[] },
+    ];
+    expect(nome).toBe("osm");
+    expect(def.type).toBe("raster");
+    // mesma origem, pela API (token) — nunca direto no servidor do OSM
+    expect(def.tiles[0]).toBe(
+      `${window.location.origin}/api/osm/{z}/{x}/{y}.png`,
+    );
+    expect(m.addLayer).toHaveBeenCalledWith(
+      { id: "osm-base", type: "raster", source: "osm" },
+      "track-line",
+    );
+    for (const id of ["landcover", "water", "waterway", "boundary"]) {
+      expect(m.setLayoutProperty).toHaveBeenCalledWith(id, "visibility", "none");
+    }
+  });
+
+  it("é idempotente e ignora erros de outras sources", () => {
+    const m = prepara();
+    m.emit("error", { sourceId: "nodes" });
+    expect(m.addSource).not.toHaveBeenCalled();
+    m.emit("error", { sourceId: "basemap" });
+    m.emit("error", { sourceId: "basemap" });
+    expect(m.addSource).toHaveBeenCalledTimes(1);
   });
 });

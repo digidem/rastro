@@ -20,8 +20,33 @@ const TILES_URL =
   (import.meta.env.VITE_TILES_URL as string | undefined) ||
   "pmtiles:///tiles/basemap.pmtiles";
 
-// Glyphs gerados no deploy (D9) — nenhum fonte remoto.
-const GLYPHS_URL = "/tiles/glyphs/{fontstack}/{range}.pbf";
+// Glyphs (Noto Sans Regular, OFL) embutidos na própria imagem web — nenhum fonte
+// remoto e nada para copiar à mão no servidor.
+const GLYPHS_URL = "/glyphs/{fontstack}/{range}.pbf";
+
+// Basemap padrão: se o basemap pmtiles próprio não existir (/tiles/basemap.pmtiles
+// dá erro), o mapa troca sozinho para tiles do OpenStreetMap servidos pela API
+// (/api/osm/…, com token; o navegador não fala com o OSM).
+const CAMADAS_PMTILES = ["landcover", "water", "waterway", "boundary"];
+
+function usarOsm(map: maplibregl) {
+  if (map.getSource("osm") !== undefined) {
+    return;
+  }
+  map.addSource("osm", {
+    type: "raster",
+    tiles: [`${window.location.origin}/api/osm/{z}/{x}/{y}.png`],
+    tileSize: 256,
+    maxzoom: 19,
+    attribution: "© OpenStreetMap contributors",
+  });
+  map.addLayer({ id: "osm-base", type: "raster", source: "osm" }, "track-line");
+  for (const id of CAMADAS_PMTILES) {
+    if (map.getLayer(id) !== undefined) {
+      map.setLayoutProperty(id, "visibility", "none");
+    }
+  }
+}
 
 // Shape estrutural mínimo; os setData recebem tipagem contextual do maplibre.
 interface FeatureCollectionLike {
@@ -179,6 +204,18 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       attributionControl: { compact: false },
     });
     setCurrentView(map);
+    // Sem basemap próprio (404 no pmtiles): cai automaticamente para o OSM.
+    map.on("error", (e) => {
+      if ((e as { sourceId?: string }).sourceId !== "basemap") {
+        return;
+      }
+      try {
+        usarOsm(map);
+      } catch {
+        // estilo ainda carregando: tenta de novo quando terminar
+        map.once("load", () => usarOsm(map));
+      }
+    });
     map.on("load", () => {
       setCarregado(true);
       // Popup do pin: nome + data do fix.

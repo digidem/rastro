@@ -59,11 +59,12 @@ Salvaguardas para um Postgres em produção:
 
 1. **HTTPS primeiro.** App `<app>` → *HTTP Settings* → **Enable HTTPS** e **Force HTTPS**. A API responde 403 sem HTTPS e o visualizador não envia credenciais em HTTP.
 2. **Firewall:** a porta `8883/TCP` fica aberta em todas as interfaces. Portas publicadas pelo Docker passam por fora das regras INPUT do ufw/iptables; para restringir origem, use o firewall do provedor ou regras em `DOCKER-USER`.
-3. **Basemap:** copie o `.pmtiles` e a pasta `glyphs/` para o volume `<app>-tiles`:
-   ```bash
-   docker run --rm -v captain--<app>-tiles:/t -v "$PWD":/src:ro busybox cp -r /src/basemap.pmtiles /src/glyphs /t/
-   ```
-   (o nome exato do volume aparece em `docker volume ls`).
+3. **Basemap (automático).** O mapa já vem com um basemap padrão: tiles do OpenStreetMap buscados **pela API** (`/api/osm/…`, com o token; o navegador nunca fala com o OSM, então o IP dos monitores não chega lá, e os tiles ficam num cache em memória). Nada a fazer. Ressalvas: exige que o servidor alcance `tile.openstreetmap.org` (HTTPS) e segue a [política de uso do OSM](https://operations.osmfoundation.org/policies/tiles/) — adequado para poucos usuários. A área que o monitor olha é dado sensível: a API não loga coordenadas de tile (o log de acesso do uvicorn está desligado). Para **desligar** o OSM, defina `RASTRO_OSM_TILES=0` no app `<app>-api` (sem basemap próprio, o mapa mostra só os pontos), ou aponte para um servidor de tiles seu com `RASTRO_OSM_TILE_URL=https://…/{z}/{x}/{y}.png`.
+   - **Opcional — basemap próprio e offline** (PMTiles): copie `basemap.pmtiles` para o volume `<app>-tiles`; quando o arquivo existe, o mapa o usa em vez do OSM (sem nenhuma requisição externa). Permissão de leitura para todos (`chmod a+r`):
+     ```bash
+     docker run --rm -v captain--<app>-tiles:/t -v "$PWD":/src:ro busybox sh -c 'cp /src/basemap.pmtiles /t/ && chmod a+r /t/basemap.pmtiles'
+     ```
+     (o nome exato do volume aparece em `docker volume ls`). As fontes dos rótulos já vêm na imagem.
 4. Conferir: `https://<app>.<seu-domínio>/api/healthz` → `{"status":"ok",…}`; o mapa pede o token.
 
 ## 5. Apontar o gateway da base

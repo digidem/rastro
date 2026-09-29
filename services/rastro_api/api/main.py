@@ -46,6 +46,7 @@ except ImportError:  # pragma: no cover
     from psycopg_pool import ConnectionPool, PoolTimeout  # type: ignore[no-redef]
 
 from rastro_api.api import geojson, queries
+from rastro_api.api.osm import OsmTiles, TileIndisponivel
 
 LOGGER = logging.getLogger("rastro_api")
 
@@ -421,6 +422,26 @@ def create_app() -> FastAPI:
             "rastro_sessao", path="/api", httponly=True, samesite="strict"
         )
         return resposta
+
+    osm = OsmTiles.from_env()  # None = desligado (RASTRO_OSM_TILES=0)
+
+    @router.get("/osm/{z}/{x}/{y}.png")
+    def osm_tile(z: int, x: int, y: int) -> Response:
+        """Tile do basemap OSM via proxy (só com auth; IP do monitor não chega ao OSM).
+        Nunca loga z/x/y: a área observada é dado sensível."""
+        if osm is None:
+            raise HTTPException(status_code=404, detail="mapa base desativado")
+        if not osm.valido(z, x, y):
+            raise HTTPException(status_code=404, detail="tile fora do intervalo")
+        try:
+            dados = osm.get(z, x, y)
+        except TileIndisponivel:
+            raise HTTPException(
+                status_code=502, detail="mapa base indisponível"
+            ) from None
+        # Cache-Control: no-store vem do middleware de /api (a área observada é
+        # sensível); o cache útil é o da própria API (osm.OsmTiles).
+        return Response(content=dados, media_type="image/png")
 
     @router.get("/nodes/latest")
     def latest(request: Request) -> dict:

@@ -11,4 +11,5 @@ RUN touch /app/rastro_api/__init__.py && pip install --no-cache-dir /app/rastro_
 RUN mkdir -p /rastro-pgconn && chown 70:70 /rastro-pgconn
 USER rastro
 # --host 0.0.0.0 vale DENTRO do contêiner; a exposição no host é controlada pelo compose (D8)
-CMD ["uvicorn", "rastro_api.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# --no-access-log: o log de acesso traria as coordenadas de tile (área observada = sensível)
+CMD ["uvicorn", "rastro_api.api.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]

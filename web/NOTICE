@@ -6,3 +6,8 @@ do qual herda a licença GPL-3.0 (ver LICENSE). As modificações da UNIVAJA:
 remoção do caminho de dados ConnectRPC/protobuf, provedor de dados próprio
 (GeoJSON da API local), rótulos em português e basemap pmtiles offline.
 Licença deste arquivo: GPL-3.0-only (como o todo).
+
+Fontes dos rótulos do mapa (public/glyphs/Noto Sans Regular/*.pbf): glifos SDF
+gerados (fontnik) a partir de Noto Sans Regular, © The Noto Project Authors,
+SIL Open Font License 1.1 (texto em public/glyphs/OFL.txt). Dados do mapa base
+padrão: © colaboradores do OpenStreetMap (ODbL), servidos pela API do Rastro.
