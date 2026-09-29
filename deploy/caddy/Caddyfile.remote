@@ -1,0 +1,31 @@
+# Rastro — caddy MODO REMOTO (D8/R9): proxy TLS reverso com FQDN do cliente.
+# Ativado via `docker compose --profile remote up -d caddy-remote` com
+# `RASTRO_PROXY_FQDN=mapa.exemplo.org` no deploy/.env.
+# TLS: `tls internal` (CA do próprio caddy) — trocar por ACME exigirá alargar
+# conscientemente o bind de 127.0.0.1:8443 para portas públicas 80/443 e é
+# decisão R9 da EQUIPE. O acesso remoto em produção exige túnel/VPN ou proxy
+# com controle de acesso na frente — nunca exposição direta.
+{$RASTRO_PROXY_FQDN} {
+	tls internal
+	# CSP estrita (sem inline/eval/terceiros); `blob:` exigido pelos workers do maplibre.
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+	handle_path /tiles/* {
+		root * /srv/tiles
+		file_server
+		header /basemap.pmtiles Content-Type application/octet-stream
+	}
+	handle /api/* {
+		# Marca o tráfego remoto; a API exige credencial para ele mesmo com
+		# RASTRO_API_AUTH=desativada (defesa extra — a guarda principal é a
+		# lista de Hosts locais).
+		reverse_proxy api:8080 {
+			header_up X-Rastro-Via remoto
+		}
+	}
+	reverse_proxy web:80
+}

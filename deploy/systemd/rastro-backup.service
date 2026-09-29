@@ -1,0 +1,19 @@
+# Backup Rastro — dump local rotativo (off-site é etapa separada, R3).
+[Unit]
+Description=Backup noturno Rastro (pg_dump local, rotação de 14)
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=rastro
+EnvironmentFile=/etc/rastro/gateway.env
+ExecStart=/opt/rastro/scripts/rastro_backup.sh
+Restart=on-failure
+RestartSec=60
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/rastro/deploy/backups
+ProtectHome=true
+PrivateTmp=true

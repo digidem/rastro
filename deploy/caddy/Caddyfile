@@ -1,0 +1,35 @@
+# Rastro — caddy, PERFIL DEFAULT (D8): proxy em loopback (127.0.0.1:8081),
+# frente única de web + /api + /tiles (same-origin: o viewer usa caminhos
+# relativos; sem CORS, sem token cross-origin).
+#
+# PERFIL REMOTE = TLS+FQDN: é provido pelo serviço dedicado `caddy-remote`
+# (ativado via `docker compose --profile remote up -d caddy-remote`) que usa
+# `deploy/caddy/Caddyfile.remote`. Exposição remota é decisão da equipe (R9).
+{
+	auto_https off
+}
+
+:8081 {
+	# CSP estrita (sem inline/eval/terceiros); `blob:` exigido pelos workers do maplibre.
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# basemap + glyphs: pmtiles/glyphs estáticos, volume read-only (D9)
+	handle_path /tiles/* {
+		root * /srv/tiles
+		file_server
+		header /basemap.pmtiles Content-Type application/octet-stream
+	}
+
+	# API: caminho relativo do viewer (same-origin, preservando prefixo /api)
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	# SPA estática
+	reverse_proxy web:80
+}

@@ -1,0 +1,31 @@
+[project]
+name = "rastro-gateway"
+version = "0.1.0"
+description = "Ponte Meshtastic → MQTT → PostgreSQL (Rastro)"
+requires-python = ">=3.11"
+dependencies = [
+  "meshtastic>=2.6",
+  "paho-mqtt>=2.0,<3",
+  "psycopg[binary,pool]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# layout flat: a raiz do projeto É o pacote — lista explícita evita embutir tests/Dockerfile.
+packages = [
+  "rastro_gateway",
+  "rastro_gateway.common",
+  "rastro_gateway.ingest",
+  "rastro_gateway.bridge",
+]
+
+# a raiz do projeto é o próprio pacote `rastro_gateway` (tem __init__.py) —
+# sem este mapeamento o setuptools procura <raiz>/rastro_gateway/ e o build quebra
+[tool.setuptools.package-dir]
+rastro_gateway = "."

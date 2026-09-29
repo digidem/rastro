@@ -1,0 +1,34 @@
+[Unit]
+Description=Ponte Rastro Meshtastic→MQTT (gateway serial)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rastro
+SupplementaryGroups=dialout
+EnvironmentFile=/etc/rastro/gateway.env
+ExecStart=/opt/rastro-gateway-venv/bin/python -m rastro_gateway.bridge
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=2
+# StateDirectory cria /var/lib/rastro-gateway (0700) no boot — ReadWritePaths
+# com diretório ausente falharia a unit com 226/NAMESPACE (gate F3 R4)
+StateDirectory=rastro-gateway
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+DevicePolicy=closed
+DeviceAllow=char-ttyACM rw
+DeviceAllow=char-ttyUSB rw
+
+[Install]
+WantedBy=multi-user.target

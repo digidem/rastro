@@ -1,0 +1,12 @@
+# Rastro — ACL do mosquitto. Nenhum usuário tem readwrite; tudo não listado é negado.
+# Tópicos carregam o segmento do id do nó (rastro/positions/0badf00d) para que uma
+# política futura por nó seja uma linha de ACL, não um repath.
+user gateway
+topic write rastro/positions/#
+topic write rastro/telemetry/#
+topic write rastro/status/#
+
+user ingest
+topic read rastro/positions/#
+topic read rastro/telemetry/#
+topic read rastro/status/#

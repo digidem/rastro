@@ -1,0 +1,6 @@
+@import "maplibre-gl/dist/maplibre-gl.css";
+@import "@park-ui/tailwind-plugin/preset.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

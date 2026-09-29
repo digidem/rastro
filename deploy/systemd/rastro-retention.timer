@@ -1,0 +1,9 @@
+[Unit]
+Description=Timer diário da retenção Rastro (04:15, Persistent)
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,160 @@
+# Rastro — stack da base (D1/D5 do plano): mosquitto TLS + PostgreSQL.
+# Toda porta publicada no host é amarrada ao loopback — nunca 0.0.0.0 (o Pi tem
+# interface de satélite roteável). Ingester chega na Fase 2; api/web/caddy na Fase 7.
+name: rastro
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
+    # pin por digest (imutável): binário mosquitto 2.1.2 verificado na bancada; a tag
+    # 2.1.2 não existe no registry. O conf depende de comportamentos do 2.1 (comentário
+    # inline rejeitado, drop p/ uid 1883). Atualizar = decisão consciente + re-teste.
+    # healthcheck ausente POR ESCRITO: alerta de fila cheia (R8) vem do docker logs;
+    # restart=unless-stopped cobre exit do processo. Reavaliar se ganhar watchdog.
+    # (Runbook: requer Docker >= 28 no host — binds 127.0.0.1 em Docker antigo eram
+    # alcançáveis por vizinhos L2 via direct routing.)
+    # NÃO-root: uid/gid do usuário do host (dono dos bind-mounts de certs/passwd —
+    # legíveis sem sudo/chown). Single-purpose, sem NENHUMA capability; a CA key
+    # NÃO mora aqui — fica em deploy/ca/, fora da árvore montada. Ver runbook.
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8883:8883" # TLS only (D3) — nunca 1883, nunca bind nu
+    volumes:
+      # rw de propósito: o passwd é gerenciado AQUI via `docker compose run mosquitto
+      # mosquitto_passwd` (runbook); a CA key NÃO está nesta árvore (deploy/ca/).
+      - ./mosquitto:/mosquitto/config
+      - mosquitto_data:/mosquitto/data
+
+  # N1a (gate agregado): o broker roda como uid do HOST (1000) e o volume/vim mounts
+  # podem nascer com posse de root (instalação nova, certs regerados, volume antigo).
+  # Este init roda COMO ROOT (dentro do rootless dockerd = uid do host) e corrige
+  # a posse ANTES do mosquitto — sem chown manual no host, sem sudo.
+  mosquitto-posse:
+    image: busybox:1.36
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - chown -R 1000:1000 /data /config/passwd /config/certs
+    volumes:
+      - mosquitto_data:/data
+      - ./mosquitto:/config
+    restart: "no"
+
+  postgres:
+    # pin por digest (imutável): binário Postgres 17.11 verificado na bancada; a tag
+    # 17.11 não existe no registry. Atualizar = decisão consciente + re-teste da bateria.
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina em deploy/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina em deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:?defina em deploy/.env}
+      RASTRO_PG_VIEWER_PASSWORD: ${RASTRO_PG_VIEWER_PASSWORD:?defina em deploy/.env}
+    ports:
+      - "127.0.0.1:5432:5432" # ferramentas do host apenas (TB-E)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ingest:
+    build:
+      context: ./../services          # build context: services/ (Dockerfile em rastro_gateway/)
+      dockerfile: rastro_gateway/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      mosquitto-posse:
+        condition: service_completed_successfully
+    environment:
+      RASTRO_MQTT_HOST: mosquitto
+      RASTRO_MQTT_PORT: "8883"
+      RASTRO_MQTT_USERNAME: ingest
+      RASTRO_MQTT_PASSWORD: ${RASTRO_MQTT_PASSWORD_INGEST:?defina em deploy/.env}
+      RASTRO_MQTT_CA_CERT: /certs/ca.crt
+      RASTRO_MQTT_CLIENT_ID: rastro-ingest-1
+      RASTRO_MQTT_TOPIC_PREFIX: rastro
+      RASTRO_PG_HOST: postgres
+      RASTRO_PG_PORT: "5432"
+      RASTRO_PG_DB: ${POSTGRES_DB:?defina em deploy/.env}
+      RASTRO_PG_USER: ${POSTGRES_USER:?defina em deploy/.env}
+      RASTRO_PG_PASSWORD: ${POSTGRES_PASSWORD:?defina em deploy/.env}
+      RASTRO_LOG_LEVEL: INFO
+    volumes:
+      - ./mosquitto/certs/ca.crt:/certs/ca.crt:ro
+
+  # --- Fase 7 (D8): API somente-leitura + viewer estático + caddy em loopback ---
+  api:
+    build:
+      context: ./../services
+      dockerfile: rastro_api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RASTRO_API_TOKEN: ${RASTRO_API_TOKEN:-}
+      # Obrigatório em modo token — a API valida a var e recusa subir sem ela.
+      RASTRO_API_AUTH: ${RASTRO_API_AUTH:-token}
+      RASTRO_API_HOSTS_LOCAIS: ${RASTRO_API_HOSTS_LOCAIS:-127.0.0.1:8081,localhost:8081,127.0.0.1:8080,localhost:8080,[::1]:8081,[::1]:8080}
+      RASTRO_SESSAO_DIAS: ${RASTRO_SESSAO_DIAS:-30}
+      RASTRO_PG_HOST: postgres
+      RASTRO_PG_PORT: "5432"
+      RASTRO_PG_DB: ${POSTGRES_DB:?defina em deploy/.env}
+      RASTRO_PG_USER: rastro_viewer
+      RASTRO_PG_PASSWORD: ${RASTRO_PG_VIEWER_PASSWORD:?defina em deploy/.env}
+      RASTRO_LOG_LEVEL: INFO
+    ports:
+      - "127.0.0.1:8080:8080" # verificação direta na bancada; o viewer USA o caddy
+
+  web:
+    build:
+      context: ./../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+    ports:
+      - "127.0.0.1:8081:8081" # a URL do monitor — loopback sempre (D8)
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./tiles:/srv/tiles:ro # basemap.pmtiles + glyphs/ (D9; gitignored)
+
+  # Serviço remote: ativado explicitamente via `--profile remote` (D8/T11/R9).
+  # Publica a porta TLS (443 no contêiner → 8443 no host) com FQDN do cliente.
+  caddy-remote:
+    image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    restart: unless-stopped
+    profiles: ["remote"]
+    depends_on:
+      - api
+      - web
+    environment:
+      RASTRO_PROXY_FQDN: ${RASTRO_PROXY_FQDN:-unconfigured.local}
+    ports:
+      - "127.0.0.1:8443:443"
+    volumes:
+      - ./caddy/Caddyfile.remote:/etc/caddy/Caddyfile:ro
+      - ./tiles:/srv/tiles:ro
+      - caddy_data:/data
+
+volumes:
+  mosquitto_data:
+  pgdata:
+  caddy_data:

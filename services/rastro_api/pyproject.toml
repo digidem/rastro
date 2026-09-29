@@ -1,0 +1,29 @@
+[project]
+name = "rastro-api"
+version = "0.1.0"
+description = "API FastAPI somente-leitura (GeoJSON + Bearer) sobre o Postgres da malha Rastro"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "psycopg[binary,pool]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "pyyaml>=6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# layout flat: a raiz do projeto É o pacote — lista explícita evita embutir tests/Dockerfile.
+packages = [
+  "rastro_api",
+  "rastro_api.api",
+]
+
+# a raiz do projeto é o próprio pacote `rastro_api` — sem este mapeamento o
+# setuptools procura <raiz>/rastro_api/ e o build quebra
+[tool.setuptools.package-dir]
+rastro_api = "."

@@ -1,0 +1,22 @@
+# Secrets and per-deployment state — never commit
+deploy/.env
+deploy/mosquitto/passwd
+deploy/mosquitto/certs/*
+!deploy/mosquitto/certs/.gitkeep
+deploy/ca/
+deploy/backups/
+deploy/tiles/
+
+# Build and tool output
+node_modules/
+.pnpm-store/
+dist/
+build/
+test-results/
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Agent run logs
+*.jsonl
