@@ -15,6 +15,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from http.cookiejar import CookieJar
 
 import paho.mqtt.client as mqtt
 import psycopg
@@ -129,6 +130,27 @@ def main() -> int:
     except urllib.error.HTTPError as exc:
         st = exc.code
     ok(st == 401, "API direta (nome interno) sem token → 401", f"status={st}")
+
+    # --- caminho HTTPS real (frente TLS como o nginx do CapRover) -------------------------
+    ctx = ssl.create_default_context(cafile=E["SIM_FRONT_CA"])
+    jar = CookieJar()
+    abre = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx),
+                                       urllib.request.HTTPCookieProcessor(jar))
+    req = urllib.request.Request(E["SIM_FRONT_URL"] + "/api/auth/sessao", method="POST",
+                                 data=b'{"lembrar": false}',
+                                 headers={**tok, "Content-Type": "application/json"})
+    try:
+        r = abre.open(req, timeout=10); st, cookie = r.status, r.headers.get("Set-Cookie", "")
+    except urllib.error.HTTPError as exc:
+        st, cookie = exc.code, ""
+    ok(st == 204 and "secure" in cookie.lower(), "HTTPS pela frente: sessão criada com cookie Secure",
+       f"status={st}")
+    try:
+        r = abre.open(E["SIM_FRONT_URL"] + "/api/nodes/latest", timeout=10); st = r.status
+    except urllib.error.HTTPError as exc:
+        st = exc.code
+    ok(st == 200, "HTTPS pela frente: só com o cookie (sem Bearer) → 200 (X-Forwarded-Proto passa)",
+       f"status={st}")
 
     # --- negativos do broker ------------------------------------------------------------
     ok(conecta("gateway", E["SIM_PW_GATEWAY"], broker, ca) == "ok", "controle: conexão válida")

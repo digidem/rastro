@@ -96,6 +96,7 @@ if [ "$MODO" = restore ]; then
   ORIGEM="$(sed -n 's/^; *Dumped from database version: *//p' <<<"$CAB" | head -1)"
   DUMPER="$(sed -n 's/^; *Dumped by pg_dump version: *//p' <<<"$CAB" | head -1)"
   [ -n "$ORIGEM" ] && [ -n "$DUMPER" ] || erro "cabeçalho de versão ausente no dump (não arrisco restaurar)"
+  grep -Eq "SCHEMA - ${DB}( |\$)" <<<"$CAB" || erro "o dump não contém o schema '$DB' — restaure com RASTRO_DB igual ao nome do banco de origem"
   M_ORIGEM="$(major_de "$ORIGEM")" || erro "versão de origem ilegível: $ORIGEM"
   M_DUMPER="$(major_de "$DUMPER")" || erro "versão do pg_dump ilegível: $DUMPER"
   M_RESTORE="$(major_de "$(pg_restore --version | awk '{print $NF}')")" || erro "versão do pg_restore ilegível"
@@ -267,12 +268,17 @@ SELECT format('ALTER ROLE %I IN DATABASE %I SET search_path = %I', r, :'db', :'d
 FROM unnest(ARRAY[:'owner', :'ingest', :'viewer', :'maint', :'backup']) AS r \gexec
 SQL
 
-# PG <= 14: public ainda aceita CREATE de PUBLIC; tenta fechar (admin gerenciado pode não poder)
-if ! psql_em "$DB" <<'SQL' 2>/dev/null
+# PG <= 14: public ainda aceita CREATE de PUBLIC; tenta fechar (admin gerenciado pode não
+# poder — o REVOKE de quem não é dono só dá WARNING e sai 0, então CONFERE depois)
+psql_em "$DB" <<'SQL' >/dev/null 2>&1 || true
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 SQL
-then
-  aviso "não foi possível revogar CREATE em public (Postgres gerenciado <= 14?) — papéis de login poderiam criar objetos em public, sem acesso aos dados do schema $DB"
+PUBLICO_CRIA="$(psql_em "$DB" "${VARS[@]}" <<'SQL'
+SELECT has_schema_privilege(:'ingest', 'public', 'CREATE');
+SQL
+)"
+if [ "$PUBLICO_CRIA" = t ]; then
+  aviso "CREATE em public continua liberado (Postgres gerenciado <= 14?) — papéis de login podem criar objetos em public, sem acesso aos dados do schema $DB"
 fi
 
 echo "OK: banco '$DB' pronto (papéis ${DB}_{owner,ingest,viewer,maint,backup}; schema '$DB'; modo $MODO)"

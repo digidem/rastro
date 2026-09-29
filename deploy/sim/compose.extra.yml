@@ -30,6 +30,16 @@ services:
       RASTRO_PG_PASSWORD_BACKUP: ${SIM_PW_BACKUP}
     networks: [sim]
 
+  # Frente TLS como o nginx do CapRover: termina HTTPS e passa X-Forwarded-Proto.
+  front:
+    image: nginx:1.27-alpine
+    volumes:
+      - ${SIM_FRONT}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${SIM_FRONT}/certs:/certs:ro
+    networks:
+      sim:
+        aliases: [srv-captain--front]
+
   probe:
     image: ghcr.io/digidem/rastro-ingest:${SIM_TAG}
     profiles: [probe]
@@ -42,6 +52,8 @@ services:
       SIM_BROKER: srv-captain--${SIM_APP}-broker
       SIM_PG_HOST: srv-captain--postgres
       SIM_WEB_URL: http://srv-captain--${SIM_APP}
+      SIM_FRONT_URL: https://srv-captain--front
+      SIM_FRONT_CA: /sim/front-ca.crt
       SIM_PW_GATEWAY: ${SIM_PW_GATEWAY}
       SIM_PW_INGEST: ${SIM_PW_INGEST}
       SIM_PW_VIEWER: ${SIM_PW_VIEWER}
@@ -50,4 +62,5 @@ services:
     volumes:
       - ${SIM_PROBE}:/sim/probe.py:ro
       - ${SIM_CERTS}/ca.crt:/sim/ca.crt:ro
+      - ${SIM_FRONT}/certs/ca.crt:/sim/front-ca.crt:ro
     networks: [sim]

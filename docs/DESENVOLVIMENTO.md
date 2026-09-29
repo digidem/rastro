@@ -68,3 +68,13 @@ deploy/
 scripts/
   rastro_gen_certs.sh · rastro_backup.sh · rastro_retention.py · rastro_e2e_check.py
 ```
+
+## 5. Verificação do deploy (antes de qualquer QA humano)
+
+| Script | O que prova |
+|---|---|
+| `deploy/sim/run.sh <rastro.yml>` | instalação simulada do template CapRover (rede interna, nomes `srv-captain--*`, frente TLS como o nginx do CapRover): publicação do gateway → banco → API; 403/401; cookie Secure por HTTPS; negativos do broker; privilégios; fila QoS1 sobrevivendo a restart; conteúdo das imagens |
+| `deploy/sim/pg-matrix.sh` | bootstrap e restauração do PostgreSQL: superusuário e admin sem superusuário (PG14/PG17), 2ª instalação, papéis de outra instalação recusados, backup, cadeia de versões, schema antigo, recuperação |
+| `deploy/sim/browser-http.py` | navegador real: em HTTP puro fora do loopback o visualizador não envia token nem cookie |
+
+O que a simulação NÃO cobre: a substituição de variáveis do próprio CapRover, o `ports:` sob Swarm e o nginx real do CapRover — isso é o QA numa instância de teste.

@@ -22,23 +22,30 @@ CapRover → **Apps** → **One-Click Apps/Databases** → role até **3rd party
 
 O script cria um banco dedicado, um schema dedicado e cinco papéis por instalação (`<banco>_owner`, `_ingest`, `_viewer`, `_maint`, `_backup`). Ele é idempotente e recusa mexer num banco que não é do Rastro.
 
-O Postgres do CapRover não tem porta pública, então rode o script por um contêiner na rede do CapRover, no servidor:
+O Postgres do CapRover não tem porta pública, então rode o script por um contêiner na rede do CapRover, no servidor. Use a imagem da MESMA versão major do seu Postgres (`…-pg14`, `-pg15`, `-pg16`, `-pg17`; veja a versão com `SELECT version()`).
+
+Senhas num arquivo, nunca na linha de comando (histórico do shell, `ps`):
 
 ```bash
-docker run --rm --network captain-overlay-network \
-  -e PGHOST=srv-captain--postgres -e PGUSER=postgres -e PGPASSWORD='<senha do admin>' \
-  -e RASTRO_DB=rastro \
-  -e RASTRO_PG_PASSWORD_INGEST='<24+ caracteres>' \
-  -e RASTRO_PG_PASSWORD_VIEWER='<24+ caracteres>' \
-  -e RASTRO_PG_PASSWORD_MAINT='<24+ caracteres>' \
-  -e RASTRO_PG_PASSWORD_BACKUP='<24+ caracteres>' \
-  ghcr.io/digidem/rastro-pgtools:<versão>
+umask 077
+cat > rastro-bootstrap.env <<'EOF'
+PGHOST=srv-captain--postgres
+PGUSER=postgres
+PGPASSWORD=<senha do admin>
+RASTRO_DB=rastro
+RASTRO_PG_PASSWORD_INGEST=<openssl rand -hex 24>
+RASTRO_PG_PASSWORD_VIEWER=<openssl rand -hex 24>
+RASTRO_PG_PASSWORD_MAINT=<openssl rand -hex 24>
+RASTRO_PG_PASSWORD_BACKUP=<openssl rand -hex 24>
+EOF
+docker run --rm --network captain-overlay-network --env-file rastro-bootstrap.env \
+  ghcr.io/digidem/rastro-pgtools:<versão>-pg<major>
 ```
 
 - Saída esperada na última linha: `OK: banco 'rastro' pronto (…)`.
-- As senhas vão ao servidor só como verificador SCRAM. Guarde-as num gerenciador de senhas; as de ingest e viewer vão no formulário do app.
+- Senhas: só ASCII, 24+ caracteres; use `openssl rand -hex 24` (o formulário do app aceita só letras, números e `_ . ~ -`). Elas vão ao servidor só como verificador SCRAM. Guarde-as num gerenciador de senhas; as de ingest e viewer vão no formulário do app.
 - Admin sem superusuário (Postgres gerenciado) funciona se tiver `CREATEROLE` e `CREATEDB`.
-- Para não deixar senhas no histórico do shell, use `--env-file` com um arquivo `chmod 600` apagado depois.
+- Apague o `rastro-bootstrap.env` depois (`shred -u` ou `rm`).
 
 ## 3. Gerar os certificados do broker
 
@@ -56,7 +63,7 @@ scripts/rastro_gen_certs.sh --cert-dir ~/rastro-certs \
 - O `ca.crt` vai também para o gateway da base.
 - Validade do certificado do servidor: 825 dias. Anote a data de renovação.
 
-Alternativa mais segura que as variáveis B64: montar `ca.crt`, `server.crt` e `server.key` em `/mosquitto/secrets/` do app `<app>-broker` (dono uid 1883, modo 0400) e deixar os campos B64 vazios. As variáveis de ambiente do CapRover ficam em texto puro no diretório de dados dele e nos backups.
+Alternativa mais segura que as variáveis B64: montar `ca.crt`, `server.crt` e `server.key` em `/mosquitto/secrets/` do app `<app>-broker` (dono uid 1883, modo 0400) e deixar vazios os campos do certificado e da chave do servidor. O campo da CA continua preenchido: o ingest usa. As variáveis de ambiente do CapRover ficam em texto puro no diretório de dados dele e nos backups.
 
 ## 4. Instalar o app
 
@@ -74,7 +81,7 @@ One-Click Apps → **Rastro** → preencha:
 Depois de instalar:
 
 1. **HTTPS primeiro.** App `<app>` → *HTTP Settings* → **Enable HTTPS** e **Force HTTPS**. A API responde 403 sem HTTPS e o visualizador não envia credenciais em HTTP.
-2. **Firewall:** libere só `8883/TCP` além do que o CapRover já usa. O mapeamento de porta do CapRover escuta em todas as interfaces.
+2. **Firewall:** a porta `8883/TCP` fica aberta em todas as interfaces. Portas publicadas pelo Docker passam por fora das regras INPUT do ufw/iptables; para restringir origem, use o firewall do provedor ou regras em `DOCKER-USER`.
 3. **Basemap:** copie o `.pmtiles` e a pasta `glyphs/` para o volume `<app>-tiles`:
    ```bash
    docker run --rm -v captain--<app>-tiles:/t -v "$PWD":/src:ro busybox cp -r /src/basemap.pmtiles /src/glyphs /t/
@@ -99,30 +106,39 @@ Reinicie a unit. Enquanto o link de satélite cair, o gateway guarda tudo no spo
 
 ## 6. Retenção e backup
 
-Não rodam dentro do app. Agende no servidor (cron) ou no Windmill, com os papéis próprios:
+Não rodam dentro do app. Agende no servidor (cron) ou no Windmill; os dois estão na imagem `rastro-pgtools` (mesma versão major do servidor) e precisam da rede `captain-overlay-network`:
 
-- **Backup:** `scripts/rastro_backup.sh` com `RASTRO_PG_HOST`, `RASTRO_PG_DB=rastro` e `RASTRO_PG_PASSWORD` do papel `rastro_backup`. Gera `pg_dump -Fc -n rastro`. Se o CapRover já faz backup do Postgres inteiro, avalie se precisa deste.
-- **Retenção:** `scripts/rastro_retention.py` com o papel `rastro_maint`. Por padrão só simula; apagar exige confirmação explícita.
+```bash
+# backup: pg_dump -Fc -n rastro pelo papel rastro_backup, rotação de 14 cópias
+docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
+  -v /srv/rastro-backups:/backups -e RASTRO_BACKUP_DIR=/backups \
+  -e RASTRO_PG_HOST=srv-captain--postgres -e RASTRO_PG_DB=rastro --env-file rastro-backup.env \
+  --entrypoint /rastro/rastro_backup.sh ghcr.io/digidem/rastro-pgtools:<versão>-pg<major>
+# retenção: por padrão só simula (dry-run); apagar exige confirmação explícita
+docker run --rm --network captain-overlay-network \
+  -e RASTRO_PG_HOST=srv-captain--postgres -e RASTRO_PG_DB=rastro --env-file rastro-maint.env \
+  --entrypoint python3 ghcr.io/digidem/rastro-pgtools:<versão>-pg<major> /rastro/rastro_retention.py --help
+```
 
-Os dois precisam alcançar o Postgres: rode-os num contêiner na rede `captain-overlay-network` (a imagem `rastro-pgtools` tem `pg_dump`).
+`rastro-backup.env` / `rastro-maint.env` (modo 600) têm só `RASTRO_PG_PASSWORD=` do papel correspondente. Se o CapRover já faz backup do Postgres inteiro, avalie se precisa deste.
 
 ## 7. Restaurar um backup
 
-Num Postgres novo (ou depois de `DROP DATABASE rastro`), com ferramentas da mesma versão do servidor ou mais antigas:
+Num Postgres novo (ou depois de `DROP DATABASE rastro`), com a imagem `-pg<major>` do servidor de DESTINO (e a de origem não pode ser mais nova que ela). Use as MESMAS senhas do formulário do app no `rastro-bootstrap.env`:
 
 ```bash
-docker run --rm --network captain-overlay-network -v "$PWD":/b:ro \
-  -e PGHOST=… -e PGUSER=… -e PGPASSWORD=… -e RASTRO_DB=rastro \
-  -e RASTRO_PG_PASSWORD_INGEST=… -e RASTRO_PG_PASSWORD_VIEWER=… \
-  -e RASTRO_PG_PASSWORD_MAINT=… -e RASTRO_PG_PASSWORD_BACKUP=… \
-  ghcr.io/digidem/rastro-pgtools:<versão> --restore /b/rastro-AAAAMMDD.dump
+docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
+  -v /srv/rastro-backups:/b:ro --env-file rastro-bootstrap.env \
+  ghcr.io/digidem/rastro-pgtools:<versão>-pg<major> --restore /b/rastro-AAAAMMDD.dump
 ```
 
-O script recusa: banco com o schema já existente; versões fora da cadeia `origem ≤ pg_dump ≤ pg_restore ≤ servidor`; banco de outra instalação. A restauração é em transação única — se falhar, nada fica aplicado. Se o processo cair depois da restauração e antes dos GRANTs, rode o script de novo sem `--restore`.
+`--user` com o seu uid: o dump é gravado com modo 600 e precisa ser legível pelo contêiner. O script recusa: banco com o schema já existente; dump de outro nome de banco (`RASTRO_DB` precisa ser igual ao da origem); versões fora da cadeia `origem ≤ pg_dump ≤ pg_restore ≤ servidor`; banco de outra instalação. A restauração é em transação única — se falhar, nada fica aplicado. Se o processo cair depois da restauração e antes dos GRANTs, rode o script de novo sem `--restore`.
 
 ## 8. Atualizar
 
 Mude a versão (tag) nos 4 apps do CapRover, ou rode `caprover deploy -i ghcr.io/digidem/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode o `rastro-pgtools` da nova versão sem `--restore` (a migração é aditiva e idempotente).
+
+Atenção: cada execução do bootstrap REAPLICA as quatro senhas do arquivo. Use sempre as mesmas do formulário do app; senha diferente derruba o ingest e a API até o formulário ser atualizado.
 
 ## 9. Problemas comuns
 

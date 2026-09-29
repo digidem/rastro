@@ -14,10 +14,8 @@ ok()   { echo "PASS $1"; }
 fail() { echo "FAIL $1"; FALHAS=$((FALHAS + 1)); }
 check() { if eval "$2"; then ok "$1"; else fail "$1"; fi; }
 
-docker build -q -t rastro-pgtools:17-matrix "$RAIZ/deploy/postgres" >/dev/null
-sed 's#^FROM postgres:17-alpine@sha256:[0-9a-f]*#FROM postgres:14-alpine#' "$RAIZ/deploy/postgres/Dockerfile" > "$AQUI/.Dockerfile.pg14"
-docker build -q -t rastro-pgtools:14-matrix -f "$AQUI/.Dockerfile.pg14" "$RAIZ/deploy/postgres" >/dev/null
-rm -f "$AQUI/.Dockerfile.pg14"
+docker build -q -t rastro-pgtools:17-matrix -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
+docker build -q -t rastro-pgtools:14-matrix --build-arg PG_IMAGE=postgres:14-alpine -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
 docker network create "$NET" >/dev/null 2>&1 || true
 TMP="$(mktemp -d)"; chmod 0777 "$TMP"
 SERVIDORES=()
@@ -67,6 +65,13 @@ ACL_LIMPA="$(sql pgA postgres adminpw rastro "$ACL")"
 SOMA_A="$(sql pgA postgres adminpw rastro "$SOMA")"
 check "backup: pg_dump -n rastro pelo papel rastro_backup" \
   'docker run --rm --network "$NET" -v "$TMP:/b" -e PGPASSWORD="$PW" --entrypoint pg_dump rastro-pgtools:17-matrix -h pgA -U rastro_backup -d rastro -n rastro -Fc -f /b/a.dump'
+
+# Docker rootless: o root do contêiner É o usuário do host (--user uid mapearia para um
+# sub-uid); no Docker normal (CapRover) o runbook usa --user "$(id -u):$(id -g)".
+mkdir -p "$TMP/bk"
+if docker info --format '{{.SecurityOptions}}' 2>/dev/null | grep -q rootless; then EU="0:0"; else EU="$(id -u):$(id -g)"; fi
+check "backup pelo script da imagem (--user, RASTRO_BACKUP_DIR)" 'docker run --rm --network "$NET" --user "$EU" -v "$TMP/bk:/backups" -e RASTRO_BACKUP_DIR=/backups -e RASTRO_PG_HOST=pgA -e RASTRO_PG_DB=rastro -e RASTRO_PG_PASSWORD="$PW" --entrypoint /rastro/rastro_backup.sh rastro-pgtools:17-matrix >/dev/null 2>&1 && ls "$TMP"/bk/rastro-*.dump >/dev/null'
+check "dump de rastro restaurado como rastro2 → recusado" '[[ "$(pgtools 17 pgA postgres adminpw rastro3 --restore /b/a.dump)" == *"não contém o schema"* ]]'
 
 echo "== B. PG17, admin não-superusuário: bootstrap e restore"
 servidor pgB postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24

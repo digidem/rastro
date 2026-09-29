@@ -38,13 +38,32 @@ if [ "$BUILD" = 1 ]; then
   docker build -q -t ghcr.io/digidem/rastro-ingest:$SIM_TAG -f "$RAIZ/services/rastro_gateway/Dockerfile" "$RAIZ/services" >/dev/null
   docker build -q -t ghcr.io/digidem/rastro-api:$SIM_TAG -f "$RAIZ/services/rastro_api/Dockerfile" "$RAIZ/services" >/dev/null
   docker build -q -t ghcr.io/digidem/rastro-web:$SIM_TAG "$RAIZ/web" >/dev/null
-  docker build -q -t ghcr.io/digidem/rastro-pgtools:$SIM_TAG "$RAIZ/deploy/postgres" >/dev/null
+  docker build -q -t ghcr.io/digidem/rastro-pgtools:$SIM_TAG -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
 fi
 
 echo "== certificados (SAN do nome interno do CapRover)"
 "$RAIZ/scripts/rastro_gen_certs.sh" --out-dir "$TMP/ca" --cert-dir "$SIM_CERTS" \
   --san "DNS:srv-captain--$SIM_APP-broker" --san "DNS:$SIM_APP-broker" >/dev/null
 chmod 0644 "$SIM_CERTS/ca.crt"
+
+export SIM_FRONT="$TMP/front"
+mkdir -p "$SIM_FRONT"
+"$RAIZ/scripts/rastro_gen_certs.sh" --out-dir "$TMP/front-ca" --cert-dir "$SIM_FRONT/certs" \
+  --san DNS:srv-captain--front >/dev/null
+chmod 0755 "$SIM_FRONT" "$SIM_FRONT/certs"; chmod 0644 "$SIM_FRONT/certs"/*
+cat > "$SIM_FRONT/nginx.conf" <<NGX
+server {
+  listen 443 ssl;
+  ssl_certificate /certs/server.crt;
+  ssl_certificate_key /certs/server.key;
+  location / {
+    proxy_pass http://srv-captain--$SIM_APP;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  }
+}
+NGX
 
 senha() { openssl rand -hex 16; }
 export SIM_PG_ADMIN_PW="$(senha)" SIM_PW_INGEST="$(senha)" SIM_PW_VIEWER="$(senha)" \

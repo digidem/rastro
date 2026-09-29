@@ -68,7 +68,8 @@ services:
   # (o mesmo script usado contra um Postgres existente, ex. CapRover). Idempotente.
   pg-bootstrap:
     build:
-      context: ./postgres
+      context: ./..
+      dockerfile: deploy/postgres/Dockerfile
     restart: "no"
     depends_on:
       postgres:

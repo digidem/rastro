@@ -11,7 +11,7 @@ set -euo pipefail
 umask 077  # dump contém trilhas (sensível) — 600 desde a criação (gate F5 NIT)
 
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DESTINO="$RAIZ/deploy/backups"
+DESTINO="${RASTRO_BACKUP_DIR:-$RAIZ/deploy/backups}"
 
 if ! command -v pg_dump >/dev/null 2>&1; then
   echo "ERRO: pg_dump não encontrado no PATH" >&2

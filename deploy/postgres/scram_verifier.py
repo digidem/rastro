@@ -30,6 +30,9 @@ def main() -> int:
     pw = sys.stdin.read()
     if pw.endswith("\n"):
         pw = pw[:-1]
+    if not pw.isascii():
+        print("ERRO: use só caracteres ASCII na senha (sem SASLprep aqui)", file=sys.stderr)
+        return 1
     if len(pw) < 24:
         print("ERRO: senha com menos de 24 caracteres", file=sys.stderr)
         return 1
