@@ -235,6 +235,7 @@ def test_aguardar_banco_prazo_zero_sai_3(monkeypatch):
 
 
 def test_main_propaga_codigo_do_banco_e_fecha(monkeypatch):
+    monkeypatch.setenv("RASTRO_PG_HOST", "pg.teste")
     monkeypatch.setenv("RASTRO_PG_PASSWORD", "x")
     monkeypatch.delenv("RASTRO_MQTT_CA_B64", raising=False)
     fechado = []
@@ -307,6 +308,7 @@ def test_main_sai_com_config_quando_ca_nunca_aparece(monkeypatch, tmp_path, capl
     monkeypatch.setenv("RASTRO_MQTT_CA_CERT", str(tmp_path / "ca.crt"))
     monkeypatch.setenv("RASTRO_MQTT_CA_WAIT_SECS", "0")
     monkeypatch.delenv("RASTRO_MQTT_CA_B64", raising=False)
+    monkeypatch.setenv("RASTRO_PG_HOST", "pg.teste")
     monkeypatch.setenv("RASTRO_PG_PASSWORD", "x")
     with caplog.at_level(logging.ERROR):
         assert main_mod.main() == main_mod.EXIT_CONFIG
@@ -328,3 +330,117 @@ def test_pg_user_explicito_vence():
         {"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_DB": "mapa", "RASTRO_PG_USER": "outro"}
     )
     assert cfg.user == "outro"
+
+
+# --- conexão publicada pelo preparo (conn.env) --------------------------------
+
+
+def _conn_env(tmp_path, texto):
+    arq = tmp_path / "conn.env"
+    arq.write_text(texto)
+    return str(arq)
+
+
+def test_conn_file_le_host_porta_sslmode_e_ignora_o_resto(tmp_path):
+    arq = _conn_env(
+        tmp_path,
+        "# comentário\nRASTRO_PG_HOST=pg.exemplo.com\nRASTRO_PG_PORT=6543\n"
+        "RASTRO_PG_SSLMODE=require\nRASTRO_PG_PASSWORD=segredo\nOUTRA=1\n\nlixo\n",
+    )
+    assert db_mod.ler_conn_file(arq) == {
+        "RASTRO_PG_HOST": "pg.exemplo.com",
+        "RASTRO_PG_PORT": "6543",
+        "RASTRO_PG_SSLMODE": "require",
+    }
+    assert db_mod.ler_conn_file(str(tmp_path / "nao-existe")) == {}
+
+
+def test_pgconfig_usa_o_arquivo_sem_host_no_ambiente(tmp_path):
+    arq = _conn_env(tmp_path, "RASTRO_PG_HOST=pg.exemplo.com\nRASTRO_PG_PORT=6543\nRASTRO_PG_SSLMODE=require\n")
+    cfg = db_mod.PgConfig.from_env({"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_CONN_FILE": arq})
+    assert (cfg.host, cfg.port, cfg.sslmode) == ("pg.exemplo.com", 6543, "require")
+    assert cfg.password == "x"  # senha nunca vem do arquivo
+
+
+def test_pgconfig_ambiente_vence_o_arquivo(tmp_path):
+    arq = _conn_env(tmp_path, "RASTRO_PG_HOST=do-arquivo\nRASTRO_PG_PORT=6543\nRASTRO_PG_SSLMODE=require\n")
+    cfg = db_mod.PgConfig.from_env(
+        {
+            "RASTRO_PG_PASSWORD": "x",
+            "RASTRO_PG_CONN_FILE": arq,
+            "RASTRO_PG_HOST": "do-ambiente",
+            "RASTRO_PG_PORT": "5432",
+            "RASTRO_PG_SSLMODE": "disable",
+        }
+    )
+    assert (cfg.host, cfg.port, cfg.sslmode) == ("do-ambiente", 5432, "disable")
+    # com RASTRO_PG_HOST no ambiente o arquivo nem é consultado
+    cfg = db_mod.PgConfig.from_env(
+        {"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_CONN_FILE": arq, "RASTRO_PG_HOST": "do-ambiente"}
+    )
+    assert (cfg.host, cfg.port, cfg.sslmode) == ("do-ambiente", 5432, "")
+
+
+def test_pgconfig_sslmode_vai_para_o_pool(monkeypatch):
+    capturado = {}
+
+    class _PoolFalso:
+        def __init__(self, **kw):
+            capturado.update(kw)
+
+    monkeypatch.setattr(db_mod, "ConnectionPool", _PoolFalso)
+    cfg = db_mod.PgConfig.from_env({"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_HOST": "h", "RASTRO_PG_SSLMODE": "require"})
+    db_mod.Db(cfg)
+    assert capturado["kwargs"]["sslmode"] == "require"
+    db_mod.Db(db_mod.PgConfig.from_env({"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_HOST": "h"}))
+    assert "sslmode" not in capturado["kwargs"]
+
+
+def test_aguardar_conn_file_imediato_com_host_ou_arquivo(tmp_path):
+    def sleep(_):
+        raise AssertionError("não deveria esperar")
+
+    assert db_mod.aguardar_conn_file({"RASTRO_PG_HOST": "h"}, sleep=sleep) is True
+    arq = _conn_env(tmp_path, "RASTRO_PG_HOST=h\n")
+    assert db_mod.aguardar_conn_file({"RASTRO_PG_CONN_FILE": arq}, sleep=sleep) is True
+
+
+def test_aguardar_conn_file_espera_e_expira(tmp_path, caplog):
+    relogio = {"t": 0.0}
+
+    def sleep(s):
+        relogio["t"] += s
+
+    with caplog.at_level(logging.INFO):
+        ok = db_mod.aguardar_conn_file(
+            {"RASTRO_PG_CONN_FILE": str(tmp_path / "x.env"), "RASTRO_PG_CONN_WAIT_SECS": "12"},
+            sleep=sleep,
+            monotonic=lambda: relogio["t"],
+        )
+    assert ok is False
+    assert relogio["t"] == 15.0
+    assert caplog.text.count("aguardando o preparo do Postgres") == 1
+
+
+def test_aguardar_conn_file_ve_o_arquivo_aparecer(tmp_path):
+    caminho = tmp_path / "x.env"
+    chamadas = {"n": 0}
+
+    def sleep(_):
+        chamadas["n"] += 1
+        if chamadas["n"] == 2:
+            caminho.write_text("RASTRO_PG_HOST=h\n")
+
+    ok = db_mod.aguardar_conn_file(
+        {"RASTRO_PG_CONN_FILE": str(caminho)}, sleep=sleep, monotonic=lambda: 0.0 + chamadas["n"]
+    )
+    assert ok is True
+
+
+def test_main_sai_com_config_sem_host_nem_arquivo(monkeypatch, tmp_path, caplog):
+    monkeypatch.delenv("RASTRO_PG_HOST", raising=False)
+    monkeypatch.setenv("RASTRO_PG_CONN_FILE", str(tmp_path / "nao-existe.env"))
+    monkeypatch.setenv("RASTRO_PG_CONN_WAIT_SECS", "0")
+    with caplog.at_level(logging.ERROR):
+        assert main_mod.main() == main_mod.EXIT_CONFIG
+    assert "preparo do Postgres não publicou a conexão" in caplog.text

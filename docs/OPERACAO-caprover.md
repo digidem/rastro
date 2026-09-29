@@ -9,11 +9,11 @@ navegador ──HTTPS──▶ nginx do CapRover ─▶ <app> (web) ─▶ <app>
 
 ## 0. Antes de começar
 
-- As imagens `communityfirst/rastro-*` da versão escolhida (0.2.0) precisam estar **públicas no Docker Hub**: o CapRover sempre faz `pull` ao implantar (mesmo com a imagem já no servidor) e falha com `error from registry: denied` se não achar. Isso inclui `communityfirst/rastro-pgtools:<versão>-pg17`, usada pelo app de preparo.
+- As imagens `communityfirst/rastro-*` da versão escolhida (0.3.0) precisam estar **públicas no Docker Hub**: o CapRover sempre faz `pull` ao implantar (mesmo com a imagem já no servidor) e falha com `error from registry: denied` se não achar. Isso inclui `communityfirst/rastro-pgtools:<versão>-pg17`, usada pelo app de preparo.
 - O **DNS curinga** do CapRover (`*.domínio-raiz`) precisa estar configurado: o app web e o download da CA usam `https://<app>.<domínio-raiz>`.
 - O gateway conecta em `<app>-mqtt.<domínio-raiz>`: o DNS curinga do CapRover já aponta esse nome para o servidor, e ele entra sozinho no certificado do broker. Um domínio seu extra é opcional (campo do formulário).
-- Tenha a **senha de admin do PostgreSQL**: no CapRover, é o valor de `POSTGRES_PASSWORD` nas variáveis de ambiente do app do Postgres. É o único campo obrigatório do formulário.
-- O nome interno do seu PostgreSQL no CapRover costuma ser `srv-captain--postgres` (o padrão do formulário).
+- Tenha a **conexão de admin do PostgreSQL numa URL só**: `postgresql://usuario:senha@host:5432/banco`. No CapRover: `postgresql://postgres:<POSTGRES_PASSWORD>@srv-captain--postgres:5432/postgres` (`POSTGRES_PASSWORD` está nas variáveis de ambiente do app do Postgres). Para Postgres externo/gerenciado, acrescente `?sslmode=require` (aceitos: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`; nenhum outro parâmetro). O `banco` da URL pode ser qualquer banco já existente ao qual o usuário conecte (ex.: o da sua string de conexão atual) — não é o banco do Rastro. O usuário precisa ser **superusuário ou ter `CREATEROLE` + `CREATEDB`**. Caracteres especiais na senha vão em percent-encoding (`@`=`%40`, `:`=`%3A`, `/`=`%2F`, `%`=`%25`, `#`=`%23`). É o único campo obrigatório do formulário.
+- Só o app temporário `<app>-setup` recebe a URL (com a senha). Ele publica **apenas host, porta e sslmode** (sem usuário nem senha) num volume compartilhado, `<app>-pgconn` (`/rastro-pgconn/conn.env`), que o ingest e a API leem sozinhos; por isso não há campos de host/porta.
 - Rastros de posição são sensíveis: a equipe decide quem tem acesso ao servidor e aos backups dele antes de instalar.
 
 ## 1. Adicionar a loja digidem (uma vez)
@@ -27,7 +27,7 @@ One-Click Apps → **Rastro** → preencha só:
 | Campo | Valor |
 |---|---|
 | App name | o nome escolhido (ex.: `rastro`) |
-| Senha de admin do PostgreSQL | `POSTGRES_PASSWORD` do app do Postgres (**obrigatório**) |
+| Conexão de admin do PostgreSQL | a URL `postgresql://usuario:senha@host:5432/banco[?sslmode=…]` (**obrigatório**, §0) |
 | Nome do banco | `rastro` (padrão). Se já houver outro Rastro neste Postgres, use outro nome. |
 | Domínio extra do MQTT | vazio (opcional) |
 
@@ -41,8 +41,8 @@ O app `<app>-setup` roda **uma vez** o preparo do Postgres existente e depois fi
 
 - Espere a linha final `OK: PostgreSQL preparado para o Rastro … — agora APAGUE o app <app>-setup`.
 - Antes de apagar, **anote** (variáveis de ambiente dele) `RASTRO_PG_PASSWORD_MAINT` e `RASTRO_PG_PASSWORD_BACKUP`, se for usar retenção/backup.
-- **Apague o app `<app>-setup`**: ele guarda a senha de admin do Postgres.
-- Se aparecer `ERRO: …` (senha de admin errada, host errado, nome já usado por outra coisa…), corrija a variável indicada no app `<app>-setup` e clique **Save & Restart**. Repetir é seguro.
+- **Apague o app `<app>-setup`**: ele guarda a URL (com a senha) de admin do Postgres. Na tela de remoção, **não** marque o volume `<app>-pgconn`: ingest e API leem dele o host/porta do Postgres.
+- Se aparecer `ERRO: …` (`RASTRO_PG_ADMIN_URL inválida`, senha de admin errada, host errado, nome já usado por outra coisa…), corrija a variável indicada (ex.: `RASTRO_PG_ADMIN_URL`) no app `<app>-setup` e clique **Save & Restart**. Repetir é seguro.
 
 Salvaguardas para um Postgres em produção:
 
@@ -52,7 +52,8 @@ Salvaguardas para um Postgres em produção:
 - Usa `lock_timeout=5s`, `statement_timeout=120s` e `idle_in_transaction_session_timeout=60s`: se algo estiver ocupado, desiste em vez de travar as outras cargas.
 - Espera o Postgres subir (12 tentativas de 10 s) e exige versão 14 ou mais nova.
 - É **idempotente**: rodar de novo reaplica as senhas dos papéis (sincroniza com o app) e a migração aditiva do schema.
-- Um admin sem superusuário (Postgres gerenciado) funciona se tiver `CREATEROLE` e `CREATEDB`.
+- Um admin sem superusuário (Postgres gerenciado) funciona se tiver `CREATEROLE` e `CREATEDB`; sem esses privilégios o preparo para com `ERRO` e uma DICA para usar um usuário com eles (ex.: o superusuário do Postgres).
+- Depois do `OK`, o app grava `/rastro-pgconn/conn.env` (só `RASTRO_PG_HOST`, `RASTRO_PG_PORT`, `RASTRO_PG_SSLMODE`). O ingest e a API esperam esse arquivo por até 5 min (`RASTRO_PG_CONN_WAIT_SECS`) se `RASTRO_PG_HOST` não estiver definido; variáveis de ambiente `RASTRO_PG_HOST/PORT/SSLMODE` têm precedência sobre o arquivo.
 
 ## 4. Depois de instalar
 
@@ -135,7 +136,7 @@ docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
 
 ## 8. Atualizar
 
-Mude a versão (tag) nos apps do CapRover, ou rode `caprover deploy -i communityfirst/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode de novo o preparo — recrie temporariamente o app `<app>-setup` com a senha de admin, ou use `rastro-pgtools` sem `--restore` como no §7 (a migração é aditiva e idempotente).
+Mude a versão (tag) nos apps do CapRover, ou rode `caprover deploy -i communityfirst/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode de novo o preparo — recrie temporariamente o app `<app>-setup` com a URL de admin, ou use `rastro-pgtools` sem `--restore` como no §7 (a migração é aditiva e idempotente).
 
 Atenção: cada execução do preparo REAPLICA as quatro senhas dos papéis. Use sempre as mesmas dos apps `<app>-ingest`/`<app>-api`; senha diferente derruba o ingest e a API até as variáveis serem atualizadas.
 
@@ -146,6 +147,9 @@ Atenção: cada execução do preparo REAPLICA as quatro senhas dos papéis. Use
 | broker sai com `ERRO: /mosquitto/data não é gravável` | volume antigo com dono errado: `chown -R 1883:1883` no volume |
 | broker sai com `configuração TLS incompleta` | (certificado próprio) só uma ou duas das três variáveis B64 preenchidas |
 | ingest sai com código 2 e `banco não está pronto` | o preparo (`<app>-setup`) não deu `OK`, ou nome do banco diferente (a mensagem lista o que falta e o search_path) |
+| `<app>-setup` termina com `ERRO: RASTRO_PG_ADMIN_URL inválida (…)` | a URL está mal formada (esquema, host/usuário/senha ausentes, `sslmode` fora da lista, `#`/`@`/`:`/`/` da senha sem percent-encoding); o motivo vem na mensagem, nunca o valor |
+| `<app>-setup` termina com `ERRO: o admin precisa ser superusuário ou ter CREATEROLE e CREATEDB` | use na URL o superusuário do Postgres ou um usuário com `CREATEROLE`+`CREATEDB` |
+| ingest/API ficam em `aguardando o preparo do Postgres publicar a conexão` | o `<app>-setup` ainda não deu `OK` (ou foi apagado antes dele); ao esgotar os 5 min o ingest sai com código 2 e a API falha ao subir |
 | `<app>-setup` termina com `ERRO:` | leia a mensagem/DICA nos logs; corrija a variável e use Save & Restart (§3) |
 | ingest espera o `ca.crt` | broker ainda não gerou a CA no volume `<app>-pki` — veja os logs do broker |
 | ingest sai com código 3 | Postgres inalcançável por 120 s (host/rede) |

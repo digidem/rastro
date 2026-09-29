@@ -87,7 +87,7 @@ SQL
 )"
 SERVER_MAJOR=$(( SERVER_NUM / 10000 ))
 if [ "$SUPER" != t ] && { [ "$CRIAROLE" != t ] || [ "$CRIADB" != t ]; }; then
-  erro "o admin precisa ser superusuário ou ter CREATEROLE e CREATEDB"
+  erro "o admin precisa ser superusuário ou ter CREATEROLE e CREATEDB (use um usuário com CREATEROLE+CREATEDB, ex.: o superusuário do Postgres)"
 fi
 
 # --- 2. (restore) cadeia de versões, ANTES de criar qualquer coisa ------------------------

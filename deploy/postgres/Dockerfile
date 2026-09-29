@@ -18,5 +18,9 @@ COPY deploy/postgres/entrypoint.sh deploy/postgres/setup-service.sh deploy/postg
 COPY deploy/postgres/init/01-schema.sql /rastro/init/01-schema.sql
 RUN chmod 0555 /rastro/entrypoint.sh /rastro/setup-service.sh /rastro/bootstrap-existing.sh /rastro/rastro_backup.sh /rastro/rastro_retention.py \
  && chmod 0444 /rastro/scram_verifier.py /rastro/init/01-schema.sql
+# ponto de montagem do volume onde o setup publica conn.env (host/porta/sslmode, sem senha).
+# Dono = uid do processo do setup (postgres, 70): se ingest/API montarem o volume novo antes,
+# o Docker copia este dono e o setup continua podendo escrever (as três imagens usam o mesmo).
+RUN mkdir -p /rastro-pgconn && chown 70:70 /rastro-pgconn
 USER postgres
 ENTRYPOINT ["bash", "/rastro/entrypoint.sh"]

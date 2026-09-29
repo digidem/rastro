@@ -57,6 +57,60 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+_CONN_FILE_PADRAO = "/rastro-pgconn/conn.env"
+_CONN_WAIT_PADRAO_SECS = 300.0
+_CONN_WAIT_POLL_SECS = 5.0
+
+
+def _conn_file_path() -> str:
+    return os.environ.get("RASTRO_PG_CONN_FILE") or _CONN_FILE_PADRAO
+
+
+def _ler_conn_file(caminho: str) -> dict[str, str]:
+    """``KEY=VALUE`` do conn.env publicado pelo app -setup (HOST/PORT/SSLMODE).
+
+    Ausente/ilegível → ``{}``. Só essas 3 chaves: nunca lê senha do arquivo.
+    """
+    try:
+        with open(caminho, encoding="utf-8") as fh:
+            linhas = fh.read().splitlines()
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for linha in linhas:
+        chave, sep, valor = linha.strip().partition("=")
+        if sep and chave.strip() in ("RASTRO_PG_HOST", "RASTRO_PG_PORT", "RASTRO_PG_SSLMODE"):
+            out[chave.strip()] = valor.strip()
+    return out
+
+
+def _pg_conn() -> tuple[str, str, str]:
+    """(host, porta, sslmode): o ambiente vence; o conn.env só entra sem RASTRO_PG_HOST."""
+    arq = {} if os.environ.get("RASTRO_PG_HOST") else _ler_conn_file(_conn_file_path())
+    return (
+        os.environ.get("RASTRO_PG_HOST") or arq.get("RASTRO_PG_HOST") or "localhost",
+        os.environ.get("RASTRO_PG_PORT") or arq.get("RASTRO_PG_PORT") or "5432",
+        os.environ.get("RASTRO_PG_SSLMODE") or arq.get("RASTRO_PG_SSLMODE") or "",
+    )
+
+
+def _aguardar_conn_file(*, sleep=time.sleep, monotonic=time.monotonic) -> bool:
+    """Sem RASTRO_PG_HOST, espera o app -setup publicar o conn.env (poll 5 s)."""
+    if os.environ.get("RASTRO_PG_HOST"):
+        return True
+    caminho = _conn_file_path()
+    if os.path.isfile(caminho):
+        return True
+    espera = float(os.environ.get("RASTRO_PG_CONN_WAIT_SECS") or _CONN_WAIT_PADRAO_SECS)
+    LOGGER.info("aguardando o preparo do Postgres publicar a conexão em %s", caminho)
+    prazo = monotonic() + max(0.0, espera)
+    while monotonic() < prazo:
+        sleep(_CONN_WAIT_POLL_SECS)
+        if os.path.isfile(caminho):
+            return True
+    return os.path.isfile(caminho)
+
+
 def _pg_user() -> str:
     """Papel do Postgres: RASTRO_PG_USER, senão <banco>_viewer (nome do bootstrap)."""
     return os.environ.get("RASTRO_PG_USER") or f"{_env('RASTRO_PG_DB', 'rastro')}_viewer"
@@ -64,12 +118,14 @@ def _pg_user() -> str:
 
 def _conninfo() -> str:
     """Conninfo SEM a senha — a senha vai por kwargs e nunca aparece em logs."""
-    return (
-        f"host={_env('RASTRO_PG_HOST', 'localhost')}"
-        f" port={_env('RASTRO_PG_PORT', '5432')}"
+    host, porta, sslmode = _pg_conn()
+    info = (
+        f"host={host}"
+        f" port={porta}"
         f" dbname={_env('RASTRO_PG_DB', 'rastro')}"
         f" user={_pg_user()}"
     )
+    return f"{info} sslmode={sslmode}" if sslmode else info
 
 
 def _ping(conn: psycopg.Connection) -> None:
@@ -162,6 +218,11 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if not _aguardar_conn_file():
+            raise RuntimeError(
+                "sem RASTRO_PG_HOST e o preparo do Postgres não publicou a conexão em "
+                f"{_conn_file_path()} (RASTRO_PG_CONN_WAIT_SECS)"
+            )
         pool = ConnectionPool(
             conninfo=_conninfo(),
             kwargs={
@@ -179,8 +240,8 @@ def create_app() -> FastAPI:
         app.state.pool = pool
         LOGGER.info(
             "pool de conexões criado (host=%s porta=%s banco=%s usuário=%s)",
-            _env("RASTRO_PG_HOST", "localhost"),
-            _env("RASTRO_PG_PORT", "5432"),
+            _pg_conn()[0],
+            _pg_conn()[1],
             _env("RASTRO_PG_DB", "rastro"),
             _pg_user(),
         )

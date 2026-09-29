@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 
 import psycopg
@@ -19,6 +20,67 @@ log = logging.getLogger(__name__)
 # Prazo total que o ingester dá ao Postgres no boot (F3b) antes de desistir —
 # compose com depends_on healthy ainda deixa janela para restart/volume init.
 STARTUP_TIMEOUT_PADRAO_SECS = 120.0
+
+# Arquivo publicado pelo app "-setup" (CapRover) num volume compartilhado com SÓ
+# host/porta/sslmode do Postgres — nunca usuário nem senha.
+CONN_FILE_ENV = "RASTRO_PG_CONN_FILE"
+CONN_FILE_PADRAO = "/rastro-pgconn/conn.env"
+CONN_WAIT_ENV = "RASTRO_PG_CONN_WAIT_SECS"
+CONN_WAIT_PADRAO_SECS = 300.0
+CONN_WAIT_POLL_SECS = 5.0
+_CONN_FILE_CHAVES = ("RASTRO_PG_HOST", "RASTRO_PG_PORT", "RASTRO_PG_SSLMODE")
+
+
+def ler_conn_file(caminho: str) -> dict[str, str]:
+    """Lê ``KEY=VALUE`` do conn.env (só HOST/PORT/SSLMODE; o resto é ignorado).
+
+    Arquivo ausente/ilegível → ``{}``. Nunca lê senha: chaves desconhecidas
+    (inclusive uma eventual ``RASTRO_PG_PASSWORD``) são descartadas.
+    """
+    try:
+        with open(caminho, encoding="utf-8") as fh:
+            linhas = fh.read().splitlines()
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, _, valor = linha.partition("=")
+        chave = chave.strip()
+        if chave in _CONN_FILE_CHAVES:
+            out[chave] = valor.strip()
+    return out
+
+
+def aguardar_conn_file(
+    env: dict | None = None,
+    *,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> bool:
+    """Espera o preparo do Postgres publicar o conn.env (como a espera da CA).
+
+    Com ``RASTRO_PG_HOST`` definido, ou com o arquivo já presente, retorna True
+    na hora. Senão avisa uma vez e consulta a cada 5 s até
+    ``RASTRO_PG_CONN_WAIT_SECS`` (padrão 300); esgotado → False.
+    """
+    env = os.environ if env is None else env
+    if env.get("RASTRO_PG_HOST"):
+        return True
+    caminho = env.get(CONN_FILE_ENV) or CONN_FILE_PADRAO
+    if os.path.isfile(caminho):
+        return True
+    espera = float(env.get(CONN_WAIT_ENV) or CONN_WAIT_PADRAO_SECS)
+    log.info("aguardando o preparo do Postgres publicar a conexão em %s", caminho)
+    prazo = monotonic() + max(0.0, espera)
+    while monotonic() < prazo:
+        sleep(CONN_WAIT_POLL_SECS)
+        if os.path.isfile(caminho):
+            return True
+    return os.path.isfile(caminho)
+
 
 # Checagem de prontidão do banco no boot. UMA consulta, e SÓ metadados:
 # nada de SELECT em positions/device_telemetry (tabelas de histórico com
@@ -68,6 +130,7 @@ class PgConfig:
     dbname: str
     user: str
     password: str
+    sslmode: str = ""
     startup_timeout_secs: float = STARTUP_TIMEOUT_PADRAO_SECS
 
     @classmethod
@@ -77,9 +140,14 @@ class PgConfig:
         if not password:
             raise RuntimeError("RASTRO_PG_PASSWORD não definida")
         dbname = env.get("RASTRO_PG_DB") or "rastro"
+        # variáveis de ambiente vencem; o conn.env só entra sem RASTRO_PG_HOST
+        arq: dict[str, str] = {}
+        if not env.get("RASTRO_PG_HOST"):
+            arq = ler_conn_file(env.get(CONN_FILE_ENV) or CONN_FILE_PADRAO)
         return cls(
-            host=env.get("RASTRO_PG_HOST", "localhost"),
-            port=int(env.get("RASTRO_PG_PORT", "5432")),
+            host=env.get("RASTRO_PG_HOST") or arq.get("RASTRO_PG_HOST") or "localhost",
+            port=int(env.get("RASTRO_PG_PORT") or arq.get("RASTRO_PG_PORT") or "5432"),
+            sslmode=env.get("RASTRO_PG_SSLMODE") or arq.get("RASTRO_PG_SSLMODE") or "",
             dbname=dbname,
             # sem RASTRO_PG_USER: o bootstrap cria o papel <banco>_ingest
             user=env.get("RASTRO_PG_USER") or f"{dbname}_ingest",
@@ -104,6 +172,8 @@ class Db:
                 "dbname": cfg.dbname,
                 "user": cfg.user,
                 "password": cfg.password,
+                # vazio = padrão do libpq (prefer)
+                **({"sslmode": cfg.sslmode} if cfg.sslmode else {}),
             },
         )
 

@@ -63,16 +63,18 @@ server {
 NGX
 
 senha() { openssl rand -hex 16; }
-export SIM_PG_ADMIN_PW="$(senha)" SIM_PW_INGEST="$(senha)" SIM_PW_VIEWER="$(senha)" \
+# senha de admin com caracteres especiais (@ : / % #): exercita o percent-encoding da URL
+export SIM_PG_ADMIN_PW="$(senha)@:/%#x" SIM_PW_INGEST="$(senha)" SIM_PW_VIEWER="$(senha)" \
        SIM_PW_MAINT="$(senha)" SIM_PW_BACKUP="$(senha)" SIM_PW_GATEWAY="$(senha)" \
        SIM_PW_MQTT_INGEST="$(senha)" SIM_API_TOKEN="$(openssl rand -hex 24)"
-# Só o necessário (como o usuário no CapRover): tag, senha de admin do Postgres, nome do banco
+# Só o necessário (como o usuário no CapRover): tag, URL de admin do Postgres, nome do banco
 # e as senhas que a sonda precisa conhecer. O restante vem dos padrões do template.
 python3 - "$TMP/values.json" <<'PY'
-import json, os, sys
+import json, os, sys, urllib.parse
 json.dump({
   "$$cap_tag": os.environ["SIM_TAG"],
-  "$$cap_pg_admin_password": os.environ["SIM_PG_ADMIN_PW"],
+  "$$cap_pg_admin_url": "postgresql://postgres:%s@srv-captain--postgres:5432/postgres"
+                        % urllib.parse.quote(os.environ["SIM_PG_ADMIN_PW"], safe=""),
   "$$cap_pg_database": os.environ["SIM_DB"],
   "$$cap_mqtt_pw_gateway": os.environ["SIM_PW_GATEWAY"],
   "$$cap_mqtt_pw_ingest": os.environ["SIM_PW_MQTT_INGEST"],
@@ -102,6 +104,19 @@ done
 if [ "$ESTADO" = ok ]; then echo "setup: OK"; else echo "setup: FALHOU ($ESTADO)"; tail -20 <<<"$LOG"; exit 1; fi
 # ocioso de verdade: continua "running" (não reexecuta contra o banco)
 [ "$("${DC[@]}" ps --format '{{.State}}' "$SETUP")" = running ] && echo "PASS setup ocioso após o OK" || { echo "FAIL setup não ficou ocioso"; RC_SETUP=1; }
+# conn.env publicado pelo setup: só host/porta/sslmode; a senha/usuário de admin NÃO aparecem
+# nele nem no ambiente de ingest/API (só o app -setup os tem)
+CONN="$("${DC[@]}" exec -T "$SIM_APP-ingest" cat /rastro-pgconn/conn.env 2>&1 || true)"
+if [ "$(sed 's/=.*//' <<<"$CONN" | sort | tr '\n' ' ')" = "RASTRO_PG_HOST RASTRO_PG_PORT RASTRO_PG_SSLMODE " ] \
+   && grep -qx 'RASTRO_PG_HOST=srv-captain--postgres' <<<"$CONN" && [ "$(wc -l <<<"$CONN")" = 3 ] \
+   && ! grep -qF -- "$SIM_PG_ADMIN_PW" <<<"$CONN"; then
+  echo "PASS conn.env só com host/porta/sslmode (sem senha)"
+else echo "FAIL conn.env inesperado"; RC_SETUP=1; fi
+VAZOU=0
+for s in "$SIM_APP-ingest" "$SIM_APP-api" "$SIM_APP-broker" "$SIM_APP"; do
+  if "${DC[@]}" exec -T "$s" sh -c 'env' 2>/dev/null | grep -qE 'RASTRO_PG_ADMIN|POSTGRES_PASSWORD'; then VAZOU=1; fi
+done
+[ "$VAZOU" = 0 ] && echo "PASS credencial de admin só no app -setup" || { echo "FAIL credencial de admin vazou para outro serviço"; RC_SETUP=1; }
 sleep 5
 "${DC[@]}" ps --format '{{.Service}} {{.State}}' | sort
 

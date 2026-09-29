@@ -12,5 +12,8 @@ RUN pip install --no-cache-dir /app/rastro_gateway
 # broker): se o ingest montar o volume antes do broker, o Docker copia este dono
 # para o volume novo e o broker continua podendo publicar a CA nele.
 RUN mkdir -p /rastro-pki && chown 1883:1883 /rastro-pki
+# ponto de montagem do volume com conn.env (host/porta/sslmode do Postgres, sem senha) publicado
+# pelo app -setup; dono uid 70 = o do processo do setup (imagem rastro-pgtools, postgres).
+RUN mkdir -p /rastro-pgconn && chown 70:70 /rastro-pgconn
 USER rastro
 CMD ["python", "-m", "rastro_gateway.ingest"]

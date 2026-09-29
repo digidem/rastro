@@ -15,7 +15,7 @@ Uso:
   conferência; as sondas rodam como contêineres na mesma rede.
 - ``caproverExtra`` é removido; volumes nomeados viram volumes de topo (compartilhados
   entre serviços, como o ``<app>-pki`` que leva a CA pública do broker ao ingest e ao web).
-- Variáveis sem ``defaultValue`` (ex.: ``$$cap_pg_admin_password``) DEVEM vir em valores.json.
+- Variáveis sem ``defaultValue`` (ex.: ``$$cap_pg_admin_url``) DEVEM vir em valores.json.
 Só lê e escreve arquivos (roda no sandbox sem rede).
 """
 from __future__ import annotations

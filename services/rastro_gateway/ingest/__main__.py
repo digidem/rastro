@@ -91,6 +91,13 @@ def aguardar_banco(database, timeout_secs: float) -> int:
 
 def main() -> int:
     _setup_logging()
+    if not db.aguardar_conn_file():
+        log.error(
+            "FALHA: sem RASTRO_PG_HOST e o preparo do Postgres não publicou a conexão em %s "
+            "(RASTRO_PG_CONN_WAIT_SECS)",
+            os.environ.get(db.CONN_FILE_ENV) or db.CONN_FILE_PADRAO,
+        )
+        return EXIT_CONFIG
     try:
         mqtt_cfg = mqtt_in.MqttConfig.from_env()
         pg_cfg = db.PgConfig.from_env()
