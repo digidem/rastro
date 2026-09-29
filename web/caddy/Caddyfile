@@ -1,0 +1,55 @@
+# Rastro — web autocontida (CapRover): caddy serve a SPA, o /config.json de
+# runtime, o volume /tiles/* e faz proxy de /api/*. Os valores vindos do env
+# (RASTRO_TITLE, RASTRO_API_UPSTREAM) são validados pelo entrypoint.
+#
+# TLS: feito PELO PROXY NA FRENTE (nginx do CapRover), que fala HTTP/1.1 com o
+# contêiner e manda X-Forwarded-Proto. O caddy NÃO emite certificado nem tenta
+# ACME (auto_https off); em modo HTTP puro o caddy nem tem como emitir.
+{
+	admin off
+	auto_https off
+	servers {
+		# só aceita X-Forwarded-* vindo das redes privadas (o proxy do CapRover);
+		# é isso que faz X-Forwarded-Proto chegar correto ao viewer/API.
+		trusted_proxies static private_ranges
+	}
+}
+
+:80 {
+	# CSP estrita (sem inline/eval/terceiros); `blob:` exigido pelos workers do maplibre.
+	header {
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# título do deploy, escrito pelo entrypoint a partir de RASTRO_TITLE.
+	# no-store: trocar RASTRO_TITLE (redeploy) vale na hora, sem cache.
+	handle /config.json {
+		root * /tmp/rastro-www
+		file_server
+		header Cache-Control no-store
+	}
+
+	# basemap + glyphs: pmtiles/glyphs estáticos, volume read-only (D9)
+	handle_path /tiles/* {
+		root * /srv/tiles
+		file_server
+		# qualquer .pmtiles: o browser não deve tentar interpretar o corpo
+		header /*.pmtiles Content-Type application/octet-stream
+	}
+
+	# API: mesmo prefixo /api (o viewer usa caminhos relativos; same-origin,
+	# sem CORS). O upstream vem do env — validado pelo entrypoint.
+	handle /api/* {
+		reverse_proxy {$RASTRO_API_UPSTREAM}
+	}
+
+	# SPA estática (fallback para /index.html em rotas do app)
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+}

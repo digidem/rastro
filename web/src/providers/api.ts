@@ -1,3 +1,4 @@
+import { type Loc, credenciaisPermitidas } from "../lib/credenciais.js";
 import type { NodeInfo } from "../store.js";
 
 /** Token ausente/rejeitado (HTTP 401) — a UI deve pedir o token de novo. */
@@ -56,6 +57,11 @@ export interface ApiClientOptions {
    * e no modo cookie — nesse caso o cookie HttpOnly autentica via same-origin.
    */
   getToken?: () => string | undefined;
+  /**
+   * Localização usada no veto a credencial em canal plano; default
+   * window.location (injetável só para teste).
+   */
+  loc?: Loc;
 }
 
 // Formato cru da API (GeoJSON); campos em snake_case são lidos por índice.
@@ -152,14 +158,20 @@ const trackFromFeature = (
 /**
  * Cliente da API FastAPI do viewer (GeoJSON). Sem logs de coordenadas:
  * erros carregam só status/texto curto. Autenticação: cookie HttpOnly
- * (same-origin, o JS nunca o lê) ou Bearer DEV via getToken.
+ * (same-origin, o JS nunca o lê) ou Bearer DEV via getToken — os DOIS vetados
+ * em canal plano (http: fora de loopback), onde nenhuma credencial viaja.
  */
 export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
   const base = opts.base ?? "";
 
+  // Sem TLS e fora do loopback nada de credencial: nem o Bearer de dev, nem o
+  // cookie de sessão (credentials "omit"). /api/healthz (público) nunca manda
+  // credencial em canal nenhum.
+  const credencialOk = credenciaisPermitidas(opts.loc);
+
   // fetch que engole falha de rede e traduz 401; nunca loga corpo/coords/token.
   // credentials "same-origin" explícito: o cookie da sessão viaja em toda
-  // chamada de API (mesma origem).
+  // chamada de API (mesma origem); "omit" no caso de canal plano acima.
   const request = async (
     path: string,
     token: string | undefined,
@@ -167,7 +179,7 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
     body?: string,
   ): Promise<Response> => {
     const headers: Record<string, string> = {};
-    if (token !== undefined) {
+    if (token !== undefined && credencialOk) {
       headers.Authorization = `Bearer ${token}`;
     }
     if (body !== undefined) {
@@ -179,7 +191,7 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
         method,
         headers,
         body,
-        credentials: "same-origin",
+        credentials: credencialOk ? "same-origin" : "omit",
       });
     } catch {
       throw new ErrOffline();
@@ -232,9 +244,10 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
 
     async ping() {
       try {
-        // healthz não exige auth; indicador de conexão.
+        // healthz não exige auth: nunca manda credencial (nem cookie), em
+        // qualquer canal — só mede conexão.
         const res = await fetch(`${base}/api/healthz`, {
-          credentials: "same-origin",
+          credentials: "omit",
         });
         return res.ok;
       } catch {

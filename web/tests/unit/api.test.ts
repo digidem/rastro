@@ -319,7 +319,7 @@ describe("ping()", () => {
 
     await expect(api.ping()).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledWith("/api/healthz", {
-      credentials: "same-origin",
+      credentials: "omit",
     });
   });
 
