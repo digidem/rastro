@@ -14,7 +14,7 @@ services:
       retries: 30
 
   pg-bootstrap:
-    image: ghcr.io/digidem/rastro-pgtools:${SIM_TAG}
+    image: communityfirst/rastro-pgtools:${SIM_TAG}
     restart: "no"
     depends_on:
       postgres:
@@ -41,7 +41,7 @@ services:
         aliases: [srv-captain--front]
 
   probe:
-    image: ghcr.io/digidem/rastro-ingest:${SIM_TAG}
+    image: communityfirst/rastro-ingest:${SIM_TAG}
     profiles: [probe]
     entrypoint: ["python", "/sim/probe.py"]
     environment:

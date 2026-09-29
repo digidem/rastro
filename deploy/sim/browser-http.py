@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """F5 — navegador real: viewer em HTTP puro num host NÃO local não envia credencial.
 
-Sobe a imagem web (ghcr.io/digidem/rastro-web:<tag>) com uma API falsa, publica em
+Sobe a imagem web (communityfirst/rastro-web:<tag>) com uma API falsa, publica em
 127.0.0.1 e abre no Chrome headless por um nome não local (rastro.test, via
 --host-resolver-rules). Injeta um cookie de sessão NÃO-Secure para /api (pior caso) e
 confere pelo CDP que nenhuma requisição leva Authorization nem Cookie, e que a tela
@@ -94,7 +94,7 @@ def main():
            "--network-alias", "api-falsa", "busybox:1.36", "sh", "-c", stub)
         sh("docker", "run", "-d", "--rm", "--name", "bt-web", "--network", REDE,
            "-p", f"127.0.0.1:{PORTA_WEB}:80", "-e", "RASTRO_API_UPSTREAM=api-falsa:8080",
-           f"ghcr.io/digidem/rastro-web:{TAG}")
+           f"communityfirst/rastro-web:{TAG}")
         time.sleep(2)
         chrome = subprocess.Popen(
             ["google-chrome", "--headless=new", f"--remote-debugging-port={PORTA_CDP}",

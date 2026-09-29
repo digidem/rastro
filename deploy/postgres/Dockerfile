@@ -5,9 +5,9 @@
 #     -e PGHOST=srv-captain--postgres -e PGUSER=postgres -e PGPASSWORD=... \
 #     -e RASTRO_PG_PASSWORD_INGEST=... -e RASTRO_PG_PASSWORD_VIEWER=... \
 #     -e RASTRO_PG_PASSWORD_MAINT=... -e RASTRO_PG_PASSWORD_BACKUP=... \
-#     ghcr.io/digidem/rastro-pgtools
+#     communityfirst/rastro-pgtools
 # Uma imagem por versão MAJOR do servidor (pg_restore nunca pode ser mais novo que o
-# servidor): ghcr.io/digidem/rastro-pgtools:<versão>-pg14 … -pg17. Use a do seu servidor.
+# servidor): communityfirst/rastro-pgtools:<versão>-pg14 … -pg17. Use a do seu servidor.
 # Também traz rastro_backup.sh e rastro_retention.py (use --entrypoint).
 # Build context: RAIZ do repositório (docker build -f deploy/postgres/Dockerfile .).
 ARG PG_IMAGE=postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24

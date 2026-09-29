@@ -4,7 +4,7 @@
 # Uso: deploy/sim/run.sh <caminho/do/rastro.yml> [--keep] [--no-build]
 #   rastro.yml: o template da loja (digidem/caprover-one-click-apps, public/v4/apps/).
 #
-# Passos: constrói as 5 imagens com os nomes do GHCR e a tag "simtest"; gera certificados
+# Passos: constrói as 5 imagens com os nomes do Docker Hub (communityfirst) e a tag "simtest"; gera certificados
 # com o SAN do nome interno do CapRover; senhas aleatórias; gera o compose A PARTIR do
 # template (rastro_caprover_sim.py); sobe em rede interna (sem portas no host); espera o
 # bootstrap; roda a sonda (deploy/sim/probe.py) e confere o conteúdo das imagens.
@@ -34,11 +34,11 @@ trap limpar EXIT
 
 if [ "$BUILD" = 1 ]; then
   echo "== build das imagens"
-  docker build -q -t ghcr.io/digidem/rastro-broker:$SIM_TAG "$RAIZ/broker" >/dev/null
-  docker build -q -t ghcr.io/digidem/rastro-ingest:$SIM_TAG -f "$RAIZ/services/rastro_gateway/Dockerfile" "$RAIZ/services" >/dev/null
-  docker build -q -t ghcr.io/digidem/rastro-api:$SIM_TAG -f "$RAIZ/services/rastro_api/Dockerfile" "$RAIZ/services" >/dev/null
-  docker build -q -t ghcr.io/digidem/rastro-web:$SIM_TAG "$RAIZ/web" >/dev/null
-  docker build -q -t ghcr.io/digidem/rastro-pgtools:$SIM_TAG -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
+  docker build -q -t communityfirst/rastro-broker:$SIM_TAG "$RAIZ/broker" >/dev/null
+  docker build -q -t communityfirst/rastro-ingest:$SIM_TAG -f "$RAIZ/services/rastro_gateway/Dockerfile" "$RAIZ/services" >/dev/null
+  docker build -q -t communityfirst/rastro-api:$SIM_TAG -f "$RAIZ/services/rastro_api/Dockerfile" "$RAIZ/services" >/dev/null
+  docker build -q -t communityfirst/rastro-web:$SIM_TAG "$RAIZ/web" >/dev/null
+  docker build -q -t communityfirst/rastro-pgtools:$SIM_TAG -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
 fi
 
 echo "== certificados (SAN do nome interno do CapRover)"
@@ -119,13 +119,13 @@ done
 
 echo "== conteúdo das imagens (sem testes, .git, .env, chaves)"
 for i in broker ingest api web pgtools; do
-  achados=$(docker run --rm --entrypoint sh "ghcr.io/digidem/rastro-$i:$SIM_TAG" -c \
+  achados=$(docker run --rm --entrypoint sh "communityfirst/rastro-$i:$SIM_TAG" -c \
     'find / -xdev \( -name .git -o -name "*.env" -o -name .env -o -name "test_*.py" -o -name "*.test.ts" -o -name conftest.py -o -name "*.key" -o -name "*.pem" \) 2>/dev/null | grep -vE "^/(proc|sys|usr/lib/ssl/|usr/lib/python3[^/]*/(test|site-packages/.*/tests?)|usr/share|etc/ssl|usr/local/lib/python3[^/]*/(test|site-packages))" | head -5')
   if [ -z "$achados" ]; then echo "PASS imagem $i limpa"; else echo "FAIL imagem $i: $achados"; RC=1; fi
 done
 if command -v trufflehog >/dev/null; then
   for i in broker ingest api web pgtools; do
-    if trufflehog docker --image "ghcr.io/digidem/rastro-$i:$SIM_TAG" --no-update --no-verification --fail >/dev/null 2>&1; then
+    if trufflehog docker --image "communityfirst/rastro-$i:$SIM_TAG" --no-update --no-verification --fail >/dev/null 2>&1; then
       echo "PASS trufflehog $i"; else echo "FAIL trufflehog $i"; RC=1; fi
   done
 fi

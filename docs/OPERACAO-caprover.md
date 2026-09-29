@@ -39,7 +39,7 @@ RASTRO_PG_PASSWORD_MAINT=<openssl rand -hex 24>
 RASTRO_PG_PASSWORD_BACKUP=<openssl rand -hex 24>
 EOF
 docker run --rm --network captain-overlay-network --env-file rastro-bootstrap.env \
-  ghcr.io/digidem/rastro-pgtools:<versão>-pg<major>
+  communityfirst/rastro-pgtools:<versão>-pg<major>
 ```
 
 - Saída esperada na última linha: `OK: banco 'rastro' pronto (…)`.
@@ -113,11 +113,11 @@ Não rodam dentro do app. Agende no servidor (cron) ou no Windmill; os dois est�
 docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
   -v /srv/rastro-backups:/backups -e RASTRO_BACKUP_DIR=/backups \
   -e RASTRO_PG_HOST=srv-captain--postgres -e RASTRO_PG_DB=rastro --env-file rastro-backup.env \
-  --entrypoint /rastro/rastro_backup.sh ghcr.io/digidem/rastro-pgtools:<versão>-pg<major>
+  --entrypoint /rastro/rastro_backup.sh communityfirst/rastro-pgtools:<versão>-pg<major>
 # retenção: por padrão só simula (dry-run); apagar exige confirmação explícita
 docker run --rm --network captain-overlay-network \
   -e RASTRO_PG_HOST=srv-captain--postgres -e RASTRO_PG_DB=rastro --env-file rastro-maint.env \
-  --entrypoint python3 ghcr.io/digidem/rastro-pgtools:<versão>-pg<major> /rastro/rastro_retention.py --help
+  --entrypoint python3 communityfirst/rastro-pgtools:<versão>-pg<major> /rastro/rastro_retention.py --help
 ```
 
 `rastro-backup.env` / `rastro-maint.env` (modo 600) têm só `RASTRO_PG_PASSWORD=` do papel correspondente. Se o CapRover já faz backup do Postgres inteiro, avalie se precisa deste.
@@ -129,14 +129,14 @@ Num Postgres novo (ou depois de `DROP DATABASE rastro`), com a imagem `-pg<major
 ```bash
 docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
   -v /srv/rastro-backups:/b:ro --env-file rastro-bootstrap.env \
-  ghcr.io/digidem/rastro-pgtools:<versão>-pg<major> --restore /b/rastro-AAAAMMDD.dump
+  communityfirst/rastro-pgtools:<versão>-pg<major> --restore /b/rastro-AAAAMMDD.dump
 ```
 
 `--user` com o seu uid: o dump é gravado com modo 600 e precisa ser legível pelo contêiner. A restauração NÃO migra o schema (o dump volta exatamente como foi feito): se o dump for de uma versão anterior do Rastro, rode o `rastro-pgtools` da versão atual de novo, SEM `--restore`, para aplicar a migração aditiva — senão o ingest sai com código 2 listando o que falta. O script recusa: banco com o schema já existente; dump de outro nome de banco (`RASTRO_DB` precisa ser igual ao da origem); versões fora da cadeia `origem ≤ pg_dump ≤ pg_restore ≤ servidor`; banco de outra instalação. A restauração é em transação única — se falhar, nada fica aplicado. Se o processo cair depois da restauração e antes dos GRANTs, rode o script de novo sem `--restore`.
 
 ## 8. Atualizar
 
-Mude a versão (tag) nos 4 apps do CapRover, ou rode `caprover deploy -i ghcr.io/digidem/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode o `rastro-pgtools` da nova versão sem `--restore` (a migração é aditiva e idempotente).
+Mude a versão (tag) nos 4 apps do CapRover, ou rode `caprover deploy -i communityfirst/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode o `rastro-pgtools` da nova versão sem `--restore` (a migração é aditiva e idempotente).
 
 Atenção: cada execução do bootstrap REAPLICA as quatro senhas do arquivo. Use sempre as mesmas do formulário do app; senha diferente derruba o ingest e a API até o formulário ser atualizado.
 
