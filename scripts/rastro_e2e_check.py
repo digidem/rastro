@@ -57,7 +57,7 @@ class PgConfig:
         return cls(
             host=os.environ.get("RASTRO_PG_HOST", "127.0.0.1"),
             port=int(os.environ.get("RASTRO_PG_PORT", "5432")),
-            dbname=os.environ.get("RASTRO_PG_DB") or os.environ.get("POSTGRES_DB", "rastro"),
+            dbname=os.environ.get("RASTRO_PG_DB") or os.environ.get("RASTRO_DB", "rastro"),
             user=os.environ.get("RASTRO_PG_USER") or os.environ.get("POSTGRES_USER", "rastro"),
             password=pwd,
         )

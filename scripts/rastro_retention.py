@@ -36,7 +36,7 @@ class PgConfig:
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "PgConfig":
-        """Mesmos nomes e padrões do ingester (services/rastro_gateway/ingest/db.py)."""
+        """Mesmos nomes do ingester; o usuário padrão é o papel <db>_maint."""
         env = os.environ if env is None else env
         password = env.get("RASTRO_PG_PASSWORD", "")
         if not password:
@@ -45,7 +45,8 @@ class PgConfig:
             host=env.get("RASTRO_PG_HOST", "localhost"),
             port=int(env.get("RASTRO_PG_PORT", "5432")),
             dbname=env.get("RASTRO_PG_DB", "rastro"),
-            user=env.get("RASTRO_PG_USER", "rastro"),
+            # papel padrão <db>_maint (SELECT+DELETE) — ver bootstrap-existing.sh
+            user=env.get("RASTRO_PG_USER") or env.get("RASTRO_PG_DB", "rastro") + "_maint",
             password=password,
         )
 

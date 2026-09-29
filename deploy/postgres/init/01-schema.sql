@@ -1,7 +1,7 @@
 -- Rastro — schema v1 (sem PostGIS/TimescaleDB — decisão D4).
 -- Coordenadas: graus×1e7 em INTEIROS (exatamente o que latitudeI/longitudeI entregam —
 -- sem perda em ponto flutuante na escrita) + colunas double precision GERADAS para leitura.
--- A role somente-leitura rastro_viewer (API da Fase 7) é criada na Fase 7 — ver plano §4.
+-- Papéis e GRANTs: deploy/postgres/bootstrap-existing.sh (roda este arquivo no schema dedicado).
 
 CREATE TABLE IF NOT EXISTS nodes (
     node_num      BIGINT PRIMARY KEY,              -- packet "from" (int)

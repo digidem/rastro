@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Backup noturno Rastro — pg_dump local rotativo (Fase 5; R3: off-site é etapa separada).
 #
-# - Dump em formato custom (-Fc) em deploy/backups/ (gitignored), dir criado 0700.
+# - Dump em formato custom (-Fc) só do schema dedicado (-n <db>), em deploy/backups/
+#   (gitignored), dir criado 0700. Papel padrão: <db>_backup (SELECT apenas).
+# - Restauração: deploy/postgres/bootstrap-existing.sh --restore <arquivo>.
 # - Rotação: mantém os 14 dumps mais recentes, apaga os mais velhos.
 # - Senha só via ambiente (PGPASSWORD exportado de RASTRO_PG_PASSWORD) — nunca argv.
 # - Falha de pg_dump ⇒ mensagem PT-BR e exit != 0 (o .dump parcial é removido).
@@ -30,8 +32,9 @@ ARQ="$DESTINO/rastro-$(date +%Y%m%d-%H%M%S)-$$.dump"
 if ! pg_dump \
     -h "${RASTRO_PG_HOST:-127.0.0.1}" \
     -p "${RASTRO_PG_PORT:-5432}" \
-    -U "${RASTRO_PG_USER:-rastro}" \
+    -U "${RASTRO_PG_USER:-${RASTRO_PG_DB:-rastro}_backup}" \
     -d "${RASTRO_PG_DB:-rastro}" \
+    -n "${RASTRO_PG_DB:-rastro}" \
     -Fc \
     -f "$ARQ"; then
   rm -f -- "$ARQ"   # remove dump parcial/corrompido para não entrar na rotação

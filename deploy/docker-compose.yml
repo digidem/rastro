@@ -52,18 +52,36 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?defina em deploy/.env}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina em deploy/.env}
-      POSTGRES_DB: ${POSTGRES_DB:?defina em deploy/.env}
-      RASTRO_PG_VIEWER_PASSWORD: ${RASTRO_PG_VIEWER_PASSWORD:?defina em deploy/.env}
+      # banco de administração; o banco do Rastro (RASTRO_DB) é criado pelo pg-bootstrap
+      POSTGRES_DB: postgres
     ports:
       - "127.0.0.1:5432:5432" # ferramentas do host apenas (TB-E)
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Um tiro só: papéis por instalação, banco e schema dedicados, GRANTs mínimos
+  # (o mesmo script usado contra um Postgres existente, ex. CapRover). Idempotente.
+  pg-bootstrap:
+    build:
+      context: ./postgres
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:?defina em deploy/.env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?defina em deploy/.env}
+      RASTRO_DB: ${RASTRO_DB:-rastro}
+      RASTRO_PG_PASSWORD_INGEST: ${RASTRO_PG_PASSWORD_INGEST:?defina em deploy/.env}
+      RASTRO_PG_PASSWORD_VIEWER: ${RASTRO_PG_PASSWORD_VIEWER:?defina em deploy/.env}
+      RASTRO_PG_PASSWORD_MAINT: ${RASTRO_PG_PASSWORD_MAINT:?defina em deploy/.env}
+      RASTRO_PG_PASSWORD_BACKUP: ${RASTRO_PG_PASSWORD_BACKUP:?defina em deploy/.env}
 
   ingest:
     build:
@@ -71,8 +89,8 @@ services:
       dockerfile: rastro_gateway/Dockerfile
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      pg-bootstrap:
+        condition: service_completed_successfully
       mosquitto:
         condition: service_started
       mosquitto-posse:
@@ -87,9 +105,9 @@ services:
       RASTRO_MQTT_TOPIC_PREFIX: rastro
       RASTRO_PG_HOST: postgres
       RASTRO_PG_PORT: "5432"
-      RASTRO_PG_DB: ${POSTGRES_DB:?defina em deploy/.env}
-      RASTRO_PG_USER: ${POSTGRES_USER:?defina em deploy/.env}
-      RASTRO_PG_PASSWORD: ${POSTGRES_PASSWORD:?defina em deploy/.env}
+      RASTRO_PG_DB: ${RASTRO_DB:-rastro}
+      RASTRO_PG_USER: ${RASTRO_DB:-rastro}_ingest
+      RASTRO_PG_PASSWORD: ${RASTRO_PG_PASSWORD_INGEST:?defina em deploy/.env}
       RASTRO_LOG_LEVEL: INFO
     volumes:
       - ./mosquitto/certs/ca.crt:/certs/ca.crt:ro
@@ -101,8 +119,8 @@ services:
       dockerfile: rastro_api/Dockerfile
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      pg-bootstrap:
+        condition: service_completed_successfully
     environment:
       RASTRO_API_TOKEN: ${RASTRO_API_TOKEN:-}
       # Obrigatório em modo token — a API valida a var e recusa subir sem ela.
@@ -111,9 +129,9 @@ services:
       RASTRO_SESSAO_DIAS: ${RASTRO_SESSAO_DIAS:-30}
       RASTRO_PG_HOST: postgres
       RASTRO_PG_PORT: "5432"
-      RASTRO_PG_DB: ${POSTGRES_DB:?defina em deploy/.env}
-      RASTRO_PG_USER: rastro_viewer
-      RASTRO_PG_PASSWORD: ${RASTRO_PG_VIEWER_PASSWORD:?defina em deploy/.env}
+      RASTRO_PG_DB: ${RASTRO_DB:-rastro}
+      RASTRO_PG_USER: ${RASTRO_DB:-rastro}_viewer
+      RASTRO_PG_PASSWORD: ${RASTRO_PG_PASSWORD_VIEWER:?defina em deploy/.env}
       RASTRO_LOG_LEVEL: INFO
     ports:
       - "127.0.0.1:8080:8080" # verificação direta na bancada; o viewer USA o caddy
@@ -123,6 +141,8 @@ services:
       context: ./../web
       dockerfile: Dockerfile
     restart: unless-stopped
+    environment:
+      RASTRO_API_UPSTREAM: api:8080
 
   caddy:
     image: caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
