@@ -20,6 +20,8 @@ export LC_ALL
 TPL_DIR=/rastro
 SECRETS_DIR=/mosquitto/secrets
 DATA_DIR=/mosquitto/data
+PUBLIC_DIR=/mosquitto/public
+PKI_DIR=$DATA_DIR/pki
 
 # Nova linha literal, usada para rejeitar valor de variável com nova linha embutida.
 NL='
@@ -49,6 +51,137 @@ confere_pem() {
     -----BEGIN*) : ;;
     *) erro "$1 não começa com '-----BEGIN': PEM inválido (base64 truncado ou conteúdo errado?)" ;;
   esac
+}
+
+# valida_sans <lista-separada-por-vírgula>: imprime "DNS:a,DNS:b" (lista normalizada).
+# Cada nome tem de casar ^[A-Za-z0-9.-]{1,253}$; elementos vazios são ignorados, mas
+# a lista precisa ter ao menos um nome.
+valida_sans() {
+  lista=$1
+  if [ -z "$lista" ]; then
+    erro "RASTRO_BROKER_SANS não definida — no modo TLS automático informe os nomes DNS do broker separados por vírgula (ex.: srv-captain--app-broker,broker.exemplo.org)"
+  fi
+  case "$lista" in
+    *"$NL"*) erro "RASTRO_BROKER_SANS não pode conter nova linha" ;;
+  esac
+  saida=
+  resto=$lista,
+  while [ -n "$resto" ]; do
+    nome=${resto%%,*}
+    resto=${resto#*,}
+    # elemento vazio é ignorado: o template termina a lista com um campo opcional
+    # (domínio extra do MQTT) que costuma ficar em branco
+    if [ -z "$nome" ]; then
+      continue
+    fi
+    if [ "${#nome}" -gt 253 ]; then
+      erro "RASTRO_BROKER_SANS: nome com mais de 253 caracteres"
+    fi
+    case "$nome" in
+      *[!A-Za-z0-9.-]*)
+        erro "RASTRO_BROKER_SANS: nome inválido — use só letras, dígitos, '.' e '-' (sem espaços)"
+        ;;
+    esac
+    saida=${saida:+$saida,}DNS:$nome
+  done
+  if [ -z "$saida" ]; then
+    erro "RASTRO_BROKER_SANS não tem nenhum nome — informe ao menos um nome DNS do broker"
+  fi
+  printf '%s' "$saida"
+}
+
+# gera_pki_automatica: cria/renova a PKI privada em $PKI_DIR (volume persistente).
+# A CA é criada UMA vez e nunca é regenerada sozinha; só o certificado do servidor é
+# refeito (ausente, SANs diferentes, fora da CA ou vencendo em < 30 dias).
+gera_pki_automatica() {
+  sans=$(valida_sans "${RASTRO_BROKER_SANS:-}")
+  mkdir -p "$PKI_DIR" 2>/dev/null && chmod 0700 "$PKI_DIR" 2>/dev/null \
+    || erro "não foi possível preparar $PKI_DIR (o volume de dados precisa pertencer ao uid 1883)"
+
+  if [ -e "$PKI_DIR/ca.crt" ] && [ ! -e "$PKI_DIR/ca.key" ]; then
+    erro "$PKI_DIR/ca.crt existe mas ca.key não — a CA não é regenerada automaticamente; restaure ca.key ou apague $PKI_DIR de propósito"
+  fi
+  if [ -e "$PKI_DIR/ca.key" ] && [ ! -e "$PKI_DIR/ca.crt" ]; then
+    erro "$PKI_DIR/ca.key existe mas ca.crt não — a CA não é regenerada automaticamente; restaure ca.crt ou apague $PKI_DIR de propósito"
+  fi
+
+  if [ ! -s "$PKI_DIR/ca.crt" ]; then
+    printf 'Gerando a CA privada do broker em %s\n' "$PKI_DIR"
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$PKI_DIR/ca.key.new" 2>/dev/null \
+      || erro "openssl falhou ao gerar a chave da CA"
+    openssl req -x509 -new -key "$PKI_DIR/ca.key.new" -sha256 -days 3650 \
+      -subj "/O=Rastro/CN=Rastro Broker CA" \
+      -addext "basicConstraints=critical,CA:TRUE" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "subjectKeyIdentifier=hash" \
+      -addext "authorityKeyIdentifier=keyid:always" \
+      -out "$PKI_DIR/ca.crt.new" 2>/dev/null \
+      || erro "openssl falhou ao gerar o certificado da CA"
+    chmod 0400 "$PKI_DIR/ca.key.new"
+    chmod 0644 "$PKI_DIR/ca.crt.new"
+    mv "$PKI_DIR/ca.key.new" "$PKI_DIR/ca.key" && mv "$PKI_DIR/ca.crt.new" "$PKI_DIR/ca.crt" \
+      || erro "não foi possível gravar a CA em $PKI_DIR"
+    # CA nova invalida qualquer servidor antigo
+    rm -f "$PKI_DIR/server.crt" "$PKI_DIR/server.key" "$PKI_DIR/server.sans" "$PKI_DIR/ca.srl"
+  fi
+
+  if ! openssl x509 -checkend 2592000 -noout -in "$PKI_DIR/ca.crt" >/dev/null 2>&1; then
+    printf 'AVISO: a CA em %s vence em menos de 30 dias — troque-a de propósito (apague %s e redistribua a nova ca.crt)\n' \
+      "$PKI_DIR/ca.crt" "$PKI_DIR" >&2
+  fi
+
+  refaz=
+  if [ ! -s "$PKI_DIR/server.crt" ] || [ ! -s "$PKI_DIR/server.key" ]; then
+    refaz="certificado do servidor ausente"
+  elif [ "$(cat "$PKI_DIR/server.sans" 2>/dev/null || true)" != "$sans" ]; then
+    refaz="lista de SANs mudou"
+  elif ! openssl verify -CAfile "$PKI_DIR/ca.crt" "$PKI_DIR/server.crt" >/dev/null 2>&1; then
+    refaz="certificado do servidor não confere com a CA"
+  elif ! openssl x509 -checkend 2592000 -noout -in "$PKI_DIR/server.crt" >/dev/null 2>&1; then
+    refaz="certificado do servidor vence em menos de 30 dias"
+  fi
+
+  if [ -n "$refaz" ]; then
+    printf 'Gerando o certificado do servidor (%s)\n' "$refaz"
+    cn=${sans#DNS:}
+    cn=${cn%%,*}
+    rm -f "$PKI_DIR/server.key.new" "$PKI_DIR/server.csr" "$PKI_DIR/server.ext" "$PKI_DIR/server.crt.new"
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$PKI_DIR/server.key.new" 2>/dev/null \
+      || erro "openssl falhou ao gerar a chave do servidor"
+    openssl req -new -key "$PKI_DIR/server.key.new" -subj "/O=Rastro/CN=$cn" -out "$PKI_DIR/server.csr" 2>/dev/null \
+      || erro "openssl falhou ao gerar o pedido de certificado do servidor"
+    {
+      printf 'basicConstraints=critical,CA:FALSE\n'
+      printf 'keyUsage=critical,digitalSignature,keyEncipherment\n'
+      printf 'extendedKeyUsage=serverAuth\n'
+      printf 'subjectKeyIdentifier=hash\n'
+      printf 'authorityKeyIdentifier=keyid,issuer\n'
+      printf 'subjectAltName=%s\n' "$sans"
+    } > "$PKI_DIR/server.ext"
+    openssl x509 -req -in "$PKI_DIR/server.csr" -CA "$PKI_DIR/ca.crt" -CAkey "$PKI_DIR/ca.key" \
+      -CAserial "$PKI_DIR/ca.srl" -CAcreateserial -days 825 -sha256 \
+      -extfile "$PKI_DIR/server.ext" -out "$PKI_DIR/server.crt.new" 2>/dev/null \
+      || erro "openssl falhou ao assinar o certificado do servidor"
+    chmod 0400 "$PKI_DIR/server.key.new"
+    chmod 0644 "$PKI_DIR/server.crt.new"
+    rm -f "$PKI_DIR/server.csr" "$PKI_DIR/server.ext" "$PKI_DIR/server.key" "$PKI_DIR/server.crt"
+    mv "$PKI_DIR/server.key.new" "$PKI_DIR/server.key" && mv "$PKI_DIR/server.crt.new" "$PKI_DIR/server.crt" \
+      || erro "não foi possível gravar o certificado do servidor em $PKI_DIR"
+    printf '%s\n' "$sans" > "$PKI_DIR/server.sans"
+  fi
+}
+
+# publica_ca <caminho-da-ca>: copia SÓ o certificado público da CA para o volume
+# compartilhado com ingest/web. Nunca copia chave.
+publica_ca() {
+  if ! touch "$PUBLIC_DIR/.rastro-write-test" 2>/dev/null ||
+    ! rm -f "$PUBLIC_DIR/.rastro-write-test" 2>/dev/null; then
+    erro "$PUBLIC_DIR não é gravável pelo usuário do contêiner — o volume compartilhado da CA precisa pertencer ao uid 1883"
+  fi
+  cp -- "$1" "$PUBLIC_DIR/ca.crt.new" \
+    && chmod 0644 "$PUBLIC_DIR/ca.crt.new" \
+    && mv -f "$PUBLIC_DIR/ca.crt.new" "$PUBLIC_DIR/ca.crt" \
+    || erro "não foi possível publicar a CA em $PUBLIC_DIR/ca.crt"
 }
 
 # (a) diretório privado dos arquivos renderizados: mktemp -d já cria 0700 (+ umask 077)
@@ -107,8 +240,15 @@ fi
 unset pw_gateway pw_ingest
 unset RASTRO_MQTT_PASSWORD_GATEWAY RASTRO_MQTT_PASSWORD_INGEST
 
-# (d) material TLS — exatamente UMA fonte completa: os três arquivos montados
-# (recomendado) ou as três variáveis base64. Os caminhos escolhidos vão no conf.
+# (g) persistência: sem volume gravável não há fila QoS 1 sobrevivendo a restart (T4)
+if ! touch "$DATA_DIR/.rastro-write-test" 2>/dev/null ||
+  ! rm -f "$DATA_DIR/.rastro-write-test" 2>/dev/null; then
+  erro "$DATA_DIR não é gravável pelo usuário do contêiner — o volume de dados precisa pertencer ao uid 1883 (chown -R 1883:1883 no volume/montagem do host)"
+fi
+
+# (d) material TLS — precedência: (1) os três arquivos montados, (2) as três variáveis
+# base64, (3) modo automático (PKI privada gerada em $PKI_DIR, SANs de
+# RASTRO_BROKER_SANS). Os caminhos escolhidos vão no conf.
 CAFILE=$SECRETS_DIR/ca.crt
 CERTFILE=$SECRETS_DIR/server.crt
 KEYFILE=$SECRETS_DIR/server.key
@@ -146,9 +286,20 @@ else
   elif [ "$quantas" -gt 0 ]; then
     erro "configuração TLS incompleta: $quantas de 3 variáveis definidas — use RASTRO_TLS_CA_B64, RASTRO_TLS_SERVER_CRT_B64 e RASTRO_TLS_SERVER_KEY_B64 todas juntas, ou monte os três arquivos em $SECRETS_DIR"
   else
-    erro "nenhuma fonte TLS completa: monte ca.crt, server.crt e server.key em $SECRETS_DIR ou defina RASTRO_TLS_CA_B64, RASTRO_TLS_SERVER_CRT_B64 e RASTRO_TLS_SERVER_KEY_B64"
+    # nenhuma variável B64: arquivos montados pela metade são erro (não cair no automático)
+    if [ -s "$CAFILE" ] || [ -s "$CERTFILE" ] || [ -s "$KEYFILE" ]; then
+      erro "arquivos TLS montados em $SECRETS_DIR estão incompletos — são necessários ca.crt, server.crt e server.key juntos (ou remova-os para usar o modo automático)"
+    fi
+    # (3) modo automático
+    gera_pki_automatica
+    CAFILE=$PKI_DIR/ca.crt
+    CERTFILE=$PKI_DIR/server.crt
+    KEYFILE=$PKI_DIR/server.key
   fi
 fi
+
+# a CA em uso (qualquer dos três modos) é publicada para ingest/web
+publica_ca "$CAFILE"
 
 # (e) ACL renderizada — PREFIX já foi validado, logo é seguro para o sed
 if ! sed "s/@PREFIX@/$PREFIX/g" "$TPL_DIR/aclfile.tmpl" > "$RUN/aclfile"; then
@@ -163,12 +314,6 @@ if ! sed -e "s|@CAFILE@|$CAFILE|g" \
   -e "s|@ACL@|$RUN/aclfile|g" \
   "$TPL_DIR/mosquitto.conf.tmpl" > "$RUN/mosquitto.conf"; then
   erro "falha ao renderizar a configuração a partir de $TPL_DIR/mosquitto.conf.tmpl"
-fi
-
-# (g) persistência: sem volume gravável não há fila QoS 1 sobrevivendo a restart (T4)
-if ! touch "$DATA_DIR/.rastro-write-test" 2>/dev/null ||
-  ! rm -f "$DATA_DIR/.rastro-write-test" 2>/dev/null; then
-  erro "$DATA_DIR não é gravável pelo usuário do contêiner — o volume de dados precisa pertencer ao uid 1883 (chown -R 1883:1883 no volume/montagem do host)"
 fi
 
 # (h) só o dono lê os arquivos renderizados (passwd, conf, ACL e eventuais PEMs)

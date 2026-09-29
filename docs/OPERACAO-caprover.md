@@ -9,77 +9,52 @@ navegador ──HTTPS──▶ nginx do CapRover ─▶ <app> (web) ─▶ <app>
 
 ## 0. Antes de começar
 
-- As imagens `communityfirst/rastro-*` da versão escolhida precisam estar **públicas no Docker Hub**: o CapRover sempre faz `pull` ao implantar (mesmo com a imagem já no servidor) e falha com `error from registry: denied` se não achar.
-- Decida o **nome do app** (ex.: `rastro`). O certificado do broker depende dele; trocar depois exige gerar certificados de novo.
-- Tenha um domínio para o MQTT (ex.: `mqtt.exemplo.org`) apontando para o servidor do CapRover.
-- Veja o nome interno do seu PostgreSQL no CapRover (ex.: `srv-captain--postgres`). O nome `srv-captain--<app>` funciona em versões antigas e atuais do CapRover (as atuais também aceitam só `<app>`).
+- As imagens `communityfirst/rastro-*` da versão escolhida (0.2.0) precisam estar **públicas no Docker Hub**: o CapRover sempre faz `pull` ao implantar (mesmo com a imagem já no servidor) e falha com `error from registry: denied` se não achar. Isso inclui `communityfirst/rastro-pgtools:<versão>-pg17`, usada pelo app de preparo.
+- O **DNS curinga** do CapRover (`*.domínio-raiz`) precisa estar configurado: o app web e o download da CA usam `https://<app>.<domínio-raiz>`.
+- O gateway conecta em `<app>-mqtt.<domínio-raiz>`: o DNS curinga do CapRover já aponta esse nome para o servidor, e ele entra sozinho no certificado do broker. Um domínio seu extra é opcional (campo do formulário).
+- Tenha a **senha de admin do PostgreSQL**: no CapRover, é o valor de `POSTGRES_PASSWORD` nas variáveis de ambiente do app do Postgres. É o único campo obrigatório do formulário.
+- O nome interno do seu PostgreSQL no CapRover costuma ser `srv-captain--postgres` (o padrão do formulário).
 - Rastros de posição são sensíveis: a equipe decide quem tem acesso ao servidor e aos backups dele antes de instalar.
 
 ## 1. Adicionar a loja digidem (uma vez)
 
 CapRover → **Apps** → **One-Click Apps/Databases** → role até **3rd party repositories** → cole a URL da loja digidem → **Connect New Repository**.
 
-## 2. Preparar o PostgreSQL existente
+## 2. Instalar o app
 
-O script cria um banco dedicado, um schema dedicado e cinco papéis por instalação (`<banco>_owner`, `_ingest`, `_viewer`, `_maint`, `_backup`). Ele é idempotente e recusa mexer num banco que não é do Rastro.
-
-O Postgres do CapRover não tem porta pública, então rode o script por um contêiner na rede do CapRover, no servidor. Use a imagem da MESMA versão major do seu Postgres (`…-pg14`, `-pg15`, `-pg16`, `-pg17`; veja a versão com `SELECT version()`).
-
-Senhas num arquivo, nunca na linha de comando (histórico do shell, `ps`):
-
-```bash
-umask 077
-cat > rastro-bootstrap.env <<'EOF'
-PGHOST=srv-captain--postgres
-PGUSER=postgres
-PGPASSWORD=<senha do admin>
-RASTRO_DB=rastro
-RASTRO_PG_PASSWORD_INGEST=<openssl rand -hex 24>
-RASTRO_PG_PASSWORD_VIEWER=<openssl rand -hex 24>
-RASTRO_PG_PASSWORD_MAINT=<openssl rand -hex 24>
-RASTRO_PG_PASSWORD_BACKUP=<openssl rand -hex 24>
-EOF
-docker run --rm --network captain-overlay-network --env-file rastro-bootstrap.env \
-  communityfirst/rastro-pgtools:<versão>-pg<major>
-```
-
-- Saída esperada na última linha: `OK: banco 'rastro' pronto (…)`.
-- Senhas: só ASCII, 24+ caracteres; use `openssl rand -hex 24` (o formulário do app aceita só letras, números e `_ . ~ -`). Elas vão ao servidor só como verificador SCRAM. Guarde-as num gerenciador de senhas; as de ingest e viewer vão no formulário do app.
-- Admin sem superusuário (Postgres gerenciado) funciona se tiver `CREATEROLE` e `CREATEDB`.
-- Apague o `rastro-bootstrap.env` depois (`shred -u` ou `rm`).
-
-## 3. Gerar os certificados do broker
-
-Numa máquina da equipe (não no repositório):
-
-```bash
-scripts/rastro_gen_certs.sh --cert-dir ~/rastro-certs \
-  --san DNS:mqtt.exemplo.org \
-  --san DNS:srv-captain--rastro-broker --san DNS:rastro-broker \
-  --b64
-```
-
-- A chave da CA fica em `~/.local/share/rastro/ca/` — guarde com a equipe; ela assina certificados novos.
-- As linhas `RASTRO_TLS_*_B64` vão no formulário do app. A de `SERVER_KEY` é a chave privada do broker: copie direto para o CapRover, sem passar por chat ou e-mail.
-- O `ca.crt` vai também para o gateway da base.
-- Validade do certificado do servidor: 825 dias. Anote a data de renovação.
-
-Alternativa mais segura que as variáveis B64: montar `ca.crt`, `server.crt` e `server.key` em `/mosquitto/secrets/` do app `<app>-broker` (dono uid 1883, modo 0400) e deixar vazios os campos do certificado e da chave do servidor. O campo da CA continua preenchido: o ingest usa. As variáveis de ambiente do CapRover ficam em texto puro no diretório de dados dele e nos backups.
-
-## 4. Instalar o app
-
-One-Click Apps → **Rastro** → preencha:
+One-Click Apps → **Rastro** → preencha só:
 
 | Campo | Valor |
 |---|---|
-| App name | o nome escolhido no passo 0 |
-| Versão | a tag publicada, sem `v` (ex.: `0.1.0`) — a mesma para as 4 imagens |
-| Senhas MQTT | deixe as geradas; anote a do `gateway` |
-| TLS B64 | as três linhas do passo 3 (ou só a da CA, se montar os arquivos do servidor) |
-| PostgreSQL | host, porta, banco (`rastro`), usuários `rastro_ingest`/`rastro_viewer` e senhas do passo 2 |
-| Token do mapa | deixe o gerado; é o que libera o mapa |
+| App name | o nome escolhido (ex.: `rastro`) |
+| Senha de admin do PostgreSQL | `POSTGRES_PASSWORD` do app do Postgres (**obrigatório**) |
+| Nome do banco | `rastro` (padrão). Se já houver outro Rastro neste Postgres, use outro nome. |
+| Domínio extra do MQTT | vazio (opcional) |
 
-Depois de instalar:
+Tudo o mais tem padrão pronto: as senhas MQTT, as senhas dos papéis do Postgres e o token do mapa já vêm **geradas aleatoriamente** no formulário (não precisa mudar nem gerar nada). O certificado TLS do broker também é gerado sozinho, no primeiro start, com `<app>-mqtt.<domínio-raiz>`, o domínio extra (se houver) e os nomes internos. Anote apenas a senha MQTT do `gateway` e o token do mapa (ficam nas variáveis de ambiente dos apps `<app>-broker` e `<app>-api`), e as senhas `maint`/`backup` se for agendar retenção e backup (§6).
+
+O template cria cinco apps: `<app>-setup` (temporário), `<app>-broker`, `<app>-ingest`, `<app>-api` e `<app>` (web).
+
+## 3. Conferir o preparo do PostgreSQL e apagar o app `<app>-setup`
+
+O app `<app>-setup` roda **uma vez** o preparo do Postgres existente e depois fica parado (não reexecuta sozinho). Abra os logs dele:
+
+- Espere a linha final `OK: PostgreSQL preparado para o Rastro … — agora APAGUE o app <app>-setup`.
+- Antes de apagar, **anote** (variáveis de ambiente dele) `RASTRO_PG_PASSWORD_MAINT` e `RASTRO_PG_PASSWORD_BACKUP`, se for usar retenção/backup.
+- **Apague o app `<app>-setup`**: ele guarda a senha de admin do Postgres.
+- Se aparecer `ERRO: …` (senha de admin errada, host errado, nome já usado por outra coisa…), corrija a variável indicada no app `<app>-setup` e clique **Save & Restart**. Repetir é seguro.
+
+Salvaguardas para um Postgres em produção:
+
+- Só cria coisas **dedicadas**: o banco `<banco>`, o schema `<banco>` e os papéis `<banco>_owner`, `_ingest`, `_viewer`, `_maint`, `_backup`. Nada fora disso é criado, alterado ou lido.
+- **Recusa** nomes que já pertençam a outra coisa (banco existente de outro dono, papéis ligados a outro banco, objetos estranhos dentro do banco) e para com `ERRO`.
+- **Nunca apaga** nada (sem `DROP`).
+- Usa `lock_timeout=5s`, `statement_timeout=120s` e `idle_in_transaction_session_timeout=60s`: se algo estiver ocupado, desiste em vez de travar as outras cargas.
+- Espera o Postgres subir (12 tentativas de 10 s) e exige versão 14 ou mais nova.
+- É **idempotente**: rodar de novo reaplica as senhas dos papéis (sincroniza com o app) e a migração aditiva do schema.
+- Um admin sem superusuário (Postgres gerenciado) funciona se tiver `CREATEROLE` e `CREATEDB`.
+
+## 4. Depois de instalar
 
 1. **HTTPS primeiro.** App `<app>` → *HTTP Settings* → **Enable HTTPS** e **Force HTTPS**. A API responde 403 sem HTTPS e o visualizador não envia credenciais em HTTP.
 2. **Firewall:** a porta `8883/TCP` fica aberta em todas as interfaces. Portas publicadas pelo Docker passam por fora das regras INPUT do ufw/iptables; para restringir origem, use o firewall do provedor ou regras em `DOCKER-USER`.
@@ -92,10 +67,18 @@ Depois de instalar:
 
 ## 5. Apontar o gateway da base
 
+Baixe a CA pública do broker (depois de ativar o HTTPS) e confira que é um certificado:
+
+```bash
+sudo mkdir -p /etc/rastro
+curl -fsS https://<app>.<seu-domínio>/ca.crt | sudo tee /etc/rastro/ca.crt >/dev/null
+openssl x509 -in /etc/rastro/ca.crt -noout -subject -enddate
+```
+
 No host do gateway (ex.: Raspberry Pi), no arquivo de ambiente da unit `rastro-gateway`:
 
 ```
-RASTRO_MQTT_HOST=mqtt.exemplo.org
+RASTRO_MQTT_HOST=<app>-mqtt.<domínio-raiz>
 RASTRO_MQTT_PORT=8883
 RASTRO_MQTT_USERNAME=gateway
 RASTRO_MQTT_PASSWORD=<senha "gateway" do app>
@@ -103,7 +86,22 @@ RASTRO_MQTT_CA_CERT=/etc/rastro/ca.crt
 RASTRO_MQTT_TOPIC_PREFIX=rastro
 ```
 
-Reinicie a unit. Enquanto o link de satélite cair, o gateway guarda tudo no spool em disco e reenvia na volta.
+Reinicie a unit. Enquanto o link de satélite cair, o gateway guarda tudo no spool em disco e reenvia na volta. O `ca.crt` é público (nunca contém chave); a CA e o certificado do broker são gerados e mantidos no volume `<app>-broker-data`.
+
+### Alternativa: trazer seu próprio certificado
+
+Se preferir uma CA da equipe (ou um certificado já existente), gere com o script e monte os arquivos no broker; quando há arquivos/variáveis TLS informados, o broker NÃO gera certificado:
+
+```bash
+scripts/rastro_gen_certs.sh --cert-dir ~/rastro-certs \
+  --san DNS:mqtt.exemplo.org \
+  --san DNS:srv-captain--rastro-broker --san DNS:rastro-broker \
+  --b64
+```
+
+- A chave da CA fica em `~/.local/share/rastro/ca/` — guarde com a equipe; ela assina certificados novos.
+- Monte `ca.crt`, `server.crt` e `server.key` em `/mosquitto/secrets/` do app `<app>-broker` (dono uid 1883, modo 0400) ou defina `RASTRO_TLS_CA_B64`, `RASTRO_TLS_SERVER_CRT_B64` e `RASTRO_TLS_SERVER_KEY_B64` no broker (variáveis do CapRover ficam em texto puro no diretório de dados dele e nos backups; prefira os arquivos). Para o ingest confiar na CA própria, coloque o mesmo `ca.crt` no volume `<app>-pki` (o web também o serve em `/ca.crt`).
+- Validade do certificado do servidor: 825 dias. Anote a data de renovação.
 
 ## 6. Retenção e backup
 
@@ -121,11 +119,11 @@ docker run --rm --network captain-overlay-network \
   --entrypoint python3 communityfirst/rastro-pgtools:<versão>-pg<major> /rastro/rastro_retention.py --help
 ```
 
-`rastro-backup.env` / `rastro-maint.env` (modo 600) têm só `RASTRO_PG_PASSWORD=` do papel correspondente. Se o CapRover já faz backup do Postgres inteiro, avalie se precisa deste.
+`rastro-backup.env` / `rastro-maint.env` (modo 600) têm só `RASTRO_PG_PASSWORD=` do papel correspondente (as senhas `maint`/`backup` anotadas no passo 3). Se o CapRover já faz backup do Postgres inteiro, avalie se precisa deste.
 
 ## 7. Restaurar um backup
 
-Num Postgres novo (ou depois de `DROP DATABASE rastro`), com a imagem `-pg<major>` do servidor de DESTINO (e a de origem não pode ser mais nova que ela). Use as MESMAS senhas do formulário do app no `rastro-bootstrap.env`:
+Num Postgres novo (ou depois de `DROP DATABASE rastro`), com a imagem `-pg<major>` do servidor de DESTINO (e a de origem não pode ser mais nova que ela). O admin e as MESMAS senhas dos papéis (`maint`/`backup` anotadas no passo 3; `ingest`/`viewer` nas variáveis de `<app>-ingest`/`<app>-api`) vão num arquivo `rastro-bootstrap.env` (modo 600) com `PGHOST=srv-captain--postgres`, `PGUSER=postgres`, `PGPASSWORD=<admin>`, `RASTRO_DB=<banco>` e `RASTRO_PG_PASSWORD_{INGEST,VIEWER,MAINT,BACKUP}=…`; apague-o depois:
 
 ```bash
 docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
@@ -137,17 +135,19 @@ docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
 
 ## 8. Atualizar
 
-Mude a versão (tag) nos 4 apps do CapRover, ou rode `caprover deploy -i communityfirst/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode o `rastro-pgtools` da nova versão sem `--restore` (a migração é aditiva e idempotente).
+Mude a versão (tag) nos apps do CapRover, ou rode `caprover deploy -i communityfirst/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode de novo o preparo — recrie temporariamente o app `<app>-setup` com a senha de admin, ou use `rastro-pgtools` sem `--restore` como no §7 (a migração é aditiva e idempotente).
 
-Atenção: cada execução do bootstrap REAPLICA as quatro senhas do arquivo. Use sempre as mesmas do formulário do app; senha diferente derruba o ingest e a API até o formulário ser atualizado.
+Atenção: cada execução do preparo REAPLICA as quatro senhas dos papéis. Use sempre as mesmas dos apps `<app>-ingest`/`<app>-api`; senha diferente derruba o ingest e a API até as variáveis serem atualizadas.
 
 ## 9. Problemas comuns
 
 | Sintoma | Causa provável |
 |---|---|
 | broker sai com `ERRO: /mosquitto/data não é gravável` | volume antigo com dono errado: `chown -R 1883:1883` no volume |
-| broker sai com `configuração TLS incompleta` | só uma ou duas das três variáveis B64 preenchidas |
-| ingest sai com código 2 e `banco não está pronto` | bootstrap não rodou, ou banco/usuário errados no formulário (a mensagem lista o que falta e o search_path) |
+| broker sai com `configuração TLS incompleta` | (certificado próprio) só uma ou duas das três variáveis B64 preenchidas |
+| ingest sai com código 2 e `banco não está pronto` | o preparo (`<app>-setup`) não deu `OK`, ou nome do banco diferente (a mensagem lista o que falta e o search_path) |
+| `<app>-setup` termina com `ERRO:` | leia a mensagem/DICA nos logs; corrija a variável e use Save & Restart (§3) |
+| ingest espera o `ca.crt` | broker ainda não gerou a CA no volume `<app>-pki` — veja os logs do broker |
 | ingest sai com código 3 | Postgres inalcançável por 120 s (host/rede) |
 | gateway: `certificate verify failed` | nome usado pelo gateway não está no SAN, ou `ca.crt` errado |
 | mapa mostra "Este endereço não usa HTTPS" | HTTPS não ativado no app web |

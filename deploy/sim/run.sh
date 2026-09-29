@@ -4,10 +4,11 @@
 # Uso: deploy/sim/run.sh <caminho/do/rastro.yml> [--keep] [--no-build]
 #   rastro.yml: o template da loja (digidem/caprover-one-click-apps, public/v4/apps/).
 #
-# Passos: constrói as 5 imagens com os nomes do Docker Hub (communityfirst) e a tag "simtest"; gera certificados
-# com o SAN do nome interno do CapRover; senhas aleatórias; gera o compose A PARTIR do
-# template (rastro_caprover_sim.py); sobe em rede interna (sem portas no host); espera o
-# bootstrap; roda a sonda (deploy/sim/probe.py) e confere o conteúdo das imagens.
+# Passos: constrói as 5 imagens com os nomes do Docker Hub (communityfirst) e a tag "simtest";
+# senhas aleatórias; gera o compose A PARTIR do template (rastro_caprover_sim.py) — o serviço
+# <app>-setup do template prepara o Postgres simulado (superusuário), o broker gera o próprio
+# TLS e publica a CA no volume compartilhado <app>-pki; sobe em rede interna (sem portas no
+# host); espera o "OK" do setup; roda a sonda (deploy/sim/probe.py) e confere as imagens.
 # Nada fica para trás (down -v), a menos que --keep.
 set -euo pipefail
 umask 077
@@ -20,7 +21,6 @@ for a in "$@"; do case "$a" in --keep) KEEP=1 ;; --no-build) BUILD=0 ;; *) echo 
 
 export SIM_TAG=simtest SIM_APP=sim SIM_DB="${SIM_DB:-rastro}" SIM_PROBE="$AQUI/probe.py"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/rastro-sim.XXXXXX")"
-export SIM_CERTS="$TMP/certs"
 PROJ="rastro-sim-$SIM_APP"
 limpar() {
   if [ "$KEEP" = 0 ]; then
@@ -40,11 +40,8 @@ if [ "$BUILD" = 1 ]; then
   docker build -q -t communityfirst/rastro-web:$SIM_TAG "$RAIZ/web" >/dev/null
   docker build -q -t communityfirst/rastro-pgtools:$SIM_TAG -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
 fi
-
-echo "== certificados (SAN do nome interno do CapRover)"
-"$RAIZ/scripts/rastro_gen_certs.sh" --out-dir "$TMP/ca" --cert-dir "$SIM_CERTS" \
-  --san "DNS:srv-captain--$SIM_APP-broker" --san "DNS:$SIM_APP-broker" >/dev/null
-chmod 0644 "$SIM_CERTS/ca.crt"
+# o template usa a variante por versão do servidor (pgtools:<tag>-pg17)
+docker tag communityfirst/rastro-pgtools:$SIM_TAG communityfirst/rastro-pgtools:$SIM_TAG-pg17
 
 export SIM_FRONT="$TMP/front"
 mkdir -p "$SIM_FRONT"
@@ -69,22 +66,21 @@ senha() { openssl rand -hex 16; }
 export SIM_PG_ADMIN_PW="$(senha)" SIM_PW_INGEST="$(senha)" SIM_PW_VIEWER="$(senha)" \
        SIM_PW_MAINT="$(senha)" SIM_PW_BACKUP="$(senha)" SIM_PW_GATEWAY="$(senha)" \
        SIM_PW_MQTT_INGEST="$(senha)" SIM_API_TOKEN="$(openssl rand -hex 24)"
-python3 - "$TMP/values.json" <<PY
-import json, sys, base64, os
-c = os.environ["SIM_CERTS"]
-b64 = lambda n: base64.b64encode(open(f"{c}/{n}", "rb").read()).decode()
+# Só o necessário (como o usuário no CapRover): tag, senha de admin do Postgres, nome do banco
+# e as senhas que a sonda precisa conhecer. O restante vem dos padrões do template.
+python3 - "$TMP/values.json" <<'PY'
+import json, os, sys
 json.dump({
-  "\$\$cap_tag": os.environ["SIM_TAG"],
-  "\$\$cap_mqtt_pw_gateway": os.environ["SIM_PW_GATEWAY"],
-  "\$\$cap_mqtt_pw_ingest": os.environ["SIM_PW_MQTT_INGEST"],
-  "\$\$cap_tls_ca_b64": b64("ca.crt"), "\$\$cap_tls_crt_b64": b64("server.crt"),
-  "\$\$cap_tls_key_b64": b64("server.key"),
-  "\$\$cap_pg_host": "srv-captain--postgres", "\$\$cap_pg_database": os.environ["SIM_DB"],
-  "\$\$cap_pg_user_ingest": os.environ["SIM_DB"] + "_ingest",
-  "\$\$cap_pg_user_viewer": os.environ["SIM_DB"] + "_viewer",
-  "\$\$cap_pg_pw_ingest": os.environ["SIM_PW_INGEST"],
-  "\$\$cap_pg_pw_viewer": os.environ["SIM_PW_VIEWER"],
-  "\$\$cap_api_token": os.environ["SIM_API_TOKEN"],
+  "$$cap_tag": os.environ["SIM_TAG"],
+  "$$cap_pg_admin_password": os.environ["SIM_PG_ADMIN_PW"],
+  "$$cap_pg_database": os.environ["SIM_DB"],
+  "$$cap_mqtt_pw_gateway": os.environ["SIM_PW_GATEWAY"],
+  "$$cap_mqtt_pw_ingest": os.environ["SIM_PW_MQTT_INGEST"],
+  "$$cap_pg_pw_ingest": os.environ["SIM_PW_INGEST"],
+  "$$cap_pg_pw_viewer": os.environ["SIM_PW_VIEWER"],
+  "$$cap_pg_pw_maint": os.environ["SIM_PW_MAINT"],
+  "$$cap_pg_pw_backup": os.environ["SIM_PW_BACKUP"],
+  "$$cap_api_token": os.environ["SIM_API_TOKEN"],
 }, open(sys.argv[1], "w"))
 PY
 
@@ -95,12 +91,22 @@ DC=(docker compose -p "$PROJ" -f "$TMP/compose.yml" -f "$AQUI/compose.extra.yml"
 
 echo "== subindo"
 "${DC[@]}" up -d --quiet-pull 2>&1 | grep -viE "^ *(container|network|volume)" || true
-"${DC[@]}" wait pg-bootstrap >/dev/null && echo "bootstrap: OK" || { "${DC[@]}" logs pg-bootstrap | tail -20; exit 1; }
+# o serviço <app>-setup imprime "OK: ..." (ou "ERRO: ...") e fica ocioso — espera até 3 min
+SETUP="$SIM_APP-setup"; ESTADO=""
+for _ in $(seq 1 90); do
+  LOG="$("${DC[@]}" logs --no-log-prefix "$SETUP" 2>&1 || true)"
+  if grep -q '^OK: PostgreSQL preparado' <<<"$LOG"; then ESTADO=ok; break; fi
+  if grep -q '^ERRO:' <<<"$LOG"; then ESTADO=erro; break; fi
+  sleep 2
+done
+if [ "$ESTADO" = ok ]; then echo "setup: OK"; else echo "setup: FALHOU ($ESTADO)"; tail -20 <<<"$LOG"; exit 1; fi
+# ocioso de verdade: continua "running" (não reexecuta contra o banco)
+[ "$("${DC[@]}" ps --format '{{.State}}' "$SETUP")" = running ] && echo "PASS setup ocioso após o OK" || { echo "FAIL setup não ficou ocioso"; RC_SETUP=1; }
 sleep 5
 "${DC[@]}" ps --format '{{.Service}} {{.State}}' | sort
 
 echo "== sonda"
-RC=0
+RC=${RC_SETUP:-0}
 "${DC[@]}" --profile probe run --rm probe || RC=1
 
 echo "== resiliência: ingest parado + restart do broker (fila QoS1 persistente)"

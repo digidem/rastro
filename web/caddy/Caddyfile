@@ -1,5 +1,6 @@
 # Rastro — web autocontida (CapRover): caddy serve a SPA, o /config.json de
-# runtime, o volume /tiles/* e faz proxy de /api/*. Os valores vindos do env
+# runtime, o volume /tiles/* e faz proxy de /api/*. Também expõe /ca.crt (CA pública
+# do broker MQTT, do volume /srv/pki; ver o bloco abaixo). Os valores vindos do env
 # (RASTRO_TITLE, RASTRO_API_UPSTREAM) são validados pelo entrypoint.
 #
 # TLS: feito PELO PROXY NA FRENTE (nginx do CapRover), que fala HTTP/1.1 com o
@@ -30,6 +31,24 @@
 		root * /tmp/rastro-www
 		file_server
 		header Cache-Control no-store
+	}
+
+	# CA pública do broker MQTT (Meshtastic/monitores instalam para confiar no TLS do
+	# broker). Vem do volume compartilhado montado (somente leitura) em /srv/pki, onde o
+	# broker publica só o ca.crt; NUNCA há chave ali. Serve exatamente este arquivo:
+	# sem listagem de diretório e nada mais de /srv/pki. 404 enquanto o broker não
+	# tiver publicado a CA.
+	handle /ca.crt {
+		root * /srv/pki
+		@presente file /ca.crt
+		handle @presente {
+			header Content-Type application/x-pem-file
+			header Cache-Control no-cache
+			file_server
+		}
+		handle {
+			respond 404
+		}
 	}
 
 	# basemap + glyphs: pmtiles/glyphs estáticos, volume read-only (D9)

@@ -57,13 +57,18 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def _pg_user() -> str:
+    """Papel do Postgres: RASTRO_PG_USER, senão <banco>_viewer (nome do bootstrap)."""
+    return os.environ.get("RASTRO_PG_USER") or f"{_env('RASTRO_PG_DB', 'rastro')}_viewer"
+
+
 def _conninfo() -> str:
     """Conninfo SEM a senha — a senha vai por kwargs e nunca aparece em logs."""
     return (
         f"host={_env('RASTRO_PG_HOST', 'localhost')}"
         f" port={_env('RASTRO_PG_PORT', '5432')}"
         f" dbname={_env('RASTRO_PG_DB', 'rastro')}"
-        f" user={_env('RASTRO_PG_USER', 'rastro')}"
+        f" user={_pg_user()}"
     )
 
 
@@ -177,7 +182,7 @@ def create_app() -> FastAPI:
             _env("RASTRO_PG_HOST", "localhost"),
             _env("RASTRO_PG_PORT", "5432"),
             _env("RASTRO_PG_DB", "rastro"),
-            _env("RASTRO_PG_USER", "rastro"),
+            _pg_user(),
         )
         try:
             yield

@@ -26,7 +26,7 @@ Position tracks can be sensitive. Rastro keeps them on infrastructure you contro
 ## Deployment options
 
 - **Single host with Docker Compose** — `deploy/docker-compose.yml`; everything bound to loopback. See `docs/DESENVOLVIMENTO.md`.
-- **CapRover** — one-click app `rastro` in the digidem store (`digidem/caprover-one-click-apps`), using an existing PostgreSQL. See `docs/OPERACAO-caprover.md`.
+- **CapRover** — one-click app `rastro` in the digidem store (`digidem/caprover-one-click-apps`), using an existing PostgreSQL; the only required field is the Postgres admin password (all other passwords and the broker TLS certificate are generated automatically; a temporary `<app>-setup` app prepares the database). See `docs/OPERACAO-caprover.md`.
 
 The gateway always runs on the machine that has the Meshtastic node plugged in (a Raspberry Pi at the base station, for example) and connects to the broker over TLS.
 

@@ -1,5 +1,5 @@
 # Complemento do compose GERADO do template (rastro_caprover_sim.py): o PostgreSQL
-# "existente", o bootstrap (rastro-pgtools) e a sonda. Mesma rede interna.
+# "existente" (o preparo roda no serviço <app>-setup DO template) e a sonda. Mesma rede interna.
 services:
   postgres:
     image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
@@ -12,23 +12,6 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 2s
       retries: 30
-
-  pg-bootstrap:
-    image: communityfirst/rastro-pgtools:${SIM_TAG}
-    restart: "no"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PGHOST: srv-captain--postgres
-      PGUSER: postgres
-      PGPASSWORD: ${SIM_PG_ADMIN_PW}
-      RASTRO_DB: ${SIM_DB}
-      RASTRO_PG_PASSWORD_INGEST: ${SIM_PW_INGEST}
-      RASTRO_PG_PASSWORD_VIEWER: ${SIM_PW_VIEWER}
-      RASTRO_PG_PASSWORD_MAINT: ${SIM_PW_MAINT}
-      RASTRO_PG_PASSWORD_BACKUP: ${SIM_PW_BACKUP}
-    networks: [sim]
 
   # Frente TLS como o nginx do CapRover: termina HTTPS e passa X-Forwarded-Proto.
   front:
@@ -48,7 +31,7 @@ services:
       SIM_APP: ${SIM_APP}
       SIM_DB: ${SIM_DB}
       SIM_PREFIX: rastro
-      SIM_CA: /sim/ca.crt
+      SIM_CA: /sim/pki/ca.crt
       SIM_BROKER: srv-captain--${SIM_APP}-broker
       SIM_PG_HOST: srv-captain--postgres
       SIM_WEB_URL: http://srv-captain--${SIM_APP}
@@ -61,6 +44,6 @@ services:
       SIM_API_TOKEN: ${SIM_API_TOKEN}
     volumes:
       - ${SIM_PROBE}:/sim/probe.py:ro
-      - ${SIM_CERTS}/ca.crt:/sim/ca.crt:ro
+      - sim-pki:/sim/pki:ro
       - ${SIM_FRONT}/certs/ca.crt:/sim/front-ca.crt:ro
     networks: [sim]

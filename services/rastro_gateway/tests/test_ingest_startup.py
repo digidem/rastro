@@ -250,3 +250,81 @@ def test_main_propaga_codigo_do_banco_e_fecha(monkeypatch):
     monkeypatch.setattr(main_mod, "aguardar_banco", lambda database, t: main_mod.EXIT_CONFIG)
     assert main_mod.main() == main_mod.EXIT_CONFIG
     assert fechado == [True]
+
+
+# --- espera pela CA publicada pelo broker (modo TLS automático) ---------------
+
+
+def test_aguardar_ca_sem_caminho_ou_ja_presente_nao_espera(tmp_path):
+    def sleep_proibido(_):
+        raise AssertionError("não deveria dormir")
+
+    assert mqtt_in.aguardar_ca(None, sleep=sleep_proibido) is True
+    ca = tmp_path / "ca.crt"
+    ca.write_text(PEM_FALSO)
+    assert mqtt_in.aguardar_ca(str(ca), sleep=sleep_proibido) is True
+
+
+def test_aguardar_ca_ate_aparecer_loga_uma_vez(tmp_path, caplog):
+    ca = tmp_path / "ca.crt"
+    relogio = {"t": 0.0}
+    dormidas = []
+
+    def sleep(s):
+        dormidas.append(s)
+        relogio["t"] += s
+        if len(dormidas) == 3:
+            ca.write_text(PEM_FALSO)
+
+    with caplog.at_level(logging.INFO):
+        ok = mqtt_in.aguardar_ca(
+            str(ca), {}, sleep=sleep, monotonic=lambda: relogio["t"]
+        )
+    assert ok is True
+    assert dormidas == [5.0, 5.0, 5.0]
+    avisos = [r for r in caplog.records if "aguardando o broker publicar a CA" in r.getMessage()]
+    assert len(avisos) == 1
+    assert str(ca) in avisos[0].getMessage()
+
+
+def test_aguardar_ca_esgota_o_prazo(tmp_path):
+    relogio = {"t": 0.0}
+
+    def sleep(s):
+        relogio["t"] += s
+
+    ok = mqtt_in.aguardar_ca(
+        str(tmp_path / "nao-existe.crt"),
+        {"RASTRO_MQTT_CA_WAIT_SECS": "12"},
+        sleep=sleep,
+        monotonic=lambda: relogio["t"],
+    )
+    assert ok is False
+    assert relogio["t"] == 15.0  # 3 consultas de 5 s cobrem os 12 s
+
+
+def test_main_sai_com_config_quando_ca_nunca_aparece(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("RASTRO_MQTT_CA_CERT", str(tmp_path / "ca.crt"))
+    monkeypatch.setenv("RASTRO_MQTT_CA_WAIT_SECS", "0")
+    monkeypatch.delenv("RASTRO_MQTT_CA_B64", raising=False)
+    monkeypatch.setenv("RASTRO_PG_PASSWORD", "x")
+    with caplog.at_level(logging.ERROR):
+        assert main_mod.main() == main_mod.EXIT_CONFIG
+    assert "CA do broker não apareceu" in caplog.text
+
+
+# --- usuário do Postgres derivado do nome do banco ----------------------------
+
+
+def test_pg_user_padrao_deriva_do_banco():
+    cfg = db_mod.PgConfig.from_env({"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_DB": "mapa"})
+    assert cfg.user == "mapa_ingest"
+    cfg = db_mod.PgConfig.from_env({"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_USER": ""})
+    assert cfg.user == "rastro_ingest"
+
+
+def test_pg_user_explicito_vence():
+    cfg = db_mod.PgConfig.from_env(
+        {"RASTRO_PG_PASSWORD": "x", "RASTRO_PG_DB": "mapa", "RASTRO_PG_USER": "outro"}
+    )
+    assert cfg.user == "outro"

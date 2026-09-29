@@ -32,8 +32,12 @@ FROM caddy:2-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d
 # A imagem base não tem usuário dedicado: cria um fixo — o CapRover levanta o
 # contêiner sem --user, então o drop de privilégio tem de estar na imagem.
 RUN adduser -D -H -u 10001 rastro \
- && mkdir -p /srv/tiles /tmp/caddy/data /tmp/caddy/config \
- && chown -R rastro:rastro /tmp/caddy
+ && mkdir -p /srv/tiles /srv/pki /tmp/caddy/data /tmp/caddy/config \
+ && chown -R rastro:rastro /tmp/caddy \
+ && chown 1883:1883 /srv/pki
+# /srv/pki pertence ao uid 1883 (o do broker): se este contêiner montar o volume
+# compartilhado da CA antes do broker, o Docker copia este dono para o volume novo
+# e o broker continua podendo gravar nele.
 
 # O caddy exige um diretório gravável (config/CA/certificados/locks): vai para
 # /tmp, que o usuário rastro pode escrever; /srv/www fica read-only (dono root).

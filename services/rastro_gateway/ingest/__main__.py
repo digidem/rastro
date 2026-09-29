@@ -114,6 +114,19 @@ def main() -> int:
     )
 
     try:
+        ca_ok = mqtt_in.aguardar_ca(mqtt_cfg.ca_cert)
+    except ValueError as exc:
+        log.error("FALHA: configuração inválida: %s", exc)
+        return EXIT_CONFIG
+    if not ca_ok:
+        log.error(
+            "FALHA: a CA do broker não apareceu em %s após a espera "
+            "(RASTRO_MQTT_CA_WAIT_SECS)",
+            mqtt_cfg.ca_cert,
+        )
+        return EXIT_CONFIG
+
+    try:
         client = mqtt_in.build_client(mqtt_cfg)
     except (OSError, ValueError) as exc:
         log.error("FALHA: cliente MQTT inválido (CA/certificado?): %s", exc)

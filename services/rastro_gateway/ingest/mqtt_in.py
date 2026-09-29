@@ -111,6 +111,38 @@ def _resolver_ca(env: dict) -> str | None:
     return caminho
 
 
+CA_WAIT_ENV = "RASTRO_MQTT_CA_WAIT_SECS"
+CA_WAIT_PADRAO_SECS = 180.0
+CA_WAIT_POLL_SECS = 5.0
+
+
+def aguardar_ca(
+    caminho: str | None,
+    env: dict | None = None,
+    *,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> bool:
+    """Espera o broker publicar a CA em ``caminho`` (volume compartilhado).
+
+    No modo automático o broker gera a PKI no primeiro boot; o ingest pode subir
+    antes. Sem caminho, ou com o arquivo já presente, retorna True na hora. Avisa
+    uma vez (só o caminho, nunca conteúdo) e consulta a cada 5 s até
+    ``RASTRO_MQTT_CA_WAIT_SECS`` (padrão 180); esgotado → False.
+    """
+    if not caminho or os.path.isfile(caminho):
+        return True
+    env = os.environ if env is None else env
+    espera = float(env.get(CA_WAIT_ENV) or CA_WAIT_PADRAO_SECS)
+    log.info("aguardando o broker publicar a CA em %s", caminho)
+    prazo = monotonic() + max(0.0, espera)
+    while monotonic() < prazo:
+        sleep(CA_WAIT_POLL_SECS)
+        if os.path.isfile(caminho):
+            return True
+    return os.path.isfile(caminho)
+
+
 @dataclass(frozen=True)
 class MqttConfig:
     host: str

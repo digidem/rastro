@@ -76,11 +76,13 @@ class PgConfig:
         password = env.get("RASTRO_PG_PASSWORD", "")
         if not password:
             raise RuntimeError("RASTRO_PG_PASSWORD não definida")
+        dbname = env.get("RASTRO_PG_DB") or "rastro"
         return cls(
             host=env.get("RASTRO_PG_HOST", "localhost"),
             port=int(env.get("RASTRO_PG_PORT", "5432")),
-            dbname=env.get("RASTRO_PG_DB", "rastro"),
-            user=env.get("RASTRO_PG_USER", "rastro"),
+            dbname=dbname,
+            # sem RASTRO_PG_USER: o bootstrap cria o papel <banco>_ingest
+            user=env.get("RASTRO_PG_USER") or f"{dbname}_ingest",
             password=password,
             startup_timeout_secs=float(
                 env.get("RASTRO_PG_STARTUP_TIMEOUT_SECS")

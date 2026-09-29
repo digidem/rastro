@@ -122,6 +122,10 @@ def main() -> int:
     ok(st == 200, "/api/healthz sem token nem https → 200", f"status={st}")
     st, corpo = http("/config.json", {})
     ok(st == 200 and json.loads(corpo).keys() == {"title"}, "/config.json só com o título")
+    # CA pública do broker servida pelo web (o gateway a baixa daqui); igual à do volume pki
+    st, corpo = http("/ca.crt", {})
+    ok(st == 200 and corpo == open(E["SIM_CA"], encoding="utf-8").read()
+       and "PRIVATE KEY" not in corpo, "/ca.crt serve a CA pública do broker", f"status={st}")
     # API direta pelo nome interno, sem token
     req = urllib.request.Request(f"http://srv-captain--{E['SIM_APP']}-api:8080/api/nodes/latest",
                                  headers={"X-Forwarded-Proto": "https"})

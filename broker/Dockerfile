@@ -16,7 +16,11 @@ COPY mosquitto.conf.tmpl aclfile.tmpl entrypoint.sh /rastro/
 RUN chmod 0444 /rastro/mosquitto.conf.tmpl /rastro/aclfile.tmpl && chmod 0555 /rastro/entrypoint.sh
 # /mosquitto/data: persistência (o volume montado precisa ter a mesma posse);
 # /mosquitto/secrets: destino dos certificados montados (somente leitura).
-RUN mkdir -p /mosquitto/data /mosquitto/secrets && chown 1883:1883 /mosquitto/data
+# /mosquitto/data/pki: PKI privada do modo TLS automático (chaves; fica no volume de dados).
+# /mosquitto/public: volume COMPARTILHADO com ingest/web — recebe só o ca.crt público.
+RUN apk add --no-cache openssl \
+ && mkdir -p /mosquitto/data /mosquitto/secrets /mosquitto/public \
+ && chown 1883:1883 /mosquitto/data /mosquitto/public && chmod 0755 /mosquitto/public
 USER 1883:1883
 EXPOSE 8883
 ENTRYPOINT ["/rastro/entrypoint.sh"]

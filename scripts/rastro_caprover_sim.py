@@ -13,7 +13,9 @@ Uso:
   ``internal: true`` (sem saída para a internet). NENHUMA porta é publicada no host:
   as portas declaradas no template ficam no label ``rastro.sim.declared-ports`` para
   conferência; as sondas rodam como contêineres na mesma rede.
-- ``caproverExtra`` é removido; volumes nomeados viram volumes de topo.
+- ``caproverExtra`` é removido; volumes nomeados viram volumes de topo (compartilhados
+  entre serviços, como o ``<app>-pki`` que leva a CA pública do broker ao ingest e ao web).
+- Variáveis sem ``defaultValue`` (ex.: ``$$cap_pg_admin_password``) DEVEM vir em valores.json.
 Só lê e escreve arquivos (roda no sandbox sem rede).
 """
 from __future__ import annotations
@@ -69,6 +71,8 @@ def main() -> int:
         m = re.fullmatch(r"\$\$cap_gen_random_hex\((\d+)\)", val)
         if m:
             val = secrets.token_hex((int(m.group(1)) + 1) // 2)[: int(m.group(1))]
+        # NÃO expandir built-ins aqui: o CapRover real (verificado numa VM) não expande
+        # $$cap_appname dentro do valor de uma variável — só no corpo do YAML (ver abaixo)
         rx = v.get("validRegex")
         if rx:
             pat = rx.strip("/")
@@ -77,8 +81,13 @@ def main() -> int:
         values[vid] = val
 
     services_raw = yaml.safe_dump(tpl["services"], sort_keys=False, allow_unicode=True)
-    for vid in sorted(values, key=len, reverse=True):
+    # Ordem do CapRover real (verificada numa VM): $$cap_appname primeiro, depois as
+    # variáveis do formulário, por último $$cap_root_domain. Logo um valor de variável
+    # contendo $$cap_appname sobra sem expandir (e a checagem abaixo recusa).
+    services_raw = services_raw.replace("$$cap_appname", values["$$cap_appname"])
+    for vid in sorted((k for k in values if k not in BUILTINS), key=len, reverse=True):
         services_raw = services_raw.replace(vid, values[vid])
+    services_raw = services_raw.replace("$$cap_root_domain", values["$$cap_root_domain"])
     if "$$cap_" in services_raw:
         die("sobrou variável $$cap_ não substituída: "
             + ", ".join(sorted(set(re.findall(r"\$\$cap_\w+", services_raw)))))
