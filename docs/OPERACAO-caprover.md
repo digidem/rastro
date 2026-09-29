@@ -72,9 +72,9 @@ One-Click Apps → **Rastro** → preencha:
 | Campo | Valor |
 |---|---|
 | App name | o nome escolhido no passo 0 |
-| Versão | a tag publicada (ex.: `v0.1.0`) — a mesma para as 4 imagens |
+| Versão | a tag publicada, sem `v` (ex.: `0.1.0`) — a mesma para as 4 imagens |
 | Senhas MQTT | deixe as geradas; anote a do `gateway` |
-| TLS B64 | as três linhas do passo 3 |
+| TLS B64 | as três linhas do passo 3 (ou só a da CA, se montar os arquivos do servidor) |
 | PostgreSQL | host, porta, banco (`rastro`), usuários `rastro_ingest`/`rastro_viewer` e senhas do passo 2 |
 | Token do mapa | deixe o gerado; é o que libera o mapa |
 
@@ -132,7 +132,7 @@ docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
   ghcr.io/digidem/rastro-pgtools:<versão>-pg<major> --restore /b/rastro-AAAAMMDD.dump
 ```
 
-`--user` com o seu uid: o dump é gravado com modo 600 e precisa ser legível pelo contêiner. O script recusa: banco com o schema já existente; dump de outro nome de banco (`RASTRO_DB` precisa ser igual ao da origem); versões fora da cadeia `origem ≤ pg_dump ≤ pg_restore ≤ servidor`; banco de outra instalação. A restauração é em transação única — se falhar, nada fica aplicado. Se o processo cair depois da restauração e antes dos GRANTs, rode o script de novo sem `--restore`.
+`--user` com o seu uid: o dump é gravado com modo 600 e precisa ser legível pelo contêiner. A restauração NÃO migra o schema (o dump volta exatamente como foi feito): se o dump for de uma versão anterior do Rastro, rode o `rastro-pgtools` da versão atual de novo, SEM `--restore`, para aplicar a migração aditiva — senão o ingest sai com código 2 listando o que falta. O script recusa: banco com o schema já existente; dump de outro nome de banco (`RASTRO_DB` precisa ser igual ao da origem); versões fora da cadeia `origem ≤ pg_dump ≤ pg_restore ≤ servidor`; banco de outra instalação. A restauração é em transação única — se falhar, nada fica aplicado. Se o processo cair depois da restauração e antes dos GRANTs, rode o script de novo sem `--restore`.
 
 ## 8. Atualizar
 
