@@ -316,6 +316,23 @@ if ! sed -e "s|@CAFILE@|$CAFILE|g" \
   erro "falha ao renderizar a configuração a partir de $TPL_DIR/mosquitto.conf.tmpl"
 fi
 
+# (f2) listener WebSockets opcional (RASTRO_MQTT_WEBSOCKETS=1, padrão do template
+# CapRover): SEM TLS de propósito — ele só é alcançável pela rede interna, atrás do
+# nginx do CapRover, que termina o HTTPS (porta 443) e repassa o WebSocket. Assim quem
+# só tem a 443 aberta consegue falar MQTT. Senha e ACL valem igual (opções globais).
+case "${RASTRO_MQTT_WEBSOCKETS:-0}" in
+  1)
+    {
+      printf '\n# listener WebSockets (atrás do proxy do CapRover; sem TLS aqui)\n'
+      printf 'listener 9001 0.0.0.0\n'
+      printf 'protocol websockets\n'
+    } >> "$RUN/mosquitto.conf" \
+      || erro "falha ao acrescentar o listener WebSockets em $RUN/mosquitto.conf"
+    ;;
+  0 | '') : ;;
+  *) erro "RASTRO_MQTT_WEBSOCKETS inválida: use 0 ou 1" ;;
+esac
+
 # (h) só o dono lê os arquivos renderizados (passwd, conf, ACL e eventuais PEMs)
 for arquivo in "$RUN"/*; do
   if [ -f "$arquivo" ]; then

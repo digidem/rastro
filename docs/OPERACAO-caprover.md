@@ -3,7 +3,7 @@
 Instalação do Rastro num CapRover que já tem um PostgreSQL, pelo app one-click `rastro` da loja digidem. O gateway (rádio na USB) continua fora do CapRover, na base.
 
 ```
-Pi da base: rastro-gateway ──MQTT/TLS 8883──▶ <app>-broker ─▶ <app>-ingest ─▶ PostgreSQL existente
+Pi da base: rastro-gateway ──MQTT sobre HTTPS/443 (WebSocket)──▶ nginx do CapRover ─▶ <app>-broker ─▶ <app>-ingest ─▶ PostgreSQL existente
 navegador ──HTTPS──▶ nginx do CapRover ─▶ <app> (web) ─▶ <app>-api ─▶ PostgreSQL existente
 ```
 
@@ -58,7 +58,8 @@ Salvaguardas para um Postgres em produção:
 ## 4. Depois de instalar
 
 1. **HTTPS primeiro.** App `<app>` → *HTTP Settings* → **Enable HTTPS** e **Force HTTPS**. A API responde 403 sem HTTPS e o visualizador não envia credenciais em HTTP.
-2. **Firewall:** a porta `8883/TCP` fica aberta em todas as interfaces. Portas publicadas pelo Docker passam por fora das regras INPUT do ufw/iptables; para restringir origem, use o firewall do provedor ou regras em `DOCKER-USER`.
+2. **MQTT pela porta 443 (padrão).** App `<app>-broker` → *HTTP Settings* → **Enable HTTPS** (Let's Encrypt). O broker é um app web com WebSocket ligado (o template já configura porta 9001 e *Websocket Support*): o gateway fala MQTT sobre HTTPS na 443, então **nenhuma porta extra** precisa ser aberta no firewall do provedor. Usuário e senha valem igual (a ACL também). Entre o nginx e o broker o WebSocket trafega sem TLS, só dentro da rede interna do Docker do servidor.
+   - Opcional — MQTT/TLS direto na 8883: publique a porta 8883 no app `<app>-broker` (*Port Mapping* `8883:8883`) e abra 8883/TCP no firewall do provedor; nesse caso o gateway usa a CA de `https://<app>.<domínio>/ca.crt`. Portas publicadas pelo Docker passam por fora das regras INPUT do ufw/iptables.
 3. **Basemap (automático).** O mapa já vem com um basemap padrão: tiles do OpenStreetMap buscados **pela API** (`/api/osm/…`, com o token; o navegador nunca fala com o OSM, então o IP dos monitores não chega lá, e os tiles ficam num cache em memória). Nada a fazer. Ressalvas: exige que o servidor alcance `tile.openstreetmap.org` (HTTPS) e segue a [política de uso do OSM](https://operations.osmfoundation.org/policies/tiles/) — adequado para poucos usuários. A área que o monitor olha é dado sensível: a API não loga coordenadas de tile (o log de acesso do uvicorn está desligado). Para **desligar** o OSM, defina `RASTRO_OSM_TILES=0` no app `<app>-api` (sem basemap próprio, o mapa mostra só os pontos), ou aponte para um servidor de tiles seu com `RASTRO_OSM_TILE_URL=https://…/{z}/{x}/{y}.png`.
    - **Opcional — basemap próprio e offline** (PMTiles): copie `basemap.pmtiles` para o volume `<app>-tiles`; quando o arquivo existe, o mapa o usa em vez do OSM (sem nenhuma requisição externa). Permissão de leitura para todos (`chmod a+r`):
      ```bash
@@ -69,26 +70,22 @@ Salvaguardas para um Postgres em produção:
 
 ## 5. Apontar o gateway da base
 
-Baixe a CA pública do broker (depois de ativar o HTTPS) e confira que é um certificado:
-
-```bash
-sudo mkdir -p /etc/rastro
-curl -fsS https://<app>.<seu-domínio>/ca.crt | sudo tee /etc/rastro/ca.crt >/dev/null
-openssl x509 -in /etc/rastro/ca.crt -noout -subject -enddate
-```
-
 No host do gateway (ex.: Raspberry Pi), no arquivo de ambiente da unit `rastro-gateway`:
 
 ```
-RASTRO_MQTT_HOST=<app>-mqtt.<domínio-raiz>
-RASTRO_MQTT_PORT=8883
+RASTRO_MQTT_TRANSPORT=websockets
+RASTRO_MQTT_HOST=<app>-broker.<domínio-raiz>
+RASTRO_MQTT_PORT=443
 RASTRO_MQTT_USERNAME=gateway
 RASTRO_MQTT_PASSWORD=<senha "gateway" do app>
-RASTRO_MQTT_CA_CERT=/etc/rastro/ca.crt
 RASTRO_MQTT_TOPIC_PREFIX=rastro
 ```
 
-Reinicie a unit. Enquanto o link de satélite cair, o gateway guarda tudo no spool em disco e reenvia na volta. O `ca.crt` é público (nunca contém chave); a CA e o certificado do broker são gerados e mantidos no volume `<app>-broker-data`.
+Sem `RASTRO_MQTT_CA_CERT`: o certificado do nginx (Let's Encrypt) já é confiável no sistema. A senha `gateway` está em `RASTRO_MQTT_PASSWORD_GATEWAY`, nas variáveis do app `<app>-broker`.
+
+Reinicie a unit. Enquanto o link de satélite cair, o gateway guarda tudo no spool em disco e reenvia na volta.
+
+**Alternativa direta (8883):** com a porta 8883 publicada e aberta (§4), use `RASTRO_MQTT_TRANSPORT=tcp`, `RASTRO_MQTT_HOST=<app>-mqtt.<domínio-raiz>`, `RASTRO_MQTT_PORT=8883` e `RASTRO_MQTT_CA_CERT=/etc/rastro/ca.crt`, baixando a CA pública com `curl -fsS https://<app>.<seu-domínio>/ca.crt | sudo tee /etc/rastro/ca.crt`.
 
 ### Alternativa: trazer seu próprio certificado
 
@@ -154,5 +151,6 @@ Atenção: cada execução do preparo REAPLICA as quatro senhas dos papéis. Use
 | `<app>-setup` termina com `ERRO:` | leia a mensagem/DICA nos logs; corrija a variável e use Save & Restart (§3) |
 | ingest espera o `ca.crt` | broker ainda não gerou a CA no volume `<app>-pki` — veja os logs do broker |
 | ingest sai com código 3 | Postgres inalcançável por 120 s (host/rede) |
-| gateway: `certificate verify failed` | nome usado pelo gateway não está no SAN, ou `ca.crt` errado |
+| gateway: `certificate verify failed` | (8883) nome usado pelo gateway não está no SAN, ou `ca.crt` errado; (443) HTTPS do app `<app>-broker` ainda não ativado |
+| gateway: falha de WebSocket / 502 | app `<app>-broker` sem *Websocket Support* / porta 9001, ou variável `RASTRO_MQTT_WEBSOCKETS=1` ausente |
 | mapa mostra "Este endereço não usa HTTPS" | HTTPS não ativado no app web |

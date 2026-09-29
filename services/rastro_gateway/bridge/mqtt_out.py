@@ -54,6 +54,10 @@ class MqttConfig:
     client_id: str
     topic_prefix: str
     keepalive_secs: int
+    # "tcp" (porta 8883 direta) ou "websockets" (MQTT sobre HTTPS/443, para quem só
+    # tem a 443 aberta: o proxy do CapRover termina o TLS e repassa ao broker)
+    transport: str = "tcp"
+    ws_path: str = "/mqtt"
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "MqttConfig":
@@ -68,7 +72,16 @@ class MqttConfig:
             or f"rastro-gateway-{socket.gethostname()}",
             topic_prefix=env.get("RASTRO_MQTT_TOPIC_PREFIX", "rastro"),
             keepalive_secs=int(env.get("RASTRO_MQTT_KEEPALIVE_SECS", "60")),
+            transport=_transport(env.get("RASTRO_MQTT_TRANSPORT", "tcp")),
+            ws_path=env.get("RASTRO_MQTT_WS_PATH") or "/mqtt",
         )
+
+
+def _transport(valor: str) -> str:
+    v = (valor or "tcp").strip().lower()
+    if v not in ("tcp", "websockets"):
+        raise RuntimeError("RASTRO_MQTT_TRANSPORT inválida: use 'tcp' ou 'websockets'")
+    return v
 
 
 def build_client(cfg: MqttConfig) -> mqtt.Client:
@@ -78,7 +91,10 @@ def build_client(cfg: MqttConfig) -> mqtt.Client:
         client_id=cfg.client_id,
         clean_session=False,
         protocol=mqtt.MQTTv311,
+        transport=cfg.transport,
     )
+    if cfg.transport == "websockets":
+        client.ws_set_options(path=cfg.ws_path)
     if cfg.username is not None:
         client.username_pw_set(cfg.username, cfg.password)
     # TLS sempre — o broker não tem listener em texto plano (plano Fase 1).

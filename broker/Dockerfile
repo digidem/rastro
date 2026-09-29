@@ -22,7 +22,7 @@ RUN apk add --no-cache openssl \
  && mkdir -p /mosquitto/data /mosquitto/secrets /mosquitto/public \
  && chown 1883:1883 /mosquitto/data /mosquitto/public && chmod 0755 /mosquitto/public
 USER 1883:1883
-EXPOSE 8883
+EXPOSE 8883 9001
 ENTRYPOINT ["/rastro/entrypoint.sh"]
 # o CMD herdado da imagem base não se aplica (o entrypoint ignora argumentos)
 CMD []

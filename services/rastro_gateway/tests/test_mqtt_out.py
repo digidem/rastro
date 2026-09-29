@@ -213,3 +213,27 @@ def test_replay_respeita_janela_de_mids(tmp_path, spool):
     out._stop.set()
     t.join(timeout=5)
     assert pico <= mo.REPLAY_WINDOW, f"pico de mids em voo: {pico}"
+
+
+def test_transport_padrao_tcp_e_websockets_por_env():
+    from rastro_gateway.bridge.mqtt_out import MqttConfig, build_client
+
+    padrao = MqttConfig.from_env({})
+    assert (padrao.transport, padrao.ws_path) == ("tcp", "/mqtt")
+
+    ws = MqttConfig.from_env(
+        {"RASTRO_MQTT_TRANSPORT": "WebSockets", "RASTRO_MQTT_WS_PATH": "/x", "RASTRO_MQTT_PORT": "443"}
+    )
+    assert (ws.transport, ws.ws_path, ws.port) == ("websockets", "/x", 443)
+    # o cliente paho é construído com o transporte pedido (TLS de verificação ligada)
+    cliente = build_client(ws)
+    assert cliente._transport == "websockets"
+
+
+def test_transport_invalido_falha_na_configuracao():
+    import pytest
+
+    from rastro_gateway.bridge.mqtt_out import MqttConfig
+
+    with pytest.raises(RuntimeError, match="RASTRO_MQTT_TRANSPORT"):
+        MqttConfig.from_env({"RASTRO_MQTT_TRANSPORT": "quic"})
