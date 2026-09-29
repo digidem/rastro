@@ -4,7 +4,10 @@ Somente leitura: nenhuma rota escreve no banco e o pool abre conexões com
 ``default_transaction_read_only=on`` — o próprio servidor recusaria escrita.
 Autenticação: Bearer (RASTRO_API_TOKEN) ou cookie de sessão HttpOnly assinado
 com HMAC derivado do token; ``RASTRO_API_AUTH=desativada`` dispensa credencial
-somente para Hosts locais. Única rota aberta sem credencial: /api/healthz.
+somente para Hosts locais (a lista não pode ficar vazia nesse modo). Única
+rota aberta sem credencial: /api/healthz. Atrás do proxy reverso,
+``RASTRO_REQUIRE_HTTPS=1`` exige ``X-Forwarded-Proto: https`` em todo /api
+(exceto /api/healthz) — 403 aplicado antes de qualquer autenticação.
 Trilhas de monitores são sensíveis: nunca logar coordenadas nem credenciais;
 erro de banco vira 503 genérico, sem detalhes internos no response.
 """
@@ -33,6 +36,7 @@ from fastapi import (
     Request,
     Response,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from psycopg.rows import dict_row
 
@@ -122,6 +126,13 @@ def create_app() -> FastAPI:
         if h.strip()
     }
     if modo == "desativada":
+        # _env devolve "" quando a variável está definida vazia (o default só
+        # vale para variável AUSENTE): aqui isso é lista de Hosts VAZIA, e
+        # desativar auth sem nenhum Host local seria abrir a API ao mundo.
+        if not hosts_locais:
+            raise RuntimeError(
+                "RASTRO_API_AUTH=desativada exige RASTRO_API_HOSTS_LOCAIS não vazio"
+            )
         LOGGER.warning(
             "AUTENTICAÇÃO DESATIVADA (RASTRO_API_AUTH=desativada) — credencial"
             " dispensada só para Hosts locais: %s",
@@ -136,6 +147,13 @@ def create_app() -> FastAPI:
         raise RuntimeError("RASTRO_SESSAO_DIAS inválida: use um inteiro entre 1 e 90")
     level = os.environ.get("RASTRO_LOG_LEVEL", "INFO").upper()
     logging.basicConfig(level=getattr(logging, level, logging.INFO))
+    require_https = (
+        _env("RASTRO_REQUIRE_HTTPS", "").strip().lower() in ("1", "true", "yes")
+    )
+    LOGGER.info(
+        "HTTPS obrigatório em /api (X-Forwarded-Proto): %s",
+        "sim" if require_https else "não",
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -243,6 +261,26 @@ def create_app() -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    @app.middleware("http")
+    async def exigir_https(request: Request, call_next):
+        """HTTPS obrigatório (RASTRO_REQUIRE_HTTPS) atrás do proxy reverso:
+        todo caminho que começa com /api — exceto exatamente /api/healthz —
+        só passa com ``X-Forwarded-Proto: https`` (comparação case-insensitive;
+        qualquer outro valor, vazio ou ausente é recusado — falha fechada).
+        Registrado por último, roda PRIMEIRO (mais externo) e antes das
+        dependências de rota: o 403 vem antes de qualquer autenticação."""
+        if (
+            require_https
+            and request.url.path.startswith("/api")
+            and request.url.path != "/api/healthz"
+            and request.headers.get("x-forwarded-proto", "").strip().lower()
+            != "https"
+        ):
+            return JSONResponse(
+                status_code=403, content={"detail": "HTTPS obrigatório"}
+            )
+        return await call_next(request)
+
     router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 
     @app.get("/api/healthz")
@@ -303,7 +341,9 @@ def create_app() -> FastAPI:
             httponly=True,
             samesite="strict",
             path="/api",
-            secure=request.headers.get("x-forwarded-proto") == "https",
+            # Secure sem condição: a API pública só serve por HTTPS (proxy
+            # reverso) — nunca emitir cookie de sessão trafegando em claro.
+            secure=True,
         )
         return resposta
 

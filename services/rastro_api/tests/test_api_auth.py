@@ -167,7 +167,8 @@ def test_sessao_dias_invalidos_levantam_runtimeerror(monkeypatch):
             create_app()
 
 
-def test_cookie_secure_somente_com_https(client):
+def test_cookie_sempre_secure(client):
+    # Secure é incondicional: a API pública só serve por HTTPS (proxy reverso)
     resposta = client.post(
         "/api/auth/sessao",
         json={"lembrar": True},
@@ -175,7 +176,7 @@ def test_cookie_secure_somente_com_https(client):
     )
     assert "secure" in resposta.headers["set-cookie"].lower()
     resposta = client.post("/api/auth/sessao", json={"lembrar": True}, headers=AUTH)
-    assert "secure" not in resposta.headers["set-cookie"].lower()
+    assert "secure" in resposta.headers["set-cookie"].lower()
 
 
 def test_rotacao_de_token_revoga_cookie(client, monkeypatch, dados):
