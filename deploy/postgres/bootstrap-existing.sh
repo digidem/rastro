@@ -92,7 +92,7 @@ fi
 
 # --- 2. (restore) cadeia de versões, ANTES de criar qualquer coisa ------------------------
 if [ "$MODO" = restore ]; then
-  CAB="$(pg_restore -l "$DUMP" 2>/dev/null)" || erro "dump ilegível: $DUMP"
+  CAB="$(pg_restore -l "$DUMP" 2>/dev/null)" || erro "dump ilegível por este pg_restore ($(pg_restore --version | awk '{print $NF}')) — ferramenta mais antiga que o pg_dump que gerou o arquivo? Exigido: cadeia origem <= pg_dump <= pg_restore <= servidor"
   ORIGEM="$(sed -n 's/^; *Dumped from database version: *//p' <<<"$CAB" | head -1)"
   DUMPER="$(sed -n 's/^; *Dumped by pg_dump version: *//p' <<<"$CAB" | head -1)"
   [ -n "$ORIGEM" ] && [ -n "$DUMPER" ] || erro "cabeçalho de versão ausente no dump (não arrisco restaurar)"
@@ -126,7 +126,10 @@ SQL
 [ -z "$ESTRANHOS" ] || erro "papéis já ligados a OUTRO banco (outra instalação?): $(tr '\n' ' ' <<<"$ESTRANHOS")— escolha outro RASTRO_DB"
 
 # --- 4. papéis (idempotente; senha sempre reaplicada como verificador) --------------------
-psql_em "$ADMIN_DB" "${VARS[@]}" <<SQL
+# Atributos: só um superusuário pode escrever (NO)SUPERUSER/(NO)REPLICATION; papéis
+# criados por admin não-superusuário já nascem sem eles.
+if [ "$SUPER" = t ]; then ATRIBUTOS="LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION"; else ATRIBUTOS="LOGIN NOCREATEDB NOCREATEROLE"; fi
+psql_em "$ADMIN_DB" "${VARS[@]}" -v atributos="$ATRIBUTOS" <<SQL
 \\set v_ingest '$V_INGEST'
 \\set v_viewer '$V_VIEWER'
 \\set v_maint '$V_MAINT'
@@ -135,7 +138,7 @@ SELECT format('CREATE ROLE %I NOLOGIN', :'owner')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'owner') \\gexec
 SELECT format('CREATE ROLE %I LOGIN', r) FROM unnest(ARRAY[:'ingest', :'viewer', :'maint', :'backup']) AS r
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) \\gexec
-SELECT format('ALTER ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD %L', r, v)
+SELECT format('ALTER ROLE %I %s PASSWORD %L', r, :'atributos', v)
 FROM (VALUES (:'ingest', :'v_ingest'), (:'viewer', :'v_viewer'), (:'maint', :'v_maint'), (:'backup', :'v_backup')) AS t(r, v) \\gexec
 SQL
 unset V_INGEST V_VIEWER V_MAINT V_BACKUP
@@ -151,8 +154,11 @@ SQL
 }
 trap revogar EXIT
 if [ "$SUPER" != t ]; then
-  MEMBRO="$(psql_em "$ADMIN_DB" "${VARS[@]}" <<'SQL'
-SELECT pg_has_role(current_user, :'owner', 'MEMBER');
+  # PG16+: o admin CREATEROLE ganha, sozinho, pertença com ADMIN mas SEM SET nos papéis
+  # que cria — o que importa aqui é poder fazer SET ROLE (CREATE DATABASE OWNER, SET ROLE).
+  if [ "$SERVER_MAJOR" -ge 16 ]; then PRIV_PAPEL=SET; else PRIV_PAPEL=MEMBER; fi
+  MEMBRO="$(psql_em "$ADMIN_DB" "${VARS[@]}" -v priv="$PRIV_PAPEL" <<'SQL'
+SELECT pg_has_role(current_user, :'owner', :'priv');
 SQL
 )"
   if [ "$MEMBRO" != t ]; then
