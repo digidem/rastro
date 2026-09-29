@@ -1,4 +1,8 @@
-import type { GeoJSONSource, StyleSpecification } from "maplibre-gl";
+import type {
+  GeoJSONSource,
+  LayerSpecification,
+  StyleSpecification,
+} from "maplibre-gl";
 import { Popup, addProtocol, Map as maplibregl } from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import type { Component, JSXElement } from "solid-js";
@@ -24,27 +28,99 @@ const TILES_URL =
 // remoto e nada para copiar à mão no servidor.
 const GLYPHS_URL = "/glyphs/{fontstack}/{range}.pbf";
 
-// Basemap padrão: se o basemap pmtiles próprio não existir (/tiles/basemap.pmtiles
-// dá erro), o mapa troca sozinho para tiles do OpenStreetMap servidos pela API
-// (/api/osm/…, com token; o navegador não fala com o OSM).
-const CAMADAS_PMTILES = ["landcover", "water", "waterway", "boundary"];
+type Limites = [[number, number], [number, number]];
 
-function usarOsm(map: maplibregl) {
-  if (map.getSource("osm") !== undefined) {
+// Caixa [[oeste, sul], [leste, norte]] que cobre todos os pontos válidos, ou null.
+function limitesDosPontos(
+  pontos: { lon: number; lat: number }[],
+): Limites | null {
+  const ok = pontos.filter(
+    (p) =>
+      Number.isFinite(p.lon) &&
+      Number.isFinite(p.lat) &&
+      Math.abs(p.lon) <= 180 &&
+      Math.abs(p.lat) <= 90,
+  );
+  if (ok.length === 0) {
+    return null;
+  }
+  return [
+    [Math.min(...ok.map((p) => p.lon)), Math.min(...ok.map((p) => p.lat))],
+    [Math.max(...ok.map((p) => p.lon)), Math.max(...ok.map((p) => p.lat))],
+  ];
+}
+
+// Basemap PADRÃO: tiles do OpenStreetMap servidos pela API (/api/osm/…, com token; o
+// navegador não fala com o OSM). Ele já nasce no estilo — nenhuma fonte "que pode
+// falhar" no boot: uma source pmtiles ausente (404) deixava o mapa eternamente
+// "não carregado" (evento load nunca disparava) e os pins nunca apareciam.
+const OSM_TILES = (): string =>
+  `${window.location.origin}/api/osm/{z}/{x}/{y}.png`;
+
+const CAMADAS_PMTILES: LayerSpecification[] = [
+  {
+    id: "landcover",
+    type: "fill",
+    source: "basemap",
+    "source-layer": "landcover",
+    paint: { "fill-color": "#1c2b1f", "fill-opacity": 0.9 },
+  },
+  {
+    id: "water",
+    type: "fill",
+    source: "basemap",
+    "source-layer": "water",
+    paint: { "fill-color": "#14293b" },
+  },
+  {
+    id: "waterway",
+    type: "line",
+    source: "basemap",
+    "source-layer": "waterway",
+    paint: { "line-color": "#14293b", "line-width": 1 },
+  },
+  {
+    id: "boundary",
+    type: "line",
+    source: "basemap",
+    "source-layer": "boundary",
+    paint: {
+      "line-color": "#4a5b4e",
+      "line-width": 1,
+      "line-dasharray": [2, 2],
+    },
+  },
+];
+
+// Se existir um basemap próprio (/tiles/basemap.pmtiles), troca o OSM por ele:
+// funciona offline e sem nenhuma requisição externa.
+function usarBasemapLocal(map: maplibregl) {
+  if (map.getSource("basemap") !== undefined) {
     return;
   }
-  map.addSource("osm", {
-    type: "raster",
-    tiles: [`${window.location.origin}/api/osm/{z}/{x}/{y}.png`],
-    tileSize: 256,
-    maxzoom: 19,
+  map.addSource("basemap", {
+    type: "vector",
+    url: TILES_URL,
     attribution: "© OpenStreetMap contributors",
   });
-  map.addLayer({ id: "osm-base", type: "raster", source: "osm" }, "track-line");
-  for (const id of CAMADAS_PMTILES) {
-    if (map.getLayer(id) !== undefined) {
-      map.setLayoutProperty(id, "visibility", "none");
-    }
+  for (const camada of CAMADAS_PMTILES) {
+    map.addLayer(camada, "track-line");
+  }
+  map.setLayoutProperty("osm-base", "visibility", "none");
+}
+
+async function existeBasemapLocal(): Promise<boolean> {
+  if (typeof fetch !== "function") {
+    return false;
+  }
+  try {
+    const res = await fetch("/tiles/basemap.pmtiles", {
+      method: "HEAD",
+      credentials: "omit",
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -64,9 +140,11 @@ const estilo: StyleSpecification = {
   version: 8,
   glyphs: GLYPHS_URL,
   sources: {
-    basemap: {
-      type: "vector",
-      url: TILES_URL,
+    osm: {
+      type: "raster",
+      tiles: [OSM_TILES()],
+      tileSize: 256,
+      maxzoom: 19,
       attribution: "© OpenStreetMap contributors",
     },
     nodes: { type: "geojson", data: EMPTY_FC },
@@ -79,38 +157,7 @@ const estilo: StyleSpecification = {
       type: "background",
       paint: { "background-color": "#121b14" },
     },
-    {
-      id: "landcover",
-      type: "fill",
-      source: "basemap",
-      "source-layer": "landcover",
-      paint: { "fill-color": "#1c2b1f", "fill-opacity": 0.9 },
-    },
-    {
-      id: "water",
-      type: "fill",
-      source: "basemap",
-      "source-layer": "water",
-      paint: { "fill-color": "#14293b" },
-    },
-    {
-      id: "waterway",
-      type: "line",
-      source: "basemap",
-      "source-layer": "waterway",
-      paint: { "line-color": "#14293b", "line-width": 1 },
-    },
-    {
-      id: "boundary",
-      type: "line",
-      source: "basemap",
-      "source-layer": "boundary",
-      paint: {
-        "line-color": "#4a5b4e",
-        "line-width": 1,
-        "line-dasharray": [2, 2],
-      },
-    },
+    { id: "osm-base", type: "raster", source: "osm" },
     {
       id: "track-line",
       type: "line",
@@ -189,6 +236,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   );
   const [carregado, setCarregado] = createSignal(false);
   let trackReq = 0; // descarta resposta de trilha de seleção anterior
+  let interagiu = false; // o usuário mexeu no mapa: para de recentralizar sozinho
+  let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
 
   const initializeMap = () => {
@@ -204,20 +253,28 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       attributionControl: { compact: false },
     });
     setCurrentView(map);
-    // Sem basemap próprio (404 no pmtiles): cai automaticamente para o OSM.
-    map.on("error", (e) => {
-      if ((e as { sourceId?: string }).sourceId !== "basemap") {
+    // Gesto do usuário (arrastar/zoom/toque) desliga o enquadramento automático.
+    for (const ev of ["dragstart", "wheel", "touchstart", "dblclick"]) {
+      map.on(ev, () => {
+        interagiu = true;
+      });
+    }
+    // O estilo (JSON) fica pronto em "style.load", antes de qualquer tile — é o que
+    // basta para pins/trilha. "load" (todos os tiles) pode demorar ou nem vir se um
+    // tile falhar, então os dois eventos chamam a mesma rotina, uma vez só.
+    let iniciado = false;
+    const aoCarregar = () => {
+      if (iniciado) {
         return;
       }
-      try {
-        usarOsm(map);
-      } catch {
-        // estilo ainda carregando: tenta de novo quando terminar
-        map.once("load", () => usarOsm(map));
-      }
-    });
-    map.on("load", () => {
+      iniciado = true;
       setCarregado(true);
+      // Basemap próprio (offline) tem prioridade sobre o OSM, se o arquivo existir.
+      void existeBasemapLocal().then((existe) => {
+        if (existe) {
+          usarBasemapLocal(map);
+        }
+      });
       // Popup do pin: nome + data do fix.
       map.on("click", "nodes-circle", (e) => {
         const f = e.features?.[0];
@@ -235,7 +292,9 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           )
           .addTo(map);
       });
-    });
+    };
+    map.on("style.load", aoCarregar);
+    map.on("load", aoCarregar);
   };
 
   onCleanup(() => {
@@ -260,6 +319,22 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         geometry: { type: "Point", coordinates: [n.lon, n.lat] },
       })),
     });
+    // Enquadra todos os nós: na primeira carga e quando entra/sai um nó — a não ser
+    // que o usuário já tenha mexido no mapa ou haja um nó selecionado.
+    const ids = nos
+      .map((n) => n.nodeNum)
+      .sort()
+      .join(",");
+    const caixa = limitesDosPontos(nos);
+    if (
+      caixa !== null &&
+      ids !== idsCentralizados &&
+      !interagiu &&
+      untrack(() => LocalState.localState.selected) === null
+    ) {
+      idsCentralizados = ids;
+      map.fitBounds(caixa, { padding: 70, maxZoom: 12, duration: 600 });
+    }
   });
 
   // Trilha: reage à seleção, voa até o nó e limpa ao desselecionar.

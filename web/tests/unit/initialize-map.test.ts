@@ -23,10 +23,13 @@ vi.mock("maplibre-gl", () => {
     handlers = new Map<string, Array<(e: unknown) => void>>();
     sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
     flyTo = vi.fn();
+    fitBounds = vi.fn();
     getZoom = vi.fn(() => 7);
     remove = vi.fn();
 
+    opts: unknown;
     constructor(_opts: unknown) {
+      this.opts = _opts;
       instancias.push(this);
       for (const nome of ["nodes", "track", "track-points"]) {
         this.sources.set(nome, { setData: vi.fn() });
@@ -40,7 +43,7 @@ vi.mock("maplibre-gl", () => {
       lista.push(handler);
       this.handlers.set(ev, lista);
       // Carrega no mesmo instante: efeitos dos sources ficam testáveis.
-      if (ev === "load") {
+      if (ev === "load" || ev === "style.load") {
         handler(undefined);
       }
     }
@@ -108,6 +111,7 @@ interface FakeMapLike {
   handlers: Map<string, Array<(e: unknown) => void>>;
   sources: Map<string, FakeSource>;
   flyTo: ReturnType<typeof vi.fn>;
+  fitBounds: ReturnType<typeof vi.fn>;
   emit(ev: string, e: unknown): void;
   getSource(nome: string): FakeSource;
 }
@@ -285,40 +289,110 @@ describe("InitializeMap — popup", () => {
 });
 
 describe("InitializeMap — basemap padrão OSM", () => {
-  const prepara = () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const prepara = (headOk: boolean) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: headOk })),
+    );
     montar({} as DataValue["api"]);
     return mapa();
   };
 
-  it("sem o basemap próprio (erro na source basemap) troca para OSM via API", () => {
-    const m = prepara();
-    m.emit("error", { sourceId: "basemap", error: new Error("404") });
-    expect(m.addSource).toHaveBeenCalledTimes(1);
-    const [nome, def] = m.addSource.mock.calls[0] as [
-      string,
-      { type: string; tiles: string[] },
-    ];
-    expect(nome).toBe("osm");
-    expect(def.type).toBe("raster");
+  it("o estilo já nasce com o OSM (via API) e SEM source pmtiles que possa falhar", () => {
+    const m = prepara(false);
+    const estilo = (
+      m.opts as {
+        style: { sources: Record<string, unknown>; layers: { id: string }[] };
+      }
+    ).style;
+    expect(Object.keys(estilo.sources)).toContain("osm");
+    expect(Object.keys(estilo.sources)).not.toContain("basemap");
+    expect(estilo.layers.map((l) => l.id)).toContain("osm-base");
+    const osm = estilo.sources.osm as { tiles: string[] };
     // mesma origem, pela API (token) — nunca direto no servidor do OSM
-    expect(def.tiles[0]).toBe(
+    expect(osm.tiles[0]).toBe(
       `${window.location.origin}/api/osm/{z}/{x}/{y}.png`,
     );
-    expect(m.addLayer).toHaveBeenCalledWith(
-      { id: "osm-base", type: "raster", source: "osm" },
-      "track-line",
-    );
-    for (const id of ["landcover", "water", "waterway", "boundary"]) {
-      expect(m.setLayoutProperty).toHaveBeenCalledWith(id, "visibility", "none");
-    }
   });
 
-  it("é idempotente e ignora erros de outras sources", () => {
-    const m = prepara();
-    m.emit("error", { sourceId: "nodes" });
+  it("sem basemap próprio (HEAD falha) mantém o OSM e não adiciona pmtiles", async () => {
+    const m = prepara(false);
+    await new Promise((r) => setTimeout(r, 10));
     expect(m.addSource).not.toHaveBeenCalled();
-    m.emit("error", { sourceId: "basemap" });
-    m.emit("error", { sourceId: "basemap" });
-    expect(m.addSource).toHaveBeenCalledTimes(1);
+  });
+
+  it("com basemap próprio (HEAD ok) adiciona o pmtiles e esconde o OSM", async () => {
+    const m = prepara(true);
+    await vi.waitFor(() => expect(m.addSource).toHaveBeenCalledTimes(1));
+    const [nome, def] = m.addSource.mock.calls[0] as [string, { type: string }];
+    expect(nome).toBe("basemap");
+    expect(def.type).toBe("vector");
+    expect(m.addLayer).toHaveBeenCalledTimes(4);
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "osm-base",
+      "visibility",
+      "none",
+    );
+  });
+
+  it("style.load e load juntos inicializam uma vez só (um handler de clique)", () => {
+    const m = prepara(false);
+    expect(m.handlers.get("click")?.length).toBe(1);
+  });
+});
+
+describe("InitializeMap — enquadramento automático", () => {
+  const noEm = (nodeNum: number, lon: number, lat: number) => ({
+    ...no(nodeNum),
+    lon,
+    lat,
+  });
+
+  it("enquadra todos os nós ao carregar (caixa cobre todos os pontos)", () => {
+    montar({} as DataValue["api"]);
+    LocalState.setNodes([noEm(1, -71.5, -4.5), noEm(2, -70.0, -5.5)]);
+    const m = mapa();
+    expect(m.fitBounds).toHaveBeenCalledTimes(1);
+    const [caixa, opts] = m.fitBounds.mock.calls[0] as [
+      [[number, number], [number, number]],
+      { maxZoom: number },
+    ];
+    expect(caixa).toEqual([
+      [-71.5, -5.5],
+      [-70.0, -4.5],
+    ]);
+    expect(opts.maxZoom).toBeLessThanOrEqual(14); // um nó só não vira zoom absurdo
+  });
+
+  it("não recentraliza a cada polling com os mesmos nós", () => {
+    montar({} as DataValue["api"]);
+    LocalState.setNodes([noEm(1, -71.5, -4.5)]);
+    LocalState.setNodes([noEm(1, -71.4, -4.4)]); // mesmo nó, posição nova
+    expect(mapa().fitBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it("reenquadra quando chega um nó novo", () => {
+    montar({} as DataValue["api"]);
+    LocalState.setNodes([noEm(1, -71.5, -4.5)]);
+    LocalState.setNodes([noEm(1, -71.5, -4.5), noEm(2, -70.0, -5.5)]);
+    expect(mapa().fitBounds).toHaveBeenCalledTimes(2);
+  });
+
+  it("respeita o usuário: depois de arrastar não recentraliza", () => {
+    montar({} as DataValue["api"]);
+    LocalState.setNodes([noEm(1, -71.5, -4.5)]);
+    mapa().emit("dragstart", undefined);
+    LocalState.setNodes([noEm(1, -71.5, -4.5), noEm(2, -70.0, -5.5)]);
+    expect(mapa().fitBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignora coordenadas inválidas", () => {
+    montar({} as DataValue["api"]);
+    LocalState.setNodes([noEm(1, Number.NaN, 400)]);
+    expect(mapa().fitBounds).not.toHaveBeenCalled();
   });
 });
