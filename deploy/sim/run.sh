@@ -84,6 +84,15 @@ echo "== sonda"
 RC=0
 "${DC[@]}" --profile probe run --rm probe || RC=1
 
+echo "== resiliência: ingest parado + restart do broker (fila QoS1 persistente)"
+"${DC[@]}" stop "$SIM_APP-ingest" >/dev/null 2>&1
+"${DC[@]}" --profile probe run --rm probe publica 5 | grep -E "^(PASS|FAIL)" | tail -1 || RC=1
+"${DC[@]}" restart "$SIM_APP-broker" >/dev/null 2>&1
+sleep 3
+"${DC[@]}" start "$SIM_APP-ingest" >/dev/null 2>&1
+"${DC[@]}" --profile probe run --rm probe conta 5 | grep -E "^(PASS|FAIL)" || RC=1
+"${DC[@]}" --profile probe run --rm probe conta 5 >/dev/null 2>&1 || true
+
 echo "== portas declaradas / publicadas"
 for s in $("${DC[@]}" ps --format '{{.Name}}'); do
   echo "$s declared=$(docker inspect -f '{{index .Config.Labels "rastro.sim.declared-ports"}}' "$s") published=$(docker port "$s" | wc -l)"

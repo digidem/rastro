@@ -174,5 +174,50 @@ def main() -> int:
     return 1 if FALHAS else 0
 
 
+NODE_FILA = 0xAAAA0F5F
+ID_FILA = "!aaaa0f5f"
+
+
+def publica_fila(n: int) -> int:
+    """Publica n posições QoS1 como gateway (usado com o ingest PARADO)."""
+    ca, broker = E["SIM_CA"], E["SIM_BROKER"]
+    c = mqtt_client("gateway", E["SIM_PW_GATEWAY"], broker, ca)
+    c.connect(broker, 8883, 10)
+    c.loop_start()
+    base = int(time.time()) - 3600
+    for i in range(n):
+        rec = PositionRecord(node_num=NODE_FILA, node_id=ID_FILA, time=base + i * 60,
+                             time_source="device", lat_i=101234000 + i, lon_i=-301234000,
+                             rx_time=base + i * 60)
+        info = c.publish(f"{E['SIM_PREFIX']}/positions/{ID_FILA[1:]}", rec.to_mqtt_payload(), qos=1)
+        info.wait_for_publish(10)
+        ok(info.is_published(), f"fila: publicação {i + 1}/{n} aceita pelo broker")
+    c.loop_stop(); c.disconnect()
+    return 1 if FALHAS else 0
+
+
+def confere_fila(n: int) -> int:
+    """Espera as n posições chegarem ao banco (fila QoS1 sobreviveu) e limpa."""
+    db = E["SIM_DB"]
+    linhas = 0
+    for _ in range(60):
+        with pg(db + "_viewer", E["SIM_PW_VIEWER"]) as con:
+            linhas = con.execute("SELECT count(*) FROM positions WHERE node_num = %s",
+                                 (NODE_FILA,)).fetchone()[0]
+        if linhas >= n:
+            break
+        time.sleep(1)
+    ok(linhas == n, f"fila QoS1 sobreviveu ao restart do broker ({n} mensagens)", f"linhas={linhas}")
+    with pg(db + "_maint", E["SIM_PW_MAINT"]) as con:
+        con.execute("DELETE FROM positions WHERE node_num = %s", (NODE_FILA,))
+        con.execute("DELETE FROM nodes WHERE node_num = %s", (NODE_FILA,))
+    return 1 if FALHAS else 0
+
+
 if __name__ == "__main__":
+    modo = sys.argv[1] if len(sys.argv) > 1 else "sonda"
+    if modo == "publica":
+        sys.exit(publica_fila(int(sys.argv[2])))
+    if modo == "conta":
+        sys.exit(confere_fila(int(sys.argv[2])))
     sys.exit(main())
