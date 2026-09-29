@@ -9,9 +9,10 @@ navegador ──HTTPS──▶ nginx do CapRover ─▶ <app> (web) ─▶ <app>
 
 ## 0. Antes de começar
 
+- As imagens `communityfirst/rastro-*` da versão escolhida precisam estar **públicas no Docker Hub**: o CapRover sempre faz `pull` ao implantar (mesmo com a imagem já no servidor) e falha com `error from registry: denied` se não achar.
 - Decida o **nome do app** (ex.: `rastro`). O certificado do broker depende dele; trocar depois exige gerar certificados de novo.
 - Tenha um domínio para o MQTT (ex.: `mqtt.exemplo.org`) apontando para o servidor do CapRover.
-- Veja o nome interno do seu PostgreSQL no CapRover (ex.: `srv-captain--postgres`). Instalações antigas usam o prefixo `srv-captain--`; confira na aba do app do Postgres.
+- Veja o nome interno do seu PostgreSQL no CapRover (ex.: `srv-captain--postgres`). O nome `srv-captain--<app>` funciona em versões antigas e atuais do CapRover (as atuais também aceitam só `<app>`).
 - Rastros de posição são sensíveis: a equipe decide quem tem acesso ao servidor e aos backups dele antes de instalar.
 
 ## 1. Adicionar a loja digidem (uma vez)
