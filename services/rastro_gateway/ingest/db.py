@@ -16,6 +16,50 @@ from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
 
+# Prazo total que o ingester dá ao Postgres no boot (F3b) antes de desistir —
+# compose com depends_on healthy ainda deixa janela para restart/volume init.
+STARTUP_TIMEOUT_PADRAO_SECS = 120.0
+
+# Checagem de prontidão do banco no boot. UMA consulta, e SÓ metadados:
+# nada de SELECT em positions/device_telemetry (tabelas de histórico com
+# milhões de linhas — o boot não pode depender delas).
+# O ``to_regclass`` vem antes de cada privilégio dentro do CASE: sem a tabela,
+# has_table_privilege/has_column_privilege levantariam erro e encobririam o
+# diagnóstico ("tabela ausente" viraria exceção em vez de False limpo).
+_CHECK_READY_SQL = """
+SELECT
+    to_regclass('nodes') IS NOT NULL,
+    to_regclass('positions') IS NOT NULL,
+    to_regclass('device_telemetry') IS NOT NULL,
+    CASE WHEN to_regclass('nodes') IS NULL THEN false
+         ELSE has_table_privilege('nodes', 'INSERT') END,
+    CASE WHEN to_regclass('positions') IS NULL THEN false
+         ELSE has_table_privilege('positions', 'INSERT') END,
+    CASE WHEN to_regclass('device_telemetry') IS NULL THEN false
+         ELSE has_table_privilege('device_telemetry', 'INSERT') END,
+    CASE WHEN to_regclass('positions') IS NULL THEN false
+         ELSE has_column_privilege('positions', 'pos_time', 'SELECT') END,
+    CASE WHEN to_regclass('device_telemetry') IS NULL THEN false
+         ELSE has_column_privilege('device_telemetry', 'telem_time', 'SELECT') END,
+    CASE WHEN to_regclass('nodes') IS NULL THEN false
+         ELSE has_column_privilege('nodes', 'node_id', 'UPDATE') END,
+    current_schemas(false)::text
+"""
+
+# O que cada um dos 9 booleanos acima representa — a ordem TEM que bater com a
+# do SELECT (é o que aparece no log de boot; ver _CHECK_READY_SQL).
+_CHECK_READY_ITENS = (
+    "tabela nodes não existe",
+    "tabela positions não existe",
+    "tabela device_telemetry não existe",
+    "falta INSERT em nodes",
+    "falta INSERT em positions",
+    "falta INSERT em device_telemetry",
+    "falta SELECT em positions.pos_time",
+    "falta SELECT em device_telemetry.telem_time",
+    "falta UPDATE em nodes.node_id",
+)
+
 
 @dataclass(frozen=True)
 class PgConfig:
@@ -24,6 +68,7 @@ class PgConfig:
     dbname: str
     user: str
     password: str
+    startup_timeout_secs: float = STARTUP_TIMEOUT_PADRAO_SECS
 
     @classmethod
     def from_env(cls, env: dict | None = None) -> "PgConfig":
@@ -37,6 +82,10 @@ class PgConfig:
             dbname=env.get("RASTRO_PG_DB", "rastro"),
             user=env.get("RASTRO_PG_USER", "rastro"),
             password=password,
+            startup_timeout_secs=float(
+                env.get("RASTRO_PG_STARTUP_TIMEOUT_SECS")
+                or STARTUP_TIMEOUT_PADRAO_SECS
+            ),
         )
 
 
@@ -58,6 +107,31 @@ class Db:
 
     def close(self) -> None:
         self._pool.close()
+
+    def check_ready(self) -> None:
+        """Boot (F3b): as 3 tabelas existem e temos os privilégios que gravam?
+
+        Uma conexão do pool, UMA consulta, nenhuma linha de histórico lida.
+        ``RuntimeError`` lista o que falta e os schemas do search_path (o erro
+        clássico de deploy é esquema no schema errado ou role sem GRANT).
+        Erro de DISPONIBILIDADE (``psycopg.OperationalError``, inclusive
+        ``PoolTimeout``) vaza para o chamador decidir o retry.
+        """
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_CHECK_READY_SQL)
+                row = cur.fetchone()
+        if not row:
+            raise RuntimeError("banco não respondeu à checagem de prontidão")
+        schemas = row[len(_CHECK_READY_ITENS)] or "{}"
+        faltando = [item for item, ok in zip(_CHECK_READY_ITENS, row) if not ok]
+        if faltando:
+            raise RuntimeError(
+                "banco não está pronto: "
+                + "; ".join(faltando)
+                + f"; schemas no search_path: {schemas}"
+            )
+        log.info("banco pronto (schemas no search_path: %s)", schemas)
 
     def store_batch(
         self,

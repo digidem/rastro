@@ -7,12 +7,19 @@ não descarta — o broker redeliverá na reconexão e o dedupe do banco
 (``ON CONFLICT DO NOTHING``, decisão D6) absorve a redelivery.
 
 NUNCA logar ``msg.payload`` — coordenadas são sensíveis; logue tópico e contagens.
+A CA em base64 (``RASTRO_MQTT_CA_B64``) segue a mesma regra: loga-se o caminho do
+arquivo temporário, nunca o conteúdo.
 """
 from __future__ import annotations
 
+import atexit
+import base64
+import binascii
 import logging
 import os
+import shutil
 import socket
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -29,6 +36,79 @@ FLUSHER_POLL_SECS = 0.5
 ACK_BACKOFF_INIT_SECS = 1.0
 ACK_BACKOFF_MAX_SECS = 30.0
 TOPIC_SUFFIXES = ("positions/#", "telemetry/#", "status/#")
+
+CA_CERT_ENV = "RASTRO_MQTT_CA_CERT"
+CA_B64_ENV = "RASTRO_MQTT_CA_B64"
+CA_PEM_INICIO = b"-----BEGIN CERTIFICATE-----"
+
+
+def _remover_ca_temporaria(directory: str, path: str) -> None:
+    """atexit: apaga o arquivo da CA e o diretório privado.
+
+    Roda com o interpretador fechando: não pode levantar nada, e tem que ser
+    idempotente (o processo pode morrer antes — aí o dono do /tmp limpa).
+    """
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    try:
+        os.rmdir(directory)
+    except OSError:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _escrever_ca_privada(pem: bytes) -> str:
+    """PEM → arquivo privado (dir 0700, arquivo 0600) removido no atexit.
+
+    ``O_EXCL`` garante que não escrevemos por cima de nada que já exista no
+    diretório (nada legítimo estaria lá, mas /tmp é compartilhado).
+    """
+    directory = tempfile.mkdtemp(prefix="rastro-ca-")
+    os.chmod(directory, 0o700)  # mkdtemp já cria 0700 — garantimos explícito
+    path = os.path.join(directory, "ca.pem")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, pem)
+    finally:
+        os.close(fd)
+    atexit.register(_remover_ca_temporaria, directory, path)
+    return path
+
+
+def _ca_de_b64(valor: str) -> str:
+    """``RASTRO_MQTT_CA_B64`` (base64 de uma linha de um PEM de CA) → caminho.
+
+    Existe porque secret manager montando env nem sempre consegue montar um
+    arquivo no contêiner. NUNCA logar ``valor`` nem o PEM: sem encadear a
+    exceção original (``from None``) para nada do material vazar por traceback.
+    """
+    try:
+        pem = base64.b64decode(valor, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError(
+            f"{CA_B64_ENV} não é base64 válido"
+        ) from None
+    if not pem.startswith(CA_PEM_INICIO):
+        raise ValueError(f"{CA_B64_ENV} não é um PEM de certificado")
+    path = _escrever_ca_privada(pem)
+    log.info("CA do MQTT escrita em arquivo temporário privado: %s", path)
+    return path
+
+
+def _resolver_ca(env: dict) -> str | None:
+    """CA do broker: caminho montado (``RASTRO_MQTT_CA_CERT``) OU PEM em base64.
+
+    Os dois juntos é ambiguidade de configuração — errar cedo é mais barato que
+    descobrir no handshake qual das duas o processo usou.
+    """
+    caminho = env.get(CA_CERT_ENV) or None
+    b64 = env.get(CA_B64_ENV) or None
+    if caminho and b64:
+        raise ValueError(f"defina só um: {CA_CERT_ENV} ou {CA_B64_ENV}")
+    if b64:
+        return _ca_de_b64(b64)
+    return caminho
 
 
 @dataclass(frozen=True)
@@ -50,7 +130,7 @@ class MqttConfig:
             port=int(env.get("RASTRO_MQTT_PORT", "8883")),
             username=env.get("RASTRO_MQTT_USERNAME") or None,
             password=env.get("RASTRO_MQTT_PASSWORD") or None,
-            ca_cert=env.get("RASTRO_MQTT_CA_CERT") or None,
+            ca_cert=_resolver_ca(env),
             client_id=env.get("RASTRO_MQTT_CLIENT_ID")
             or f"rastro-ingest-{socket.gethostname()}",
             topic_prefix=env.get("RASTRO_MQTT_TOPIC_PREFIX", "rastro"),
@@ -69,7 +149,9 @@ def build_client(cfg: MqttConfig) -> mqtt.Client:
     if cfg.username is not None:
         client.username_pw_set(cfg.username, cfg.password)
     # TLS sempre — o broker não tem listener em texto plano (plano Fase 1).
-    # Sem CA configurada usa-se a store do sistema; na bancada a CA é a nossa.
+    # Sem CA configurada usa-se a store do sistema; na bancada a CA é a nossa —
+    # arquivo montado (RASTRO_MQTT_CA_CERT) ou o temporário privado gerado de
+    # RASTRO_MQTT_CA_B64. Verificação de hostname ON (tls_set não a desliga).
     client.tls_set(ca_certs=cfg.ca_cert)
     # Ack manual: o PUBACK só sai depois do commit no Postgres (ver Ingester.flush).
     client.manual_ack_set(True)
