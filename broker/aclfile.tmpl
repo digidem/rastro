@@ -1,0 +1,15 @@
+# ACL do mosquitto renderizada pelo entrypoint: o marcador @PREFIX@ vira o prefixo de
+# tópico escolhido (RASTRO_MQTT_TOPIC_PREFIX). Nenhum usuário tem readwrite; tudo não
+# listado é negado.
+# O prefixo é seguido do segmento com o id do nó (ex.: <prefixo>/positions/0badf00d) para
+# que uma política futura por nó seja uma linha de ACL, não um repath.
+# Os dois usuários abaixo são fixos e correspondem às linhas do arquivo passwd gerado.
+user gateway
+topic write @PREFIX@/positions/#
+topic write @PREFIX@/telemetry/#
+topic write @PREFIX@/status/#
+
+user ingest
+topic read @PREFIX@/positions/#
+topic read @PREFIX@/telemetry/#
+topic read @PREFIX@/status/#
