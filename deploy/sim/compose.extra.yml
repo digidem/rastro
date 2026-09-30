@@ -14,6 +14,9 @@ services:
       retries: 30
 
   # Frente TLS como o nginx do CapRover: termina HTTPS e passa X-Forwarded-Proto.
+  # Dois vhosts na 443 (como os subdomínios do CapRover): srv-captain--front para
+  # o web e sim-mqtt.sim.local para o broker — alias extra aponta para ESTA frente,
+  # e o nginx faz proxy ao listener 9001 do broker com Upgrade de WebSocket.
   front:
     image: nginx:1.27-alpine
     volumes:
@@ -21,7 +24,7 @@ services:
       - ${SIM_FRONT}/certs:/certs:ro
     networks:
       sim:
-        aliases: [srv-captain--front]
+        aliases: [srv-captain--front, sim-mqtt.sim.local]
 
   probe:
     image: communityfirst/rastro-ingest:${SIM_TAG}
@@ -37,8 +40,12 @@ services:
       SIM_WEB_URL: http://srv-captain--${SIM_APP}
       SIM_FRONT_URL: https://srv-captain--front
       SIM_FRONT_CA: /sim/front-ca.crt
+      # Host do vhost MQTT da frente: cliente WSS → nginx (SNI sim-mqtt.sim.local)
+      # → proxy com Upgrade → listener 9001 do broker, como o gateway em produção.
+      SIM_FRONT_WS_HOST: sim-mqtt.sim.local
       SIM_PW_GATEWAY: ${SIM_PW_GATEWAY}
       SIM_PW_INGEST: ${SIM_PW_INGEST}
+      SIM_PW_MQTT_INGEST: ${SIM_PW_MQTT_INGEST}
       SIM_PW_VIEWER: ${SIM_PW_VIEWER}
       SIM_PW_MAINT: ${SIM_PW_MAINT}
       SIM_API_TOKEN: ${SIM_API_TOKEN}

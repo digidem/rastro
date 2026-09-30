@@ -3,6 +3,9 @@
 Publica um registro sintético como `gateway` (TLS, pelo nome srv-captain--sim-broker),
 confere a linha no PostgreSQL (papel viewer), confere /api/nodes/latest pelo contêiner
 web com token + X-Forwarded-Proto https, roda os negativos e limpa (papel maint).
+Também cobre o caminho WebSocket de produção (WSS pela frente TLS → nginx → listener
+9001: CONNACK, senha errada e round-trip publicar→receber) e o fallback OSM do mapa
+(HEAD /tiles/basemap.pmtiles 404, bundle com /api/osm/, rota de tile com/sem token).
 Coordenada sintética no oceano; nada de dado real. Saída: linhas PASS/FAIL; exit 1 se
 algum FAIL.
 """
@@ -10,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -25,6 +29,9 @@ from rastro_gateway.common.records import PositionRecord
 E = os.environ
 NODE_NUM = 0xAAAA0F5E
 NODE_ID = "!aaaa0f5e"
+# Nó sintético do round-trip sobre WebSockets (não confundir com o da sonda principal)
+NODE_WS = 0xAAAA0F60
+ID_WS = "!aaaa0f60"
 FALHAS: list[str] = []
 
 
@@ -70,8 +77,8 @@ def conecta(user: str, pw: str, host: str, ca: str | None) -> str:
     return "ok" if not rc.is_failure else f"recusado:{rc}"
 
 
-def http(path: str, headers: dict) -> tuple[int, str]:
-    req = urllib.request.Request(E["SIM_WEB_URL"] + path, headers=headers)
+def http(path: str, headers: dict, method: str = "GET") -> tuple[int, str]:
+    req = urllib.request.Request(E["SIM_WEB_URL"] + path, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, r.read().decode()
@@ -126,6 +133,31 @@ def main() -> int:
     st, corpo = http("/ca.crt", {})
     ok(st == 200 and corpo == open(E["SIM_CA"], encoding="utf-8").read()
        and "PRIVATE KEY" not in corpo, "/ca.crt serve a CA pública do broker", f"status={st}")
+
+    # --- fallback OSM do mapa (basemap pmtiles local ausente) ---------------------------
+    # Gatilho exato de web/src/InitializeMap.tsx (existeBasemapLocal): o viewer faz
+    # HEAD /tiles/basemap.pmtiles e só troca o OSM por pmtiles se responder ok. No sim o
+    # volume <app>-tiles está vazio → 404 → o estilo mantém a source raster OSM, que pede
+    # /api/osm/{z}/{x}/{y}.png (proxy da API, atrás do token).
+    st, _ = http("/tiles/basemap.pmtiles", {}, method="HEAD")
+    ok(st == 404, "HEAD /tiles/basemap.pmtiles → 404 (sem basemap local: gatilho do fallback)",
+       f"status={st}")
+    st, pagina = http("/", {})
+    assets = re.findall(r'src="(/assets/[^"]+\.js)"', pagina)
+    tem_fallback = False
+    for asset in assets:
+        s, js = http(asset, {})
+        if s == 200 and "/api/osm/" in js:
+            tem_fallback = True
+    ok(st == 200 and assets and tem_fallback,
+       "bundle do viewer entrega o fallback /api/osm/{z}/{x}/{y}.png", str(assets))
+    st, _ = http("/api/osm/0/0/0.png", {"X-Forwarded-Proto": "https"})
+    ok(st == 401, "/api/osm/… sem token → 401", f"status={st}")
+    st, _ = http("/api/osm/0/0/0.png", {**tok, "X-Forwarded-Proto": "https"})
+    ok(st == 502,
+       "/api/osm/… com token → proxy do OSM vivo (502: rede interna sem saída para o tile server)",
+       f"status={st}")
+
     # API direta pelo nome interno, sem token
     req = urllib.request.Request(f"http://srv-captain--{E['SIM_APP']}-api:8080/api/nodes/latest",
                                  headers={"X-Forwarded-Proto": "https"})
@@ -155,6 +187,111 @@ def main() -> int:
         st = exc.code
     ok(st == 200, "HTTPS pela frente: só com o cookie (sem Bearer) → 200 (X-Forwarded-Proto passa)",
        f"status={st}")
+
+    # --- caminho WebSocket de produção: nginx da frente → listener 9001 do broker --------
+    # Topologia CapRover (docs/OPERACAO-caprover.md): o gateway fala wss:// na 443,
+    # o nginx termina o TLS (websocketSupport, containerHttpPort 9001) e repassa o
+    # WebSocket ao listener 9001 SEM TLS do broker (RASTRO_MQTT_WEBSOCKETS=1). Aqui o
+    # vhost sim-mqtt.sim.local da frente é esse proxy; round-trip publicar→receber
+    # prova que o caminho inteiro funciona, não só que a porta abre.
+    wshost = E["SIM_FRONT_WS_HOST"]
+
+    def mqtt_ws(user: str, pw: str) -> mqtt.Client:
+        c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                        client_id=f"probe-ws-{user}-{time.time_ns()}", transport="websockets")
+        c.username_pw_set(user, pw)
+        c.tls_set(ca_certs=E["SIM_FRONT_CA"])
+        c.ws_set_options(path="/mqtt")  # mesmo path do gateway em produção (RASTRO_MQTT_WS_PATH)
+        return c
+
+    def conecta_ws(user: str, pw: str) -> str:
+        """Resultado REAL da conexão WSS pela frente: espera o CONNACK."""
+        c = mqtt_ws(user, pw)
+        resultado: dict = {}
+        c.on_connect = lambda cl, ud, flags, rc, props=None: resultado.setdefault("rc", rc)
+        try:
+            c.connect(wshost, 443, 10)
+        except (ssl.SSLError, OSError, ValueError) as exc:
+            return f"erro:{type(exc).__name__}"
+        c.loop_start()
+        for _ in range(50):
+            if "rc" in resultado:
+                break
+            time.sleep(0.1)
+        c.loop_stop()
+        c.disconnect()
+        rc = resultado.get("rc")
+        if rc is None:
+            return "sem-connack"
+        return "ok" if not rc.is_failure else f"recusado:{rc}"
+
+    res_ws = conecta_ws("ingest", E["SIM_PW_MQTT_INGEST"])
+    ok(res_ws == "ok", "WS: CONNACK via WSS pela frente (nginx → listener 9001)", res_ws)
+    ok(conecta_ws("ingest", "senha-errada-xxxxxxxxxxxxxxxx") != "ok",
+       "WS: senha errada recusada no caminho WebSocket")
+
+    # Round-trip de verdade: assinante (ingest) e publicador (gateway) OS DOIS via WSS.
+    rec_ws = PositionRecord(node_num=NODE_WS, node_id=ID_WS, time=int(time.time()),
+                            time_source="device", lat_i=101234000, lon_i=-301234000,
+                            rx_time=int(time.time()))
+    payload_ws = rec_ws.to_mqtt_payload().encode()  # bytes: compara com msg.payload
+    topico_ws = f"{E['SIM_PREFIX']}/positions/{ID_WS[1:]}"
+    recebidos: list[bytes] = []
+    connack_sub: dict = {}
+    suback: dict = {}
+    sub = mqtt_ws("ingest", E["SIM_PW_MQTT_INGEST"])
+    pub = mqtt_ws("gateway", E["SIM_PW_GATEWAY"])
+    sub.on_connect = lambda cl, ud, flags, rc, props=None: connack_sub.setdefault("rc", rc)
+    def _on_sub(cl, ud, mid, razao, props=None):
+        codigos = razao if isinstance(razao, list) else [razao]
+        sucesso = bool(codigos) and all(
+            not getattr(c, "is_failure", False)
+            and not (isinstance(c, int) and not isinstance(c, bool) and c >= 128)
+            for c in codigos
+        )
+        suback["ok"] = sucesso
+        suback["codigos"] = codigos
+
+    sub.on_subscribe = _on_sub
+    sub.on_message = lambda cl, ud, msg: recebidos.append(bytes(msg.payload))
+    try:
+        sub.connect(wshost, 443, 10)
+        sub.loop_start()
+        for _ in range(50):
+            if "rc" in connack_sub:
+                break
+            time.sleep(0.1)
+        rc_sub = connack_sub.get("rc")
+        ok(rc_sub is not None and not rc_sub.is_failure, "WS: assinante (ingest) conectou via WSS",
+           f"rc={rc_sub}")
+        sub.subscribe(f"{E['SIM_PREFIX']}/positions/#", qos=1)
+        for _ in range(50):
+            if suback:
+                break
+            time.sleep(0.1)
+        ok(suback.get("ok") is True, "WS: SUBACK concedido ao ingest (leitura de positions/#)",
+           f"codigos={suback.get('codigos')}")
+        pub.connect(wshost, 443, 10)
+        pub.loop_start()
+        info = pub.publish(topico_ws, payload_ws, qos=1)
+        info.wait_for_publish(10)
+        ok(info.is_published(), "WS: publicação QoS1 do gateway aceita via WSS")
+        for _ in range(50):
+            if recebidos:
+                break
+            time.sleep(0.1)
+        ok(recebidos == [payload_ws],
+           "WS: round-trip publicar→receber via WebSockets (mensagem entregue)",
+           f"recebidos={len(recebidos)}")
+    except (ssl.SSLError, OSError, ValueError) as exc:
+        ok(False, "WS: round-trip publicar→receber via WebSockets", f"{type(exc).__name__}: {exc}")
+    finally:
+        for cl in (sub, pub):
+            try:
+                cl.loop_stop()
+                cl.disconnect()
+            except Exception:  # cliente que nem conectou — não mascara o resultado
+                pass
 
     # --- negativos do broker ------------------------------------------------------------
     ok(conecta("gateway", E["SIM_PW_GATEWAY"], broker, ca) == "ok", "controle: conexão válida")

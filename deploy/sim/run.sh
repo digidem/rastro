@@ -8,8 +8,12 @@
 # senhas aleatórias; gera o compose A PARTIR do template (rastro_caprover_sim.py) — o serviço
 # <app>-setup do template prepara o Postgres simulado (superusuário), o broker gera o próprio
 # TLS e publica a CA no volume compartilhado <app>-pki; sobe em rede interna (sem portas no
-# host); espera o "OK" do setup; roda a sonda (deploy/sim/probe.py) e confere as imagens.
-# Nada fica para trás (down -v), a menos que --keep.
+# host); espera o "OK" do setup; roda a sonda (deploy/sim/probe.py — inclui o round-trip MQTT
+# sobre WebSockets pela frente TLS, nginx → listener 9001, e as checagens HTTP do fallback
+# OSM) e confere as imagens; por fim o navegador real exercita o fallback OSM
+# (deploy/sim/browser-osm.py — SKIP com motivo se faltar chrome/docker/imagem).
+# Nada fica para trás (down -v), a menos que --keep. Projeto/contêineres/rede/volumes têm
+# nome único da execução (timestamp + PID).
 set -euo pipefail
 umask 077
 
@@ -21,7 +25,9 @@ for a in "$@"; do case "$a" in --keep) KEEP=1 ;; --no-build) BUILD=0 ;; *) echo 
 
 export SIM_TAG=simtest SIM_APP=sim SIM_DB="${SIM_DB:-rastro}" SIM_PROBE="$AQUI/probe.py"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/rastro-sim.XXXXXX")"
-PROJ="rastro-sim-$SIM_APP"
+# Nome de projeto único da execução: contêineres, rede e volumes não colidem com outra
+# execução simultânea e o down -v do trap remove só o que ESTA execução criou.
+PROJ="rastro-sim-$SIM_APP-$(date +%s)-$$"
 limpar() {
   if [ "$KEEP" = 0 ]; then
     docker compose -p "$PROJ" -f "$TMP/compose.yml" -f "$AQUI/compose.extra.yml" --profile probe down -v >/dev/null 2>&1 || true
@@ -45,10 +51,13 @@ docker tag communityfirst/rastro-pgtools:$SIM_TAG communityfirst/rastro-pgtools:
 
 export SIM_FRONT="$TMP/front"
 mkdir -p "$SIM_FRONT"
+# O cert da frente cobre também o vhost MQTT interno (sim-mqtt.sim.local), como o
+# cert do CapRover cobre <app>-mqtt.<domínio-raiz> — o cliente WSS valida o SAN.
 "$RAIZ/scripts/rastro_gen_certs.sh" --out-dir "$TMP/front-ca" --cert-dir "$SIM_FRONT/certs" \
-  --san DNS:srv-captain--front >/dev/null
+  --san DNS:srv-captain--front --san DNS:sim-mqtt.sim.local >/dev/null
 chmod 0755 "$SIM_FRONT" "$SIM_FRONT/certs"; chmod 0644 "$SIM_FRONT/certs"/*
 cat > "$SIM_FRONT/nginx.conf" <<NGX
+# Bloco 1 (default): o nginx do CapRover na frente do app web.
 server {
   listen 443 ssl;
   ssl_certificate /certs/server.crt;
@@ -58,6 +67,27 @@ server {
     proxy_set_header Host \$host;
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  }
+}
+# Bloco 2: o nginx do CapRover na frente do app <app>-broker (websocketSupport,
+# containerHttpPort 9001 do template). Termina o HTTPS na 443 e repassa o
+# WebSocket ao listener 9001 do broker (sem TLS ali, de propósito) — é o caminho
+# de produção do gateway (MQTT sobre HTTPS/443). Vhost por SNI/server_name,
+# como os subdomínios do CapRover.
+server {
+  listen 443 ssl;
+  server_name sim-mqtt.sim.local;
+  ssl_certificate /certs/server.crt;
+  ssl_certificate_key /certs/server.key;
+  location / {
+    proxy_pass http://srv-captain--$SIM_APP-broker:9001;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;
   }
 }
 NGX
@@ -150,6 +180,12 @@ if command -v trufflehog >/dev/null; then
       echo "PASS trufflehog $i"; else echo "FAIL trufflehog $i"; RC=1; fi
   done
 fi
+
+echo "== fallback OSM no navegador real (basemap pmtiles ausente)"
+# Abre o viewer num Chrome headless com uma API falsa e confere, pelo CDP, que o
+# HEAD /tiles/basemap.pmtiles responde 404 e que o mapa passa a pedir tiles
+# /api/osm/…. Sai com 0 em SKIP (faltar chrome/docker/imagem) ou com PASS/FAIL.
+python3 "$AQUI/browser-osm.py" "$SIM_TAG" || RC=1
 
 [ "$RC" = 0 ] && echo "== F5 SIM: PASS" || { echo "== F5 SIM: FAIL"; "${DC[@]}" logs --tail 20 2>&1 | tail -60; }
 exit "$RC"

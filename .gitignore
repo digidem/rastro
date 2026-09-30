@@ -23,3 +23,8 @@ __pycache__/
 
 # ferramentas locais de agentes
 .claude/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
+uv.lock
+.ignore
