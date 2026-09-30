@@ -90,6 +90,151 @@ describe("latest()", () => {
     );
   });
 
+  it("mapeia metadados ampliados (altitude, sats, short_name, kind, hw_model…)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: props(
+              ["node_num", 5],
+              ["node_id", "!aabbccdd"],
+              ["nome", "Base Javari"],
+              ["pos_time", "2026-09-29T12:00:00Z"],
+              ["battery", 50],
+              ["short_name", "JVR1"],
+              ["kind", "boat"],
+              ["hw_model", "HELTEC_V4"],
+              ["altitude_m", 82],
+              ["sats", 8],
+              ["time_source", "device"],
+              ["received_at", "2026-09-29T12:00:05Z"],
+              ["bearing", 215.4],
+            ),
+            geometry: { type: "Point", coordinates: [-70.3, -4.5] },
+          },
+        ],
+      }),
+    );
+
+    const nodes = await createApiClient().latest();
+
+    expect(nodes).toEqual([
+      {
+        nodeNum: 5,
+        nodeId: "!aabbccdd",
+        nome: "Base Javari",
+        posTime: "2026-09-29T12:00:00Z",
+        battery: 50,
+        lon: -70.3,
+        lat: -4.5,
+        shortName: "JVR1",
+        kind: "boat",
+        hwModel: "HELTEC_V4",
+        altitudeM: 82,
+        sats: 8,
+        timeSource: "device",
+        receivedAt: "2026-09-29T12:00:05Z",
+        bearing: 215.4,
+      },
+    ]);
+  });
+
+  it("payload antigo sem os campos novos mantém o shape exato", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: props(
+              ["node_num", 1],
+              ["node_id", "!abcd1234"],
+              ["nome", "Base A"],
+              ["pos_time", "2026-09-27T12:00:00Z"],
+              ["battery", 87],
+            ),
+            geometry: { type: "Point", coordinates: [10, 20] },
+          },
+        ],
+      }),
+    );
+
+    const nodes = await createApiClient().latest();
+    const primeiro = nodes[0] ?? {};
+
+    for (const campo of [
+      "shortName",
+      "kind",
+      "hwModel",
+      "altitudeM",
+      "sats",
+      "timeSource",
+      "receivedAt",
+    ]) {
+      expect(Object.hasOwn(primeiro, campo)).toBe(false);
+    }
+  });
+
+  it("kind fora do contrato (ou ausente) cai em 'unknown'", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: props(
+              ["node_num", 1],
+              ["node_id", "!abcd1234"],
+              ["kind", "surpresa"],
+            ),
+            geometry: { type: "Point", coordinates: [10, 20] },
+          },
+          {
+            type: "Feature",
+            properties: props(
+              ["node_num", 2],
+              ["node_id", "!abcd5678"],
+              ["kind", 42],
+            ),
+            geometry: { type: "Point", coordinates: [10.1, 20.1] },
+          },
+        ],
+      }),
+    );
+
+    const nodes = await createApiClient().latest();
+
+    expect(nodes.map((n) => n.kind)).toEqual(["unknown", "unknown"]);
+  });
+
+  it("altitude_m/sats nulos presentes viram null (campo existe, valor ausente)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: props(
+              ["node_num", 1],
+              ["node_id", "!abcd1234"],
+              ["altitude_m", null],
+              ["sats", null],
+            ),
+            geometry: { type: "Point", coordinates: [10, 20] },
+          },
+        ],
+      }),
+    );
+
+    const nodes = await createApiClient().latest();
+
+    expect(nodes[0]?.altitudeM).toBeNull();
+    expect(nodes[0]?.sats).toBeNull();
+    expect(Object.hasOwn(nodes[0] ?? {}, "altitudeM")).toBe(true);
+  });
+
   it("sem getToken não manda Authorization e manda credentials", async () => {
     fetchMock.mockResolvedValue(
       jsonRes({ type: "FeatureCollection", features: [] }),

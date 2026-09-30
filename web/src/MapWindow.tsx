@@ -1,44 +1,34 @@
 import type { Component } from "solid-js";
-import { For, Show, createSignal, onMount } from "solid-js";
+import { Show, createSignal, onMount } from "solid-js";
 import { Button } from "./components/ui/button.jsx";
-import { Body, Footer, Header, Root, Title } from "./components/ui/card.jsx";
+import { Header, Root, Title } from "./components/ui/card.jsx";
 import { Text } from "./components/ui/text.jsx";
+import { MapControls } from "./components/viewer/MapControls.jsx";
+import { NodeFilters } from "./components/viewer/NodeFilters.jsx";
+import { NodeInspector } from "./components/viewer/NodeInspector.jsx";
+import { NodeList } from "./components/viewer/NodeList.jsx";
 import { useMap } from "./hooks/useMap.jsx";
 import { useStore } from "./hooks/useStore.jsx";
+import { useViewerNodes } from "./hooks/useViewerNodes.js";
 import { useData } from "./providers/DataProvider.jsx";
 
-// Idade do fix em PT-BR: "agora", "há 12 min", "há 3 h", "há 2 d".
-const idadeFix = (iso: string | null): string => {
-  if (iso === null) {
-    return "sem fix";
-  }
-  const s = Math.max(
-    0,
-    Math.floor((Date.now() - new Date(iso).getTime()) / 1000),
-  );
-  if (s < 60) {
-    return "agora";
-  }
-  if (s < 3600) {
-    return `há ${Math.floor(s / 60)} min`;
-  }
-  if (s < 86400) {
-    return `há ${Math.floor(s / 3600)} h`;
-  }
-  return `há ${Math.floor(s / 86400)} d`;
-};
-
 export const MapWindow: Component = () => {
-  const { localState, select, setAuth } = useStore();
+  const { localState, setAuth } = useStore();
   const { api, startPolling, clearSessionData } = useData();
   const { setMapRef, initializeMap } = useMap();
   const [erroSair, setErroSair] = createSignal("");
+  // Sidebar começa fechada no celular e aberta em telas >= md.
+  const [sidebarAberta, setSidebarAberta] = createSignal(
+    typeof window !== "undefined" && window.innerWidth >= 768,
+  );
+
+  // Derivado UMA vez por sessão de tela e compartilhado com os componentes.
+  const { nowMs, filteredNodes, selectedNode, totalCount, filteredCount } =
+    useViewerNodes();
 
   onMount(() => {
     initializeMap();
   });
-
-  const nos = () => Object.values(localState.nodes);
 
   // Queda de rede para o polling; clicar no indicador tenta de novo.
   const reconectar = async () => {
@@ -70,72 +60,117 @@ export const MapWindow: Component = () => {
   };
 
   return (
-    <div ref={setMapRef} class="relative p-0 m-0 w-full h-full">
-      <div class="absolute h-full flex flex-col w-1/4 min-w-64 p-2 gap-2 right-0 top-0">
-        <Root class="flex flex-col min-h-0 flex-1">
-          <Header>
-            <Title>Nós da malha</Title>
-          </Header>
-          <Body class="flex flex-col gap-1 flex-1 overflow-y-auto">
-            <Show when={erroSair() !== ""}>
-              <Text class="text-red-500">{erroSair()}</Text>
-            </Show>
-            <Show
-              when={nos().length > 0}
-              fallback={<Text class="text-gray-400">Aguardando dados…</Text>}
-            >
-              <For each={nos()}>
-                {(n) => (
-                  <button
-                    type="button"
-                    class={`text-left rounded px-2 py-1 ${
-                      localState.selected === n.nodeNum
-                        ? "bg-emerald-800/60"
-                        : "hover:bg-gray-700/40"
-                    }`}
-                    onClick={() =>
-                      select(
-                        localState.selected === n.nodeNum ? null : n.nodeNum,
-                      )
-                    }
+    <div class="relative m-0 h-full w-full p-0">
+      {/* Container do MapLibre: preenche tudo, atrás do overlay de UI. */}
+      <div ref={setMapRef} class="absolute inset-0" />
+
+      {/* Overlay: só os controles capturam ponteiro; o mapa continua arrastável. */}
+      <div class="pointer-events-none relative z-10 h-full min-h-0">
+        <div class="pointer-events-auto absolute left-2 top-2">
+          <MapControls
+            sidebarOpen={() => sidebarAberta()}
+            onToggleSidebar={() => setSidebarAberta((v) => !v)}
+          />
+        </div>
+
+        <Show when={sidebarAberta()}>
+          <aside class="pointer-events-auto absolute right-0 top-0 flex h-full w-[368px] max-w-[calc(100vw-1rem)] flex-col p-2">
+            <Root class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-700/80 bg-slate-900/95 shadow-2xl backdrop-blur-md text-slate-100">
+              <Header class="border-b border-slate-700/80 px-4 py-2.5 bg-slate-900/90 shrink-0 flex items-center justify-between">
+                <Title class="text-slate-100 font-bold text-sm tracking-wide">
+                  Nós da malha
+                </Title>
+                <button
+                  type="button"
+                  class="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+                  title="Fechar painel"
+                  onClick={() => setSidebarAberta(false)}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    class="h-4 w-4"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
                   >
-                    <div class="font-medium">{n.nome}</div>
-                    <div class="text-xs text-gray-400">
-                      {n.battery === null
-                        ? "bateria —"
-                        : `bateria ${n.battery}%`}{" "}
-                      · {idadeFix(n.posTime)}
-                    </div>
-                  </button>
+                    <title>Fechar painel</title>
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </Header>
+
+              <div class="shrink-0">
+                <NodeFilters />
+              </div>
+
+              <Show when={selectedNode()}>
+                {(node) => (
+                  <div class="shrink-0 max-h-[45vh] overflow-y-auto border-b border-slate-700/80">
+                    <NodeInspector node={node} nowMs={nowMs} />
+                  </div>
                 )}
-              </For>
-            </Show>
-          </Body>
-          <Footer class="flex items-center gap-2">
-            <button
-              type="button"
-              class="flex items-center gap-1 text-xs"
-              title={
-                localState.online
-                  ? "Conectado à API"
-                  : "Sem conexão — tentar de novo"
-              }
-              onClick={() => reconectar()}
-            >
-              <span
-                class={`h-2 w-2 rounded-full ${
-                  localState.online ? "bg-green-500" : "bg-gray-500"
-                }`}
-              />
-              {localState.online ? "Conectado" : "Sem conexão"}
-            </button>
-            <Show when={localState.authExigida}>
-              <Button variant="outline" class="ml-auto" onClick={() => sair()}>
-                Sair
-              </Button>
-            </Show>
-          </Footer>
-        </Root>
+              </Show>
+
+              {/* NodeList preenche TODO o espaço vertical restante */}
+              <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <NodeList
+                  nodes={filteredNodes}
+                  totalCount={totalCount}
+                  filteredCount={filteredCount}
+                  nowMs={nowMs}
+                />
+              </div>
+
+              <Show when={erroSair() !== ""}>
+                <div class="px-3 py-1.5 bg-red-950/80 border-t border-red-800 text-xs text-red-300 shrink-0">
+                  <Text class="text-red-300 text-xs">{erroSair()}</Text>
+                </div>
+              </Show>
+
+              <div class="flex items-center gap-2 border-t border-slate-700/80 px-4 py-3 bg-slate-900/90 shrink-0 text-xs">
+                <button
+                  type="button"
+                  class="flex items-center gap-2.5 text-xs text-slate-300 hover:text-white transition-colors"
+                  title={
+                    localState.online
+                      ? "Conectado à API da malha"
+                      : "Sem conexão — tentar reconectar"
+                  }
+                  onClick={() => reconectar()}
+                >
+                  <span class="relative flex h-2.5 w-2.5 items-center justify-center">
+                    <Show when={localState.online}>
+                      <span class="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60 motion-safe:animate-ping" />
+                    </Show>
+                    <span
+                      class={`relative inline-flex rounded-full h-2 w-2 ${
+                        localState.online ? "bg-emerald-400" : "bg-slate-500"
+                      }`}
+                    />
+                  </span>
+                  <span class="font-medium text-slate-200">
+                    {localState.online ? "Rádio conectado" : "Sem conexão"}
+                  </span>
+                </button>
+                <Show when={localState.authExigida}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="ml-auto h-8 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 text-xs font-medium rounded-lg"
+                    onClick={() => sair()}
+                  >
+                    Sair
+                  </Button>
+                </Show>
+              </div>
+            </Root>
+          </aside>
+        </Show>
       </div>
     </div>
   );

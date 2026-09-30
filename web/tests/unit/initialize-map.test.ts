@@ -26,6 +26,8 @@ vi.mock("maplibre-gl", () => {
     fitBounds = vi.fn();
     getZoom = vi.fn(() => 7);
     remove = vi.fn();
+    canvas = { style: { cursor: "" } };
+    getCanvas = vi.fn(() => this.canvas);
 
     opts: unknown;
     constructor(_opts: unknown) {
@@ -70,12 +72,14 @@ vi.mock("maplibre-gl", () => {
   }
 
   class FakePopup {
+    html = "";
     remove = vi.fn();
     setLngLat() {
       return this;
     }
     // biome-ignore lint/style/useNamingConvention: nome do método da API do MapLibre
-    setHTML() {
+    setHTML(h: string) {
+      this.html = h;
       return this;
     }
     addTo() {
@@ -114,9 +118,11 @@ interface FakeMapLike {
   fitBounds: ReturnType<typeof vi.fn>;
   emit(ev: string, e: unknown): void;
   getSource(nome: string): FakeSource;
+  getCanvas(): { style: { cursor: string } };
 }
 
 interface FakePopupLike {
+  html: string;
   remove: ReturnType<typeof vi.fn>;
 }
 
@@ -276,15 +282,34 @@ describe("InitializeMap — popup", () => {
       features: [
         {
           geometry: { type: "Point", coordinates: [-30.02, -4.22] },
-          properties: { nome: "Base A", posTime: "2026-09-27T12:00:00Z" },
+          properties: {
+            nome: "Base A",
+            hwModel: "HELTEC_V4",
+            posTime: "2026-09-27T12:00:00Z",
+          },
         },
       ],
     });
     expect(popups).toHaveLength(1);
+    expect(popupAberto().html).toContain("/devices/heltec_v4.svg");
+    expect(popupAberto().html).toContain("Base A");
+    expect(popupAberto().html).toContain("HELTEC_V4");
 
     // Logout: a geração avança e o popup da sessão velha fecha.
     LocalState.bumpPollingGeracao();
     expect(popupAberto().remove).toHaveBeenCalledOnce();
+  });
+
+  it("muda cursor para pointer ao passar sobre o pin", async () => {
+    const api = { track: vi.fn() } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+
+    mapa().emit("mouseenter", {});
+    expect(mapa().getCanvas().style.cursor).toBe("pointer");
+
+    mapa().emit("mouseleave", {});
+    expect(mapa().getCanvas().style.cursor).toBe("");
   });
 });
 
@@ -343,6 +368,22 @@ describe("InitializeMap — basemap padrão OSM", () => {
     const m = prepara(false);
     expect(m.handlers.get("click")?.length).toBe(1);
   });
+
+  it("camada nodes-boat rotaciona os barcos com o rumo e alinha ao mapa", () => {
+    const m = prepara(false);
+    const estilo = (
+      m.opts as {
+        style: {
+          layers: Array<{ id: string; layout?: Record<string, unknown> }>;
+        };
+      }
+    ).style;
+    const boatLayer = estilo.layers.find((l) => l.id === "nodes-boat");
+    expect(boatLayer).toBeDefined();
+    expect(boatLayer?.layout?.["icon-rotate"]).toEqual(["get", "bearing"]);
+    expect(boatLayer?.layout?.["icon-rotation-alignment"]).toBe("map");
+    expect(boatLayer?.layout?.["icon-pitch-alignment"]).toBe("map");
+  });
 });
 
 describe("InitializeMap — enquadramento automático", () => {
@@ -394,5 +435,48 @@ describe("InitializeMap — enquadramento automático", () => {
     montar({} as DataValue["api"]);
     LocalState.setNodes([noEm(1, Number.NaN, 400)]);
     expect(mapa().fitBounds).not.toHaveBeenCalled();
+  });
+
+  it("atualiza source nodes quando os filtros do store mudam", () => {
+    montar({} as DataValue["api"]);
+    const n1 = { ...no(1), kind: "boat" as const, nome: "barco-1" };
+    const n2 = { ...no(2), kind: "fixed_station" as const, nome: "fixo-1" };
+    LocalState.setNodes([n1, n2]);
+    const m = mapa();
+    const nodesSource = m.getSource("nodes");
+    expect(nodesSource?.setData).toHaveBeenCalled();
+
+    // Filtra por categoria "boat"
+    LocalState.setKindFilter("boat");
+    const lastCall = nodesSource?.setData.mock.calls.at(-1)?.[0];
+    expect(lastCall?.features.length).toBe(1);
+    expect(lastCall?.features[0].properties.nodeNum).toBe(1);
+
+    // Restaura "all"
+    LocalState.setKindFilter("all");
+    const allCall = nodesSource?.setData.mock.calls.at(-1)?.[0];
+    expect(allCall?.features.length).toBe(2);
+  });
+
+  it("relógio reativo atualiza pins ao cruzar limite de fix antigo sem mover câmera (dois nós)", () => {
+    montar({} as DataValue["api"]);
+    const t0 = 1_000_000_000_000;
+    LocalState.tickNow(t0);
+
+    const n1Stale = { ...noEm(1, -71.5, -4.5), posTime: new Date(t0 - 20 * 3600 * 1000).toISOString() };
+    const n2Recente = { ...noEm(2, -70.0, -5.5), posTime: new Date(t0 - 2 * 3600 * 1000).toISOString() };
+    LocalState.setNodes([n1Stale, n2Recente]);
+    const m = mapa();
+    expect(m.fitBounds).toHaveBeenCalledTimes(1);
+
+    // Filtro ativo: apenas nós com fix antigo (>12h)
+    LocalState.setConditionFilter("stale");
+    const source = m.getSource("nodes");
+    expect(source?.setData.mock.calls.at(-1)?.[0].features.length).toBe(1);
+
+    // Avança relógio: nó 2 cruza 12h
+    LocalState.tickNow(t0 + 13 * 3600 * 1000);
+    expect(source?.setData.mock.calls.at(-1)?.[0].features.length).toBe(2);
+    expect(m.fitBounds).toHaveBeenCalledTimes(1); // Câmera estável
   });
 });

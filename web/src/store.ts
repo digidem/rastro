@@ -1,5 +1,17 @@
 import { createStore, reconcile } from "solid-js/store";
 
+/** Categoria operacional do nó; "unknown" quando o contrato não informa. */
+export type NodeKind = "boat" | "fixed_station" | "handheld" | "unknown";
+
+/** Filtro de categoria: "all" inclui os nós sem categoria conhecida. */
+export type KindFilter = "all" | NodeKind;
+
+/** Filtro de condição: independe da categoria e da busca (combinação AND). */
+export type ConditionFilter = "all" | "no-position" | "stale";
+
+/** Estado da última rodada de /api/nodes/latest (distingue carga de vazio). */
+export type LatestStatus = "idle" | "loading" | "ready" | "error";
+
 /** Nó visto pela última rodada de /api/nodes/latest. */
 export interface NodeInfo {
   nodeNum: number;
@@ -9,14 +21,40 @@ export interface NodeInfo {
   battery: number | null;
   lon: number;
   lat: number;
+  /**
+   * Metadados ampliados do contrato. Todos opcionais: payload antigo (ou
+   * resposta sem o campo) simplesmente não os traz — o shape anterior é
+   * preservado.
+   */
+  shortName?: string | null;
+  kind?: NodeKind;
+  hwModel?: string | null;
+  altitudeM?: number | null;
+  sats?: number | null;
+  timeSource?: string | null;
+  receivedAt?: string | null;
+  bearing?: number | null;
 }
 
-/** Estado da sessão no viewer. */
+/**
+ * Estado da sessão no viewer. Os campos de filtro/seleção vivem aqui para que
+ * lista, inspector e mapa derivem tudo dos mesmos dados (fonte única).
+ */
 export type AuthEstado = "verificando" | "login" | "ok";
 
 interface LocalState {
   nodes: Record<number, NodeInfo>;
   selected: number | null;
+  /** Busca textual: nome, nome curto, nodeId ou hex do nodeNum. */
+  query: string;
+  /** Categoria exclusiva; "all" inclui "unknown". */
+  kindFilter: KindFilter;
+  /** Condição independente da categoria. */
+  conditionFilter: ConditionFilter;
+  /** Relógio reativo do visualizador (atualizado a cada minuto). */
+  nowMs: number;
+  /** Estado da última rodada de latest() — distingue carga, erro e vazio. */
+  latestStatus: LatestStatus;
   /** Sessão: verificando (checa cookie), login (tela de token), ok (mapa). */
   auth: AuthEstado;
   /** O servidor exige token? (GET /api/auth/estado → exigida) */
@@ -35,6 +73,11 @@ interface LocalState {
 const [localState, setLocalState] = createStore<LocalState>({
   nodes: {},
   selected: null,
+  query: "",
+  kindFilter: "all",
+  conditionFilter: "all",
+  nowMs: Date.now(),
+  latestStatus: "idle",
   auth: "verificando",
   authExigida: true,
   diasLembrar: 30,
@@ -51,19 +94,57 @@ const setNodes = (list: NodeInfo[]) => {
 };
 
 const select = (nodeNum: number | null) => setLocalState("selected", nodeNum);
+const setQuery = (q: string) => setLocalState("query", q);
+const setKindFilter = (f: KindFilter) => setLocalState("kindFilter", f);
+const setConditionFilter = (c: ConditionFilter) =>
+  setLocalState("conditionFilter", c);
+const tickNow = (ms = Date.now()) => setLocalState("nowMs", ms);
+const setLatestStatus = (s: LatestStatus) => setLocalState("latestStatus", s);
 const setAuth = (a: AuthEstado) => setLocalState("auth", a);
 const setAuthExigida = (b: boolean) => setLocalState("authExigida", b);
 const setDiasLembrar = (n: number) => setLocalState("diasLembrar", n);
 const setOnline = (b: boolean) => setLocalState("online", b);
 const bumpPollingGeracao = () => setLocalState("pollingGeracao", (n) => n + 1);
 
+/** Limpa busca e filtros; mantém seleção e status de carga. */
+const resetFilters = () => {
+  setLocalState("query", "");
+  setLocalState("kindFilter", "all");
+  setLocalState("conditionFilter", "all");
+};
+
+/**
+ * Volta o viewer ao estado de sessão nova (logout/401): filtros limpos, sem
+ * status de carga pendente e sem nó selecionado.
+ */
+const resetViewerState = () => {
+  resetFilters();
+  setLocalState("latestStatus", "idle");
+  select(null);
+  tickNow();
+};
+
+const setNodeBearing = (nodeNum: number, bearing: number) => {
+  if (localState.nodes[nodeNum]) {
+    setLocalState("nodes", nodeNum, "bearing", bearing);
+  }
+};
+
 export const LocalState = {
   localState,
   setNodes,
   select,
+  setNodeBearing,
+  setQuery,
+  setKindFilter,
+  setConditionFilter,
+  tickNow,
+  setLatestStatus,
   setAuth,
   setAuthExigida,
   setDiasLembrar,
   setOnline,
   bumpPollingGeracao,
+  resetFilters,
+  resetViewerState,
 };

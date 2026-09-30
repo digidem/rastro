@@ -1,5 +1,5 @@
 import { type Loc, credenciaisPermitidas } from "../lib/credenciais.js";
-import type { NodeInfo } from "../store.js";
+import type { NodeInfo, NodeKind } from "../store.js";
 
 /** Token ausente/rejeitado (HTTP 401) — a UI deve pedir o token de novo. */
 export class ErrTokenInvalid extends Error {
@@ -109,6 +109,19 @@ const linha = (v: unknown): LngLat[] | null => {
   return pts.length >= 2 ? pts : null;
 };
 
+// Categoria do contrato; qualquer outra coisa (ausente, número, typo) vira
+// "unknown" — a UI nunca inventa categoria a partir do nome.
+const asKind = (v: unknown): NodeKind => {
+  switch (v) {
+    case "boat":
+    case "fixed_station":
+    case "handheld":
+      return v;
+    default:
+      return "unknown";
+  }
+};
+
 const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
   if (f.geometry?.type !== "Point") {
     return null;
@@ -122,7 +135,7 @@ const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
   if (nodeNum === null) {
     return null;
   }
-  return {
+  const node: NodeInfo = {
     nodeNum,
     nodeId: str(p.node_id) ?? "",
     nome: str(p.nome) ?? `nó ${nodeNum}`,
@@ -131,6 +144,33 @@ const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
     lon: pos[0],
     lat: pos[1],
   };
+  // Metadados ampliados entram SÓ quando o payload os traz: assim o shape de
+  // respostas antigas (sem esses campos) continua exatamente o de antes.
+  if (Object.hasOwn(p, "short_name")) {
+    node.shortName = str(p.short_name);
+  }
+  if (Object.hasOwn(p, "kind")) {
+    node.kind = asKind(p.kind);
+  }
+  if (Object.hasOwn(p, "hw_model")) {
+    node.hwModel = str(p.hw_model);
+  }
+  if (Object.hasOwn(p, "altitude_m")) {
+    node.altitudeM = num(p.altitude_m);
+  }
+  if (Object.hasOwn(p, "sats")) {
+    node.sats = num(p.sats);
+  }
+  if (Object.hasOwn(p, "time_source")) {
+    node.timeSource = str(p.time_source);
+  }
+  if (Object.hasOwn(p, "received_at")) {
+    node.receivedAt = str(p.received_at);
+  }
+  if (Object.hasOwn(p, "bearing")) {
+    node.bearing = num(p.bearing);
+  }
+  return node;
 };
 
 const trackFromFeature = (

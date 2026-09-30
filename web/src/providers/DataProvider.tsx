@@ -1,12 +1,8 @@
 import type { Component, JSXElement } from "solid-js";
 import { createContext, onCleanup, useContext } from "solid-js";
-import { LocalState } from "../store.js";
-import {
-  type ApiClient,
-  ErrOffline,
-  ErrTokenInvalid,
-  createApiClient,
-} from "./api.js";
+import { calcularBearing } from "../lib/bearing.js";
+import { LocalState, type NodeInfo } from "../store.js";
+import { type ApiClient, ErrTokenInvalid, createApiClient } from "./api.js";
 
 export interface DataValue {
   api: ApiClient;
@@ -37,10 +33,33 @@ const devToken = (): string | undefined =>
     ? (import.meta.env.VITE_API_TOKEN as string | undefined) || undefined
     : undefined;
 
+function atualizarBearingsDosNos(
+  novosNos: NodeInfo[],
+  nosAnteriores: Record<number, NodeInfo>,
+): void {
+  for (const node of novosNos) {
+    if (node.bearing !== undefined && node.bearing !== null) {
+      continue;
+    }
+    const prev = nosAnteriores[node.nodeNum];
+    if (!prev) {
+      continue;
+    }
+    const delta = Math.hypot(node.lon - prev.lon, node.lat - prev.lat);
+    if (delta > 0.00005) {
+      const b = calcularBearing(prev.lon, prev.lat, node.lon, node.lat);
+      node.bearing = b !== null ? b : (prev.bearing ?? null);
+    } else {
+      node.bearing = prev.bearing ?? null;
+    }
+  }
+}
+
 /** Provê o ApiClient e o polling de latest() que alimenta o store. */
 export const DataProvider: Component<{ children?: JSXElement }> = (props) => {
   const api = createApiClient({ getToken: devToken });
   let timer: ReturnType<typeof setInterval> | undefined;
+  let pollReqSeq = 0;
 
   const stopPolling = () => {
     if (timer !== undefined) {
@@ -50,28 +69,36 @@ export const DataProvider: Component<{ children?: JSXElement }> = (props) => {
   };
 
   const poll = async () => {
-    // Geração capturada ANTES do fetch: se a sessão trocar durante o voo,
-    // a resposta é descartada — dados da sessão velha não reintroduzem nada.
     const minhaGen = LocalState.localState.pollingGeracao;
+    const mySeq = ++pollReqSeq;
+    LocalState.setLatestStatus("loading");
     try {
       const nodes = await api.latest();
-      if (minhaGen !== LocalState.localState.pollingGeracao) {
-        return; // sessão trocou durante o fetch: resposta descartada
+      // Descarta se a geração avançou OU se uma requisição mais nova foi emitida
+      if (
+        minhaGen !== LocalState.localState.pollingGeracao ||
+        mySeq !== pollReqSeq
+      ) {
+        return;
       }
+      atualizarBearingsDosNos(nodes, LocalState.localState.nodes);
       LocalState.setNodes(nodes);
       LocalState.setOnline(true);
+      LocalState.setLatestStatus("ready");
     } catch (err) {
+      // QUALQUER erro de requisição superada ou sessão antiga é descartado sem mutar o store
+      if (
+        minhaGen !== LocalState.localState.pollingGeracao ||
+        mySeq !== pollReqSeq
+      ) {
+        return;
+      }
       if (err instanceof ErrTokenInvalid) {
-        if (minhaGen !== LocalState.localState.pollingGeracao) {
-          return; // 401 de outra geração: a sessão nova cuida do store
-        }
         // Cookie expirado/revogado (401): encerra sessão e volta à tela de login.
         clearSessionData();
         LocalState.setAuth("login");
-      } else if (err instanceof ErrOffline) {
-        LocalState.setOnline(false);
       } else {
-        // 503, JSON inválido, etc.: qualquer erro desconhecido derruba o indicador
+        LocalState.setLatestStatus("error");
         LocalState.setOnline(false);
       }
     }
@@ -89,6 +116,9 @@ export const DataProvider: Component<{ children?: JSXElement }> = (props) => {
     LocalState.bumpPollingGeracao();
     LocalState.setNodes([]);
     LocalState.setOnline(false);
+    // Zera também a VISUALIZAÇÃO da sessão velha: filtros, status de carga e
+    // seleção não sobrevivem ao logout/401.
+    LocalState.resetViewerState();
   };
 
   const startSession = () => {

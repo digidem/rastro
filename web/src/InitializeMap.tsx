@@ -7,9 +7,17 @@ import { Popup, addProtocol, Map as maplibregl } from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import type { Component, JSXElement } from "solid-js";
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
+import { bearingDaTrilha } from "./lib/bearing.js";
+import {
+  batteryLabel,
+  deviceModelSvgUrl,
+  hasConfirmedPosition,
+  matchesFilters,
+  nodesGeoJson,
+} from "./lib/nodes.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
-import { LocalState } from "./store.js";
+import { LocalState, type NodeKind } from "./store.js";
 
 export interface InitializeMapProps {
   children?: JSXElement;
@@ -118,7 +126,14 @@ async function existeBasemapLocal(): Promise<boolean> {
       method: "HEAD",
       credentials: "omit",
     });
-    return res.ok;
+    if (!res.ok) {
+      return false;
+    }
+    const ct = res.headers?.get?.("content-type");
+    if (ct?.includes("text/html")) {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -176,14 +191,61 @@ const estilo: StyleSpecification = {
       },
     },
     {
+      id: "nodes-selected-halo",
+      type: "circle",
+      source: "nodes",
+      filter: ["==", ["get", "nodeNum"], -1],
+      paint: {
+        "circle-radius": 17,
+        "circle-color": "#10b981",
+        "circle-opacity": 0.25,
+        "circle-stroke-color": "#34d399",
+        "circle-stroke-width": 2,
+        "circle-stroke-opacity": 0.9,
+      },
+    },
+    {
       id: "nodes-circle",
       type: "circle",
       source: "nodes",
       paint: {
-        "circle-radius": 6,
-        "circle-color": "#67ea94",
-        "circle-stroke-color": "#121b14",
+        "circle-radius": ["case", ["==", ["get", "kind"], "boat"], 13, 6],
+        // A cor representa a CATEGORIA (nunca frescor/bateria).
+        // Barcos usam ícone SVG no lugar do círculo, mantendo a área de clique.
+        "circle-color": [
+          "match",
+          ["get", "kind"],
+          "boat",
+          "transparent",
+          "fixed_station",
+          "#f59e0b",
+          "handheld",
+          "#10b981",
+          "#94a3b8",
+        ],
+        "circle-stroke-color": [
+          "case",
+          ["==", ["get", "kind"], "boat"],
+          "transparent",
+          "#121b14",
+        ],
         "circle-stroke-width": 2,
+      },
+    },
+    {
+      id: "nodes-boat",
+      type: "symbol",
+      source: "nodes",
+      filter: ["==", ["get", "kind"], "boat"],
+      layout: {
+        "icon-image": "boat-icon",
+        "icon-size": 0.5,
+        "icon-anchor": "center",
+        "icon-rotate": ["get", "bearing"],
+        "icon-rotation-alignment": "map",
+        "icon-pitch-alignment": "map",
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
       },
     },
     {
@@ -194,14 +256,17 @@ const estilo: StyleSpecification = {
       layout: {
         "text-field": ["get", "nome"],
         "text-font": ["Noto Sans Regular"],
-        "text-size": 12,
-        "text-offset": [0, 1.2],
+        "text-size": 11,
         "text-anchor": "top",
+        "text-offset": [0, 1.8],
+        "text-padding": 4,
+        "text-justify": "center",
       },
       paint: {
-        "text-color": "#e8f5ec",
-        "text-halo-color": "#121b14",
-        "text-halo-width": 1,
+        "text-color": "#f8fafc",
+        "text-halo-color": "#090f0b",
+        "text-halo-width": 2.5,
+        "text-halo-blur": 0.5,
       },
     },
   ],
@@ -227,6 +292,132 @@ const dataFixa = (iso: string | null): string =>
         dateStyle: "short",
         timeStyle: "short",
       });
+
+// Enquadramento ciente do overlay: em telas >= md a sidebar ocupa a direita,
+// então o padding direito cresce para o conteúdo não ficar escondido atrás dela.
+const paddingLateral = (): number =>
+  typeof window !== "undefined" && window.innerWidth >= 768 ? 380 : 40;
+
+// nodeNum do pin (usado para selecionar); ausente/estranho não seleciona nada.
+const nodeNumDoPin = (props: Record<string, unknown>): number | null =>
+  typeof props.nodeNum === "number" ? props.nodeNum : null;
+
+interface InfoPinPopup {
+  nome: string;
+  shortName: string;
+  kind: NodeKind;
+  hwModel: string;
+  posTime: string | null;
+  battery: number | null;
+  hex: string;
+}
+
+const extrairInfoDoPin = (props: Record<string, unknown>): InfoPinPopup => {
+  const nodeNum = nodeNumDoPin(props);
+  const node =
+    nodeNum !== null ? LocalState.localState.nodes[nodeNum] : undefined;
+  return {
+    nome: node?.nome ?? (typeof props.nome === "string" ? props.nome : "nó"),
+    shortName:
+      node?.shortName ??
+      (typeof props.shortName === "string" ? props.shortName : ""),
+    kind: (node?.kind ??
+      (typeof props.kind === "string" ? props.kind : "unknown")) as NodeKind,
+    hwModel:
+      node?.hwModel ?? (typeof props.hwModel === "string" ? props.hwModel : ""),
+    posTime:
+      node?.posTime ??
+      (typeof props.posTime === "string" ? props.posTime : null),
+    battery:
+      node?.battery ??
+      (typeof props.battery === "number" ? props.battery : null),
+    hex: nodeNum !== null ? node?.nodeId || `!${nodeNum.toString(16)}` : "",
+  };
+};
+
+const gerarHtmlPopup = (info: InfoPinPopup): string => {
+  const svgUrl = deviceModelSvgUrl(info.hwModel);
+  const tagCurta = info.shortName
+    ? `<span class="font-semibold text-slate-200">${esc(info.shortName)}</span><span class="text-slate-500">·</span>`
+    : "";
+  const tagBateria =
+    info.battery !== null
+      ? `<span class="text-emerald-400 font-semibold tabular-nums">${esc(batteryLabel(info.battery))}</span><span class="text-slate-600">·</span>`
+      : "";
+
+  return `
+    <div class="flex items-center gap-3.5 pr-4 text-slate-100 min-w-[260px] max-w-[340px]">
+      <div class="w-20 h-20 shrink-0 rounded-lg bg-slate-950 border border-slate-700/80 p-2 flex items-center justify-center shadow-inner">
+        <img
+          src="${esc(svgUrl)}"
+          alt="${esc(info.hwModel || "Dispositivo")}"
+          class="w-full h-full object-contain filter drop-shadow"
+        />
+      </div>
+      <div class="min-w-0 flex-1">
+        <div class="font-bold text-white text-sm leading-snug truncate" title="${esc(info.nome)}">
+          ${esc(info.nome)}
+        </div>
+        <div class="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5">
+          ${tagCurta}
+          <span class="font-mono text-emerald-400 bg-slate-950 px-1 py-0.2 rounded border border-slate-800 text-[10px] font-medium">${esc(info.hex)}</span>
+        </div>
+        <div class="text-[11px] font-medium text-slate-300 mt-1 truncate">
+          ${esc(info.hwModel || "Modelo não informado")}
+        </div>
+        <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
+          ${tagBateria}
+          <span>fix: ${esc(dataFixa(info.posTime))}</span>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+// Popup do pin: nome + modelo com SVG ampliado + status + data do fix.
+const abrirPopupDoPin = (
+  map: maplibregl,
+  pos: [number, number],
+  props: Record<string, unknown>,
+): Popup => {
+  const info = extrairInfoDoPin(props);
+  return new Popup({ offset: 16, maxWidth: "380px" })
+    .setLngLat(pos)
+    .setHTML(gerarHtmlPopup(info))
+    .addTo(map);
+};
+
+const registrarIconeBarco = (map: maplibregl): void => {
+  if (
+    typeof window === "undefined" ||
+    typeof map.addImage !== "function" ||
+    map.hasImage?.("boat-icon")
+  ) {
+    return;
+  }
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return;
+      }
+      ctx.drawImage(img, 0, 0, 64, 64);
+      const imgData = ctx.getImageData(0, 0, 64, 64);
+      if (!map.hasImage?.("boat-icon")) {
+        map.addImage("boat-icon", imgData);
+        map.triggerRepaint?.();
+      }
+    } catch {
+      // Ignora falha de renderização canvas
+    }
+  };
+  img.src = "/devices/boat.svg";
+};
 
 export const InitializeMap: Component<InitializeMapProps> = (props) => {
   const { api } = useData();
@@ -269,32 +460,93 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       }
       iniciado = true;
       setCarregado(true);
+      // Registra ícone de barco para nós fluviais
+      registrarIconeBarco(map);
+      map.on("styleimagemissing", (e) => {
+        if (e.id === "boat-icon") {
+          registrarIconeBarco(map);
+        }
+      });
       // Basemap próprio (offline) tem prioridade sobre o OSM, se o arquivo existir.
-      void existeBasemapLocal().then((existe) => {
+      existeBasemapLocal().then((existe) => {
         if (existe) {
           usarBasemapLocal(map);
         }
       });
-      // Popup do pin: nome + data do fix.
+      // Cursor pointer ao passar o mouse sobre o pin
+      const definirCursor = (cursor: string) => {
+        if (typeof map.getCanvas === "function") {
+          map.getCanvas().style.cursor = cursor;
+        }
+      };
+      map.on("mouseenter", "nodes-circle", () => definirCursor("pointer"));
+      map.on("mouseleave", "nodes-circle", () => definirCursor(""));
+
+      // Clique no pin: seleciona o nó (trilha + inspector) e abre o popup.
       map.on("click", "nodes-circle", (e) => {
         const f = e.features?.[0];
         if (f?.geometry.type !== "Point") {
           return;
         }
         const props = (f.properties ?? {}) as Record<string, unknown>;
-        const nome = typeof props.nome === "string" ? props.nome : "nó";
-        const posTime =
-          typeof props.posTime === "string" ? props.posTime : null;
-        popup = new Popup({ offset: 12 })
-          .setLngLat([f.geometry.coordinates[0], f.geometry.coordinates[1]])
-          .setHTML(
-            `<strong>${esc(nome)}</strong><br/>fix: ${dataFixa(posTime)}`,
-          )
-          .addTo(map);
+        const selecionado = nodeNumDoPin(props);
+        if (selecionado !== null) {
+          LocalState.select(selecionado);
+        }
+        popup = abrirPopupDoPin(
+          map,
+          [f.geometry.coordinates[0], f.geometry.coordinates[1]],
+          props,
+        );
       });
     };
     map.on("style.load", aoCarregar);
     map.on("load", aoCarregar);
+  };
+
+  // Ação explícita ("Centralizar no mapa"): só aqui a câmera se move além da
+  // seleção/clique — nunca em tick de relógio ou atualização de polling.
+  const centerOnNode = (nodeNum: number) => {
+    const map = currentView();
+    const node = LocalState.localState.nodes[nodeNum];
+    if (
+      map === undefined ||
+      node === undefined ||
+      !hasConfirmedPosition(node)
+    ) {
+      return;
+    }
+    map.flyTo({
+      center: [node.lon, node.lat],
+      zoom: Math.max(map.getZoom(), 12),
+    });
+  };
+
+  // Ação explícita ("Enquadrar todos"): caixa de TODOS os nós com posição
+  // confirmada, com padding que respeita a sidebar aberta.
+  const fitAllNodes = () => {
+    const map = currentView();
+    if (map === undefined) {
+      return;
+    }
+    const caixa = limitesDosPontos(
+      Object.values(LocalState.localState.nodes).filter(hasConfirmedPosition),
+    );
+    if (caixa === null) {
+      return;
+    }
+    // Decisão do usuário: o enquadramento automático não recoloca a câmera.
+    interagiu = true;
+    map.fitBounds(caixa, {
+      padding: {
+        top: 60,
+        bottom: 40,
+        left: 40,
+        right: paddingLateral(),
+      },
+      maxZoom: 12,
+      duration: 600,
+    });
   };
 
   onCleanup(() => {
@@ -303,29 +555,45 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     setCarregado(false);
   });
 
-  // Pins: qualquer mudança em nodes vira setData no source "nodes".
+  // Pins: qualquer mudança em nodes, filtros ou relógio reativo vira setData no source "nodes"
+  // com os nós de posição CONFIRMADA que atendem aos filtros ativos.
   createEffect(() => {
-    const nos = Object.values(LocalState.localState.nodes);
+    const todos = Object.values(LocalState.localState.nodes);
+    const currentNow = LocalState.localState.nowMs;
+    const nos = todos.filter((n) =>
+      matchesFilters(
+        n,
+        {
+          query: LocalState.localState.query,
+          kindFilter: LocalState.localState.kindFilter,
+          conditionFilter: LocalState.localState.conditionFilter,
+        },
+        currentNow,
+      ),
+    );
     const map = currentView();
     if (map === undefined || !carregado()) {
       return;
     }
     const source = map.getSource("nodes") as GeoJSONSource | undefined;
-    source?.setData({
-      type: "FeatureCollection",
-      features: nos.map((n) => ({
-        type: "Feature",
-        properties: { nome: n.nome, posTime: n.posTime },
-        geometry: { type: "Point", coordinates: [n.lon, n.lat] },
-      })),
-    });
-    // Enquadra todos os nós: na primeira carga e quando entra/sai um nó — a não ser
-    // que o usuário já tenha mexido no mapa ou haja um nó selecionado.
-    const ids = nos
+    source?.setData(nodesGeoJson(nos, currentNow));
+  });
+
+  // Enquadra os nós da malha: na primeira carga e quando entra/sai um nó da malha —
+  // a não ser que o usuário já tenha mexido no mapa ou haja um nó selecionado.
+  // Filtros de busca, categoria, condição ou avanço do relógio NUNCA movem a câmera.
+  createEffect(() => {
+    const todos = Object.values(LocalState.localState.nodes);
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    const posicionados = todos.filter(hasConfirmedPosition);
+    const ids = posicionados
       .map((n) => n.nodeNum)
       .sort()
       .join(",");
-    const caixa = limitesDosPontos(nos);
+    const caixa = limitesDosPontos(posicionados);
     if (
       caixa !== null &&
       ids !== idsCentralizados &&
@@ -334,6 +602,39 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     ) {
       idsCentralizados = ids;
       map.fitBounds(caixa, { padding: 70, maxZoom: 12, duration: 600 });
+    }
+  });
+
+  // Destaque visual do nó selecionado: halo pulsante/expandido e pin maior
+  createEffect(() => {
+    const sel = LocalState.localState.selected;
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    if (
+      typeof map.setFilter === "function" &&
+      map.getLayer("nodes-selected-halo")
+    ) {
+      map.setFilter(
+        "nodes-selected-halo",
+        sel !== null
+          ? ["==", ["get", "nodeNum"], sel]
+          : ["==", ["get", "nodeNum"], -1],
+      );
+    }
+    if (
+      typeof map.setPaintProperty === "function" &&
+      map.getLayer("nodes-circle")
+    ) {
+      map.setPaintProperty("nodes-circle", "circle-radius", [
+        "case",
+        ["==", ["get", "kind"], "boat"],
+        13,
+        ["==", ["get", "nodeNum"], sel ?? -1],
+        8,
+        6,
+      ]);
     }
   });
 
@@ -370,10 +671,14 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       pointsSrc.setData(EMPTY_FC);
       return;
     }
-    map.flyTo({
-      center: [node.lon, node.lat],
-      zoom: Math.max(map.getZoom(), 12),
-    });
+    // Só desloca a câmera para coordenada confirmada (nunca inventa posição);
+    // a trilha é buscada de qualquer forma.
+    if (hasConfirmedPosition(node)) {
+      map.flyTo({
+        center: [node.lon, node.lat],
+        zoom: Math.max(map.getZoom(), 12),
+      });
+    }
     const req = ++trackReq;
     const target = node.nodeId || String(node.nodeNum);
     api
@@ -381,6 +686,12 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       .then((t) => {
         if (req !== trackReq) {
           return; // seleção mudou durante o fetch
+        }
+        if (t.line && t.line.length >= 2) {
+          const bearing = bearingDaTrilha(t.line);
+          if (bearing !== null) {
+            LocalState.setNodeBearing(sel, bearing);
+          }
         }
         lineSrc.setData(
           t.line === null
@@ -434,7 +745,9 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   });
 
   return (
-    <MapContext.Provider value={{ setMapRef, initializeMap }}>
+    <MapContext.Provider
+      value={{ setMapRef, initializeMap, fitAllNodes, centerOnNode }}
+    >
       {props.children}
     </MapContext.Provider>
   );
