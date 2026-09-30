@@ -20,3 +20,6 @@ __pycache__/
 
 # Agent run logs
 *.jsonl
+
+# ferramentas locais de agentes
+.claude/

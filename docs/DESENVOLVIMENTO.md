@@ -67,6 +67,7 @@ deploy/
   docker-compose.yml · mosquitto/ · postgres/init/ · caddy/ · systemd/
 scripts/
   rastro_gen_certs.sh · rastro_backup.sh · rastro_retention.py · rastro_e2e_check.py
+  rastro_provision_node.sh (provisão de nó na USB; ver docs/PROVISAO-noes.md)
 ```
 
 ## 5. Verificação do deploy (antes de qualquer QA humano)
