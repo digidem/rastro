@@ -1,0 +1,264 @@
+import type {
+  ConditionFilter,
+  KindFilter,
+  NodeInfo,
+  NodeKind,
+} from "../store.js";
+
+/**
+ * Regras puras de apresentação da malha: posição confirmada, busca, filtros,
+ * idade do fix e GeoJSON dos pins. Nada aqui toca store, rede ou MapLibre —
+ * por isso é testável sem DOM.
+ */
+
+/** Limite visual inicial de "fix antigo"; não é diagnóstico de falha de rádio. */
+const LIMITE_FIX_ANTIGO_MS = 12 * 60 * 60 * 1000;
+
+/** Folga para timestamps à frente: acima disso o relógio do nó está suspeito. */
+const TOLERANCIA_FUTURO_MS = 5 * 60 * 1000;
+
+const FUSO_JAVARI = "America/Manaus";
+
+const FORMATO_JAVARI = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: FUSO_JAVARI,
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+/** Busca sem acentos, sem caixa e sem espaços nas pontas. */
+const normalizar = (s: string): string =>
+  s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
+
+/** Hex do nodeNum (a base do `!abcd1234` do Meshtastic). */
+const hexDoNo = (nodeNum: number): string => nodeNum.toString(16).toLowerCase();
+
+/**
+ * Posição confirmada: coordenadas finitas dentro dos intervalos geográficos E
+ * `posTime` ISO parseável. Sem isso o par lon/lat não vira pin nem enquadramento
+ * — nunca converter ausência em `[0, 0]`.
+ */
+export function hasConfirmedPosition(node: NodeInfo): boolean {
+  if (!(Number.isFinite(node.lon) && Math.abs(node.lon) <= 180)) {
+    return false;
+  }
+  if (!(Number.isFinite(node.lat) && Math.abs(node.lat) <= 90)) {
+    return false;
+  }
+  if (node.posTime === null) {
+    return false;
+  }
+  return !Number.isNaN(Date.parse(node.posTime));
+}
+
+/**
+ * Busca textual contra nome, nome curto, nodeId (`!abcd1234`) e hex do nodeNum
+ * (com ou sem `!`). Query vazia (ou só `!`) não filtra nada.
+ */
+export function matchesQuery(node: NodeInfo, query: string): boolean {
+  const q = normalizar(query);
+  if (q === "") {
+    return true;
+  }
+  const semBang = q.startsWith("!") ? q.slice(1) : q;
+  if (semBang === "") {
+    return true;
+  }
+  const campos = [
+    normalizar(node.nome),
+    normalizar(node.shortName ?? ""),
+    normalizar(node.nodeId),
+    hexDoNo(node.nodeNum),
+  ];
+  return campos.some((c) => c !== "" && c.includes(semBang));
+}
+
+/** Categoria efetiva: ausência de metadado é "unknown", nunca um palpite. */
+export function nodeKind(node: NodeInfo): NodeKind {
+  return node.kind ?? "unknown";
+}
+
+/** Fix estritamente mais velho que 12 h (timestamp inválido nunca é "antigo"). */
+export function isFixStale(posTime: string | null, nowMs: number): boolean {
+  if (posTime === null) {
+    return false;
+  }
+  const t = Date.parse(posTime);
+  if (Number.isNaN(t)) {
+    return false;
+  }
+  return nowMs - t > LIMITE_FIX_ANTIGO_MS;
+}
+
+export interface ViewerFilters {
+  query: string;
+  kindFilter: KindFilter;
+  conditionFilter: ConditionFilter;
+}
+
+/** Faixa visual da bateria: 0 é válido; fora de 0–100 não é percentual. */
+export type BatteryLevel = "none" | "out-of-scale" | "critical" | "low" | "ok";
+
+export function batteryLevel(battery: number | null): BatteryLevel {
+  if (battery === null) {
+    return "none";
+  }
+  if (battery < 0 || battery > 100) {
+    return "out-of-scale";
+  }
+  if (battery < 20) {
+    return "critical";
+  }
+  if (battery < 50) {
+    return "low";
+  }
+  return "ok";
+}
+
+/** Texto de bateria para leitura rápida em campo. */
+export function batteryLabel(battery: number | null): string {
+  if (battery === null) {
+    return "bateria —";
+  }
+  if (battery < 0 || battery > 100) {
+    return "bateria fora da escala";
+  }
+  return `bateria ${battery}%`;
+}
+
+/** Busca + categoria + condição combinam por AND. */
+export function matchesFilters(
+  node: NodeInfo,
+  filtros: ViewerFilters,
+  nowMs: number,
+): boolean {
+  if (!matchesQuery(node, filtros.query)) {
+    return false;
+  }
+  if (filtros.kindFilter !== "all" && nodeKind(node) !== filtros.kindFilter) {
+    return false;
+  }
+  switch (filtros.conditionFilter) {
+    case "no-position":
+      return !hasConfirmedPosition(node);
+    case "stale":
+      return hasConfirmedPosition(node) && isFixStale(node.posTime, nowMs);
+    default:
+      return true;
+  }
+}
+
+/**
+ * Idade do fix em PT-BR. Timestamp futuro até 5 min vira "agora" (clamp);
+ * acima disso é "horário inconsistente", sem badge de frescor.
+ */
+export function fixAgeLabel(iso: string | null, nowMs: number): string {
+  if (iso === null) {
+    return "sem fix";
+  }
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) {
+    return "sem fix";
+  }
+  const delta = nowMs - t;
+  if (delta < -TOLERANCIA_FUTURO_MS) {
+    return "horário inconsistente";
+  }
+  const s = Math.max(0, Math.floor(delta / 1000));
+  if (s < 60) {
+    return "agora";
+  }
+  if (s < 3600) {
+    return `há ${Math.floor(s / 60)} min`;
+  }
+  if (s < 86400) {
+    return `há ${Math.floor(s / 3600)} h`;
+  }
+  return `há ${Math.floor(s / 86400)} d`;
+}
+
+/** Data exata no horário do Javari, formato dd/MM/yyyy HH:mm:ss. */
+export function formatDateTimeJavari(iso: string | null): string {
+  if (iso === null) {
+    return "sem fix";
+  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return "sem fix";
+  }
+  const partes = FORMATO_JAVARI.formatToParts(d);
+  const valor = (tipo: Intl.DateTimeFormatPartTypes): string =>
+    partes.find((p) => p.type === tipo)?.value ?? "";
+  return `${valor("day")}/${valor("month")}/${valor("year")} ${valor("hour")}:${valor("minute")}:${valor("second")}`;
+}
+
+/**
+ * FeatureCollection dos pins: apenas nós com posição confirmada, com as
+ * propriedades que pintam por categoria e sinalizam fix antigo.
+ */
+export function nodesGeoJson(
+  nos: NodeInfo[],
+  nowMs: number,
+): // biome-ignore lint/correctness/noUndeclaredVariables: GeoJSON é o namespace global dos tipos de @types/geojson (transitivo do maplibre-gl); o Biome só conhece globais de browser/Node.
+GeoJSON.FeatureCollection {
+  const features = nos.filter(hasConfirmedPosition).map((n) => ({
+    type: "Feature" as const,
+    properties: {
+      id: n.nodeNum,
+      nodeNum: n.nodeNum,
+      nome: n.nome,
+      shortName: n.shortName ?? "",
+      kind: nodeKind(n),
+      hwModel: n.hwModel ?? "",
+      posTime: n.posTime,
+      isStale: isFixStale(n.posTime, nowMs),
+      battery: n.battery,
+      bearing:
+        typeof n.bearing === "number" && Number.isFinite(n.bearing)
+          ? ((n.bearing % 360) + 360) % 360
+          : 0,
+    },
+    geometry: {
+      type: "Point" as const,
+      coordinates: [n.lon, n.lat],
+    },
+  }));
+  return { type: "FeatureCollection", features };
+}
+
+/**
+ * Mapeia o modelo de rádio para o SVG da placa de hardware (public/devices/*.svg).
+ * Os SVGs são servidos localmente, sem nenhuma CDN externa.
+ */
+export function deviceModelSvgUrl(hwModel: string | null | undefined): string {
+  if (!hwModel) {
+    return "/devices/unknown.svg";
+  }
+  const m = hwModel.toUpperCase().replace(/[- ]/g, "_");
+  if (m.includes("HELTEC_V4")) {
+    return "/devices/heltec_v4.svg";
+  }
+  if (m.includes("HELTEC_V3") || m.includes("HELTEC")) {
+    return "/devices/heltec-v3.svg";
+  }
+  if (m.includes("TBEAM") || m.includes("T_BEAM")) {
+    return "/devices/tbeam.svg";
+  }
+  if (m.includes("T1000")) {
+    return "/devices/tracker-t1000-e.svg";
+  }
+  if (m.includes("WISMESH_TAG") || m.includes("RAK_TAG")) {
+    return "/devices/rak_wismesh_tag.svg";
+  }
+  if (m.includes("RAK4631") || m.includes("RAK_4631")) {
+    return "/devices/rak4631.svg";
+  }
+  if (m.includes("ECHO")) {
+    return "/devices/t-echo.svg";
+  }
+  return "/devices/unknown.svg";
+}

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>Barco regional de patrulha, proa ao Norte</title>
+
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- Halo claro: legibilidade sobre água e mapas escuros -->
+    <path
+      d="M32 6
+         C23 11 18 21 18 34
+         L19 51
+         Q32 57 45 51
+         L46 34
+         C46 21 41 11 32 6Z"
+      fill="#F8FAFC" stroke="#F8FAFC" stroke-width="5"/>
+
+    <!-- Casco regional alongado, com borda resistente -->
+    <path
+      d="M32 6
+         C23 11 18 21 18 34
+         L19 51
+         Q32 57 45 51
+         L46 34
+         C46 21 41 11 32 6Z"
+      fill="#E8DCC0" stroke="#0F172A" stroke-width="2.5"/>
+
+    <!-- Convés e borda interna -->
+    <path
+      d="M32 11
+         C25 16 22 24 22 34
+         L23 48
+         Q32 52 41 48
+         L42 34
+         C42 24 39 16 32 11Z"
+      fill="#A88960" stroke="#FFF7E6" stroke-width="1.5"/>
+
+    <!-- Área livre da proa -->
+    <path d="M32 12L25 21H39Z"
+          fill="#F1E7CF" stroke="#0F172A" stroke-width="1.2"/>
+
+    <!-- Teto do convés superior -->
+    <rect x="23" y="22" width="18" height="25" rx="2"
+          fill="#FFF4D8" stroke="#0F172A" stroke-width="2"/>
+
+    <!-- Cabine de comando, à frente -->
+    <rect x="26" y="23" width="12" height="8" rx="1.5"
+          fill="#E2E8F0" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M28 25H36V28H28Z" fill="#164E63"/>
+    <path d="M32 25V28" stroke="#E2E8F0" stroke-width="1"/>
+
+    <!-- Lona azul sobre equipamentos no centro/ré -->
+    <path d="M26 33L32 31L38 34L39 43L33 46L25 43Z"
+          fill="#2563EB" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M26 34L32 33L37 35L38 42L33 44L27 42Z"
+          fill="#3B82F6"/>
+    <path d="M32 33L30 39L33 44M30 39L37 40"
+          stroke="#93C5FD" stroke-width="1.3"/>
+
+    <!-- Bordas laterais do teto -->
+    <path d="M24 24V45M40 24V45"
+          stroke="#FFFFFF" stroke-width="1.5"/>
+
+    <!-- Escada lateral de acesso ao teto -->
+    <path d="M20 34V46M23 34V46M20 36H23M20 40H23M20 44H23"
+          stroke="#FFF7E6" stroke-width="1.2"/>
+
+    <!-- Travessa e plataforma de popa -->
+    <path d="M23 49H41" stroke="#0F172A" stroke-width="2"/>
+
+    <!-- Motor e conjunto de direção na popa -->
+    <rect x="28" y="51" width="8" height="8" rx="2"
+          fill="#334155" stroke="#F8FAFC" stroke-width="3"/>
+    <rect x="28" y="51" width="8" height="8" rx="2"
+          fill="#334155" stroke="#0F172A" stroke-width="1.5"/>
+    <path d="M32 59V62M29 61H35"
+          stroke="#0F172A" stroke-width="2"/>
+
+    <!-- Pneu/fender preso à ponta da proa -->
+    <ellipse cx="32" cy="8" rx="3.5" ry="4.5"
+             fill="#0F172A" stroke="#F8FAFC" stroke-width="1.5"/>
+    <ellipse cx="32" cy="8" rx="1.3" ry="2.1"
+             fill="#A88960"/>
+  </g>
+</svg>
