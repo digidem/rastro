@@ -1,7 +1,9 @@
-"""API FastAPI somente-leitura sobre o Postgres da malha Rastro (Fase 7).
+"""API FastAPI sobre o Postgres da malha Rastro (Fase 7).
 
-Somente leitura: nenhuma rota escreve no banco e o pool abre conexões com
-``default_transaction_read_only=on`` — o próprio servidor recusaria escrita.
+O pool abre conexões com ``default_transaction_read_only=on`` por padrão
+(defesa em profundidade contra escritas acidentais). Apenas o caminho de envio
+do chat (/api/chat/send) abre explicitamente uma transação READ WRITE para
+gravar no chat_outbox.
 Autenticação: Bearer (RASTRO_API_TOKEN) ou cookie de sessão HttpOnly assinado
 com HMAC derivado do token; ``RASTRO_API_AUTH=desativada`` dispensa credencial
 somente para Hosts locais (a lista não pode ficar vazia nesse modo). Única
@@ -45,7 +47,7 @@ try:  # psycopg >= 3.2: pool embutido; versões antigas usam o pacote psycopg_po
 except ImportError:  # pragma: no cover
     from psycopg_pool import ConnectionPool, PoolTimeout  # type: ignore[no-redef]
 
-from rastro_api.api import geojson, queries
+from rastro_api.api import chat, geojson, queries
 from rastro_api.api.osm import OsmTiles, TileIndisponivel
 
 LOGGER = logging.getLogger("rastro_api")
@@ -228,7 +230,7 @@ def create_app() -> FastAPI:
             conninfo=_conninfo(),
             kwargs={
                 "row_factory": dict_row,
-                # defesa em profundidade: o servidor recusa qualquer escrita
+                # defesa em profundidade: o servidor recusa qualquer escrita por padrão
                 "options": "-c default_transaction_read_only=on",
                 "password": os.environ.get("RASTRO_PG_PASSWORD", ""),
             },
@@ -445,21 +447,38 @@ def create_app() -> FastAPI:
 
     @router.get("/nodes/latest")
     def latest(request: Request) -> dict:
+        now = datetime.now(timezone.utc)
         rows = _fetch(request, queries.latest_nodes)
-        features = [
-            geojson.point_feature(r["lon"], r["lat"], {
-                "node_num": r["node_num"],
-                "node_id": r["node_id"],
-                "nome": r["nome"],
-                "pos_time": geojson.iso_utc(r["pos_time"]),
-                "time_source": r["time_source"],
-                "altitude_m": r["altitude_m"],
-                "sats": r["sats_in_view"],
-                "battery": r["battery"],
-                "received_at": geojson.iso_utc(r["received_at"]),
-            })
-            for r in rows
-        ]
+        features = []
+        for r in rows:
+            pos_time = r["pos_time"]
+            age_s: int | None = None
+            if isinstance(pos_time, datetime):
+                pt = pos_time if pos_time.tzinfo else pos_time.replace(tzinfo=timezone.utc)
+                age_s = max(0, int((now - pt.astimezone(timezone.utc)).total_seconds()))
+            elif isinstance(pos_time, str):
+                try:
+                    pt = datetime.fromisoformat(pos_time.replace("Z", "+00:00"))
+                    if pt.tzinfo is None:
+                        pt = pt.replace(tzinfo=timezone.utc)
+                    age_s = max(0, int((now - pt.astimezone(timezone.utc)).total_seconds()))
+                except Exception:
+                    age_s = None
+            features.append(
+                geojson.point_feature(r["lon"], r["lat"], {
+                    "node_num": r["node_num"],
+                    "node_id": r["node_id"],
+                    "nome": r["nome"],
+                    "pos_time": geojson.iso_utc(r["pos_time"]),
+                    "time_source": r["time_source"],
+                    "altitude_m": r["altitude_m"],
+                    "sats": r["sats_in_view"],
+                    "battery": r["battery"],
+                    "received_at": geojson.iso_utc(r["received_at"]),
+                    "age_s": age_s,
+                    "time_flag": r.get("time_flag"),
+                })
+            )
         return geojson.collection(features)
 
     @router.get("/nodes/{node}/track")
@@ -469,6 +488,7 @@ def create_app() -> FastAPI:
         from_: Annotated[str | None, Query(alias="from")] = None,
         to: str | None = None,
         limit: Annotated[int, Query(ge=1)] = _MAX_LIMIT,
+        format: str | None = None,
     ) -> dict:
         ts_from, ts_to = _window(from_, to)
         rows = _fetch(request, queries.track, node, ts_from, ts_to, min(limit, _MAX_LIMIT))
@@ -481,7 +501,13 @@ def create_app() -> FastAPI:
             "from": ts_from,
             "to": ts_to,
         }
-        return geojson.collection(geojson.track_features(rows, node_meta))
+        gap_secs = int(os.environ.get("RASTRO_TRACK_GAP_SECS", "1800"))
+        use_multi = (format or "").lower() in ("multilinestring", "multi")
+        return geojson.collection(
+            geojson.track_features(
+                rows, node_meta, gap_secs=gap_secs, use_multilinestring=use_multi
+            )
+        )
 
     @router.get("/nodes/{node}/telemetry")
     def telemetry(
@@ -505,6 +531,9 @@ def create_app() -> FastAPI:
             for r in rows
         ]
         return geojson.collection(features)
+
+    chat_router = chat.create_router(fetch_fn=_fetch)
+    router.include_router(chat_router)
 
     app.include_router(router)
     return app

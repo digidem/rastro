@@ -40,20 +40,90 @@ def telemetry_feature(props: dict) -> dict:
     return {"type": "Feature", "geometry": None, "properties": props}
 
 
-def track_features(rows: list[dict], node_meta: dict) -> list[dict]:
-    """UMA LineString (ordem cronológica, [lon, lat]) + um Point por fix."""
-    coordinates = [[float(r["lon"]), float(r["lat"])] for r in rows]
-    line = {
-        "type": "Feature",
-        "geometry": {"type": "LineString", "coordinates": coordinates},
-        "properties": {
-            "node": node_meta["node"],
-            "nome": node_meta.get("nome"),
-            "from": iso_utc(node_meta.get("from", node_meta.get("de"))),
-            "de": iso_utc(node_meta.get("from", node_meta.get("de"))),
-            "to": iso_utc(node_meta["to"]),
-        },
+def _pos_timestamp(val: Any) -> float:
+    """Extrai timestamp float de datetime ou ISO string."""
+    if isinstance(val, dt.datetime):
+        if val.tzinfo is None:
+            val = val.replace(tzinfo=dt.timezone.utc)
+        return val.timestamp()
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            parsed = dt.datetime.fromisoformat(val.strip().replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            return parsed.timestamp()
+        except Exception:
+            return 0.0
+    return 0.0
+
+
+def track_features(
+    rows: list[dict],
+    node_meta: dict,
+    gap_secs: int | float | None = 1800,
+    use_multilinestring: bool = False,
+) -> list[dict]:
+    """Linhas (LineString ou MultiLineString dividida por lacunas) + um Point por fix."""
+    if not rows:
+        return []
+
+    # Agrupa fixes consecutivos em segmentos quando o intervalo excede gap_secs
+    segments: list[list[dict]] = []
+    current_segment: list[dict] = []
+    last_ts: float | None = None
+
+    for r in rows:
+        ts = _pos_timestamp(r.get("pos_time"))
+        if last_ts is not None and gap_secs is not None and gap_secs > 0:
+            if (ts - last_ts) > gap_secs:
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+        current_segment.append(r)
+        last_ts = ts
+
+    if current_segment:
+        segments.append(current_segment)
+
+    common_props = {
+        "node": node_meta["node"],
+        "nome": node_meta.get("nome"),
+        "from": iso_utc(node_meta.get("from", node_meta.get("de"))),
+        "de": iso_utc(node_meta.get("from", node_meta.get("de"))),
+        "to": iso_utc(node_meta["to"]),
     }
+
+    if use_multilinestring:
+        line_features = [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "MultiLineString",
+                    "coordinates": [
+                        [[float(r["lon"]), float(r["lat"])] for r in seg]
+                        for seg in segments
+                    ],
+                },
+                "properties": dict(common_props),
+            }
+        ]
+    else:
+        line_features = []
+        for idx, seg in enumerate(segments):
+            props = dict(common_props)
+            if len(segments) > 1:
+                props["segment"] = idx
+            line_features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[float(r["lon"]), float(r["lat"])] for r in seg],
+                },
+                "properties": props,
+            })
+
     points = [
         point_feature(r["lon"], r["lat"], {
             "pos_time": iso_utc(r["pos_time"]),
@@ -62,4 +132,5 @@ def track_features(rows: list[dict], node_meta: dict) -> list[dict]:
         })
         for r in rows
     ]
-    return [line, *points]
+    return [*line_features, *points]
+
