@@ -58,7 +58,9 @@ function parseQueryParams(rawUrl: string): {
   limit?: number | null;
 } {
   const qIndex = rawUrl.indexOf("?");
-  if (qIndex === -1) return {};
+  if (qIndex === -1) {
+    return {};
+  }
   try {
     const params = new URLSearchParams(rawUrl.slice(qIndex + 1));
     const from = params.get("from");
@@ -97,7 +99,9 @@ async function readBoundedBody(
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
       if (value) {
         totalBytes += value.byteLength;
         if (totalBytes > maxBytes) {
@@ -248,6 +252,327 @@ function handleAuthRoute(
   return false;
 }
 
+const OUTBOX_RE = /^\/api\/chat\/outbox\/(\d+)(?:\?.*)?$/;
+
+interface MockChatBoat {
+  boat_id: string;
+  boat: string;
+  gateway_id: string;
+  virtual_node_num: number;
+  active: boolean;
+}
+
+const MOCK_CHAT_BOATS: MockChatBoat[] = [
+  {
+    boat_id: "Barco 1",
+    boat: "Barco 1",
+    gateway_id: "!a35ae5d0",
+    virtual_node_num: 1,
+    active: true,
+  },
+  {
+    boat_id: "Barco 2",
+    boat: "Barco 2",
+    gateway_id: "!6fe2ba80",
+    virtual_node_num: 2,
+    active: true,
+  },
+  {
+    boat_id: "Barco 3",
+    boat: "Barco 3",
+    gateway_id: "!5b8fa170",
+    virtual_node_num: 3,
+    active: true,
+  },
+  {
+    boat_id: "Barco 4",
+    boat: "Barco 4",
+    gateway_id: "!c14de890",
+    virtual_node_num: 4,
+    active: true,
+  },
+  {
+    boat_id: "Barco 5",
+    boat: "Barco 5",
+    gateway_id: "!e27ba910",
+    virtual_node_num: 5,
+    active: true,
+  },
+  {
+    boat_id: "Barco 6",
+    boat: "Barco 6",
+    gateway_id: "!d83cc240",
+    virtual_node_num: 6,
+    active: true,
+  },
+];
+
+interface MockChatMessage {
+  id: number;
+  direction: "in" | "out";
+  boat_id: string;
+  from_num: number | null;
+  text: string;
+  is_alert: boolean;
+  observed_at: string;
+  received_at: string;
+}
+
+interface MockOutboxRecord {
+  id: number;
+  boat_id: string;
+  text: string;
+  status: "queued" | "sent" | "expired" | "failed";
+  created_by: string;
+  created_at: string;
+  expires_at: string;
+  sent_at: string | null;
+  error: string | null;
+}
+
+const OUTBOX_STATUS_LABELS: Record<string, string> = {
+  queued: "na fila",
+  sent: "enviado ao gateway do barco",
+  expired: "expirada (não entregue)",
+  failed: "falhou",
+};
+
+let nextOutboxId = 1;
+let nextMessageId = 10;
+const mockOutbox = new Map<number, MockOutboxRecord>();
+
+const mockChatMessages: MockChatMessage[] = [
+  {
+    id: 1,
+    direction: "in",
+    boat_id: "Barco 1",
+    from_num: 1001,
+    text: "Barco 1 em trânsito no Rio Curuçá, navegando normalmente.",
+    is_alert: false,
+    observed_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+    received_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 2,
+    direction: "in",
+    boat_id: "Barco 2",
+    from_num: 1002,
+    text: "ALERTA: Motor com superaquecimento acima do normal, parando para vistoria!",
+    is_alert: true,
+    observed_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    received_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 3,
+    direction: "out",
+    boat_id: "Barco 2",
+    from_num: null,
+    text: "Base ciente. Equipe técnica monitorando telemetria.",
+    is_alert: false,
+    observed_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    received_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+  },
+  {
+    id: 4,
+    direction: "in",
+    boat_id: "Barco 3",
+    from_num: 1003,
+    text: "Chegamos ao posto avançado de vigilância territorial.",
+    is_alert: false,
+    observed_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    received_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  },
+];
+
+async function readJsonBody(
+  req: IncomingMessage,
+): Promise<Record<string, unknown>> {
+  // biome-ignore lint/suspicious/noExplicitAny: suporte a middlewares com body pré-processado
+  const anyReq = req as any;
+  if (anyReq.body && typeof anyReq.body === "object") {
+    return anyReq.body;
+  }
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+      if (raw.length > 64 * 1024) {
+        req.destroy();
+        reject(new Error("Corpo da requisição excede limite"));
+      }
+    });
+    req.on("end", () => {
+      if (!raw.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        resolve({});
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function handleChatRoute(
+  rawUrl: string,
+  pathname: string,
+  method: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+): boolean {
+  const isGetOrHead = method === "GET" || method === "HEAD";
+
+  if (pathname === "/api/chat/boats" && isGetOrHead) {
+    sendJson(res, 200, MOCK_CHAT_BOATS);
+    return true;
+  }
+
+  if (pathname === "/api/chat/messages" && isGetOrHead) {
+    const qIndex = rawUrl.indexOf("?");
+    const params =
+      qIndex !== -1
+        ? new URLSearchParams(rawUrl.slice(qIndex + 1))
+        : new URLSearchParams();
+    const since = params.get("since");
+
+    if (since) {
+      const sinceMs = Date.parse(since.trim().replace("Z", "+00:00"));
+      if (Number.isNaN(sinceMs)) {
+        sendJson(res, 400, {
+          detail: "parâmetro 'since' inválido: use data ISO 8601",
+        });
+        return true;
+      }
+      const filtered = mockChatMessages.filter((m) => {
+        const ts = Date.parse(
+          (m.received_at || m.observed_at).replace("Z", "+00:00"),
+        );
+        return !Number.isNaN(ts) && ts > sinceMs;
+      });
+      sendJson(res, 200, filtered);
+      return true;
+    }
+
+    sendJson(res, 200, mockChatMessages);
+    return true;
+  }
+
+  if (pathname === "/api/chat/send" && method === "POST") {
+    void (async () => {
+      try {
+        const body = await readJsonBody(req);
+        const boatId = (
+          typeof body.boat === "string"
+            ? body.boat
+            : typeof body.boat_id === "string"
+              ? body.boat_id
+              : ""
+        ).trim();
+
+        if (!boatId) {
+          sendJson(res, 404, { detail: "barco não informado ou inexistente" });
+          return;
+        }
+
+        const activeBoat = MOCK_CHAT_BOATS.find(
+          (b) => b.boat_id === boatId || b.boat === boatId,
+        );
+        if (!activeBoat || !activeBoat.active) {
+          sendJson(res, 404, {
+            detail: "barco não encontrado ou inativo na malha",
+          });
+          return;
+        }
+
+        const text = typeof body.text === "string" ? body.text : "";
+        const byteLen = Buffer.byteLength(text, "utf-8");
+        if (byteLen < 1 || byteLen > 200) {
+          sendJson(res, 422, {
+            detail: "o texto da mensagem deve conter entre 1 e 200 bytes UTF-8",
+          });
+          return;
+        }
+
+        const outboxId = nextOutboxId++;
+        const nowIso = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + 900 * 1000).toISOString();
+
+        const outboxRecord: MockOutboxRecord = {
+          id: outboxId,
+          boat_id: activeBoat.boat_id,
+          text,
+          status: "queued",
+          created_by: "session",
+          created_at: nowIso,
+          expires_at: expiresAt,
+          sent_at: null,
+          error: null,
+        };
+        mockOutbox.set(outboxId, outboxRecord);
+
+        mockChatMessages.push({
+          id: nextMessageId++,
+          direction: "out",
+          boat_id: activeBoat.boat_id,
+          from_num: null,
+          text,
+          is_alert: false,
+          observed_at: nowIso,
+          received_at: nowIso,
+        });
+
+        // Simula avanço de status para 'sent' no gateway após 2s
+        setTimeout(() => {
+          const item = mockOutbox.get(outboxId);
+          if (item && item.status === "queued") {
+            item.status = "sent";
+            item.sent_at = new Date().toISOString();
+          }
+        }, 2000);
+
+        sendJson(res, 200, {
+          id: outboxId,
+          status: "queued",
+          expires_at: expiresAt,
+        });
+      } catch {
+        sendJson(res, 400, { detail: "Corpo JSON inválido" });
+      }
+    })();
+    return true;
+  }
+
+  const outboxMatch = OUTBOX_RE.exec(rawUrl);
+  if (outboxMatch && isGetOrHead) {
+    const outboxId = Number.parseInt(outboxMatch[1], 10);
+    const item = mockOutbox.get(outboxId);
+    if (!item) {
+      sendJson(res, 404, { detail: "mensagem não encontrada na fila" });
+      return true;
+    }
+
+    const label = OUTBOX_STATUS_LABELS[item.status] || item.status;
+    sendJson(res, 200, {
+      id: item.id,
+      boat_id: item.boat_id,
+      status: item.status,
+      label,
+      status_label: label,
+      created_by: item.created_by,
+      created_at: item.created_at,
+      expires_at: item.expires_at,
+      sent_at: item.sent_at,
+      error: item.error,
+    });
+    return true;
+  }
+
+  return false;
+}
+
 function handleNodeRoute(
   rawUrl: string,
   pathname: string,
@@ -330,6 +655,7 @@ export function mockApiPlugin(): Plugin {
 
           if (
             handleAuthRoute(pathname, method, res) ||
+            handleChatRoute(rawUrl, pathname, method, req, res) ||
             handleNodeRoute(rawUrl, pathname, method, res) ||
             handleOsmRoute(rawUrl, method, res)
           ) {

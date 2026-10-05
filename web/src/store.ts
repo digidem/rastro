@@ -34,6 +34,10 @@ export interface NodeInfo {
   timeSource?: string | null;
   receivedAt?: string | null;
   bearing?: number | null;
+  ageS?: number | null;
+  age_s?: number | null;
+  timeFlag?: string | null;
+  time_flag?: string | null;
 }
 
 /**
@@ -68,6 +72,9 @@ interface LocalState {
    */
   pollingGeracao: number;
   online: boolean;
+  chatOpen: boolean;
+  unreadChatCount: number;
+  hasAlertUnread: boolean;
 }
 
 const [localState, setLocalState] = createStore<LocalState>({
@@ -83,6 +90,9 @@ const [localState, setLocalState] = createStore<LocalState>({
   diasLembrar: 30,
   pollingGeracao: 0,
   online: false,
+  chatOpen: false,
+  unreadChatCount: 0,
+  hasAlertUnread: false,
 });
 
 // Substitui a lista inteira (reconcile remove nós que sumiram do latest).
@@ -106,6 +116,18 @@ const setDiasLembrar = (n: number) => setLocalState("diasLembrar", n);
 const setOnline = (b: boolean) => setLocalState("online", b);
 const bumpPollingGeracao = () => setLocalState("pollingGeracao", (n) => n + 1);
 
+const setChatOpen = (open: boolean) => {
+  setLocalState("chatOpen", open);
+  if (open) {
+    setLocalState("unreadChatCount", 0);
+    setLocalState("hasAlertUnread", false);
+  }
+};
+const setUnreadChatCount = (n: number | ((prev: number) => number)) => {
+  setLocalState("unreadChatCount", n);
+};
+const setHasAlertUnread = (b: boolean) => setLocalState("hasAlertUnread", b);
+
 /** Limpa busca e filtros; mantém seleção e status de carga. */
 const resetFilters = () => {
   setLocalState("query", "");
@@ -122,6 +144,9 @@ const resetViewerState = () => {
   setLocalState("latestStatus", "idle");
   select(null);
   tickNow();
+  setLocalState("chatOpen", false);
+  setLocalState("unreadChatCount", 0);
+  setLocalState("hasAlertUnread", false);
 };
 
 const setNodeBearing = (nodeNum: number, bearing: number) => {
@@ -145,6 +170,9 @@ export const LocalState = {
   setDiasLembrar,
   setOnline,
   bumpPollingGeracao,
+  setChatOpen,
+  setUnreadChatCount,
+  setHasAlertUnread,
   resetFilters,
   resetViewerState,
 };

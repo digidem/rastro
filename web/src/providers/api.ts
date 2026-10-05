@@ -34,6 +34,7 @@ export interface ApiClient {
   latest(): Promise<NodeInfo[]>;
   track(node: string): Promise<{
     line: LngLat[] | null;
+    lines: LngLat[][];
     points: TrackPoint[];
   }>;
   ping(): Promise<boolean>;
@@ -122,30 +123,10 @@ const asKind = (v: unknown): NodeKind => {
   }
 };
 
-const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
-  if (f.geometry?.type !== "Point") {
-    return null;
-  }
-  const pos = lngLat(f.geometry.coordinates);
-  if (pos === null) {
-    return null;
-  }
-  const p = f.properties ?? {};
-  const nodeNum = num(p.node_num);
-  if (nodeNum === null) {
-    return null;
-  }
-  const node: NodeInfo = {
-    nodeNum,
-    nodeId: str(p.node_id) ?? "",
-    nome: str(p.nome) ?? `nó ${nodeNum}`,
-    posTime: str(p.pos_time),
-    battery: num(p.battery),
-    lon: pos[0],
-    lat: pos[1],
-  };
-  // Metadados ampliados entram SÓ quando o payload os traz: assim o shape de
-  // respostas antigas (sem esses campos) continua exatamente o de antes.
+const preencherMetadadosExtras = (
+  node: NodeInfo,
+  p: Record<string, unknown>,
+) => {
   if (Object.hasOwn(p, "short_name")) {
     node.shortName = str(p.short_name);
   }
@@ -170,17 +151,67 @@ const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
   if (Object.hasOwn(p, "bearing")) {
     node.bearing = num(p.bearing);
   }
+  if (Object.hasOwn(p, "age_s")) {
+    node.ageS = num(p.age_s);
+    node.age_s = num(p.age_s);
+  }
+  if (Object.hasOwn(p, "time_flag")) {
+    node.timeFlag = str(p.time_flag);
+    node.time_flag = str(p.time_flag);
+  }
+};
+
+const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
+  if (f.geometry?.type !== "Point") {
+    return null;
+  }
+  const pos = lngLat(f.geometry.coordinates);
+  if (pos === null) {
+    return null;
+  }
+  const p = f.properties ?? {};
+  const nodeNum = num(p.node_num);
+  if (nodeNum === null) {
+    return null;
+  }
+  const node: NodeInfo = {
+    nodeNum,
+    nodeId: str(p.node_id) ?? "",
+    nome: str(p.nome) ?? `nó ${nodeNum}`,
+    posTime: str(p.pos_time),
+    battery: num(p.battery),
+    lon: pos[0],
+    lat: pos[1],
+  };
+  preencherMetadadosExtras(node, p);
   return node;
+};
+
+const adicionarSegmento = (
+  acc: { line: LngLat[] | null; lines: LngLat[][] },
+  coords: unknown,
+) => {
+  const l = linha(coords);
+  if (l !== null) {
+    if (acc.line === null) {
+      acc.line = l;
+    }
+    acc.lines.push(l);
+  }
 };
 
 const trackFromFeature = (
   f: ApiFeature,
-  acc: { line: LngLat[] | null; points: TrackPoint[] },
+  acc: { line: LngLat[] | null; lines: LngLat[][]; points: TrackPoint[] },
 ): void => {
   const g = f.geometry;
   if (g?.type === "LineString") {
-    if (acc.line === null) {
-      acc.line = linha(g.coordinates);
+    adicionarSegmento(acc, g.coordinates);
+  } else if (g?.type === "MultiLineString") {
+    if (Array.isArray(g.coordinates)) {
+      for (const seg of g.coordinates) {
+        adicionarSegmento(acc, seg);
+      }
     }
   } else if (g?.type === "Point") {
     const pos = lngLat(g.coordinates);
@@ -272,8 +303,13 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
         `/api/nodes/${encodeURIComponent(node)}/track`,
         opts.getToken?.(),
       );
-      const acc: { line: LngLat[] | null; points: TrackPoint[] } = {
+      const acc: {
+        line: LngLat[] | null;
+        lines: LngLat[][];
+        points: TrackPoint[];
+      } = {
         line: null,
+        lines: [],
         points: [],
       };
       for (const f of fc.features ?? []) {

@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
     build: { target: "esnext" },
     test: {
       environment: "jsdom",
-      include: ["tests/**/*.test.ts"],
+      include: ["tests/**/*.test.ts", "src/**/*.test.{ts,tsx}"],
       exclude: ["e2e/**", "node_modules/**"],
       deps: { inline: [SOLID_JS_RE, SOLID_TESTING_RE] },
     },

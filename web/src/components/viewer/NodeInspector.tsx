@@ -7,9 +7,10 @@ import {
   type BatteryLevel,
   batteryLevel,
   deviceModelSvgUrl,
-  fixAgeLabel,
   formatDateTimeJavari,
   hasConfirmedPosition,
+  isAgeWarning,
+  nodeAgeLabel,
   nodeKind,
 } from "../../lib/nodes.js";
 import type { NodeInfo, NodeKind } from "../../store.js";
@@ -193,11 +194,29 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
 
             {/* Frescor & Timestamp */}
             <div class="flex items-center justify-between text-xs px-1 text-slate-400">
-              <div>
-                Visto{" "}
-                <span class="font-semibold text-slate-200">
-                  {fixAgeLabel(node().posTime, props.nowMs())}
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span>Visto</span>
+                <span
+                  class={`font-semibold ${
+                    isAgeWarning(node(), props.nowMs())
+                      ? "text-amber-400 font-bold"
+                      : "text-slate-200"
+                  }`}
+                >
+                  {nodeAgeLabel(node(), props.nowMs())}
                 </span>
+                <Show when={isAgeWarning(node(), props.nowMs())}>
+                  <span
+                    class="rounded border border-amber-600/80 bg-amber-950/40 px-1 text-[10px] text-amber-300 font-semibold"
+                    title={
+                      node().timeFlag
+                        ? `Alerta de horário: ${node().timeFlag}`
+                        : "Fix com mais de 1 h"
+                    }
+                  >
+                    {node().timeFlag ? "Horário suspeito" : "Fix > 1h"}
+                  </span>
+                </Show>
               </div>
               <div class="text-[11px] text-slate-500 font-mono">
                 {formatDateTimeJavari(node().posTime)}

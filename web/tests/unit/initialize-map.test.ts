@@ -463,8 +463,14 @@ describe("InitializeMap — enquadramento automático", () => {
     const t0 = 1_000_000_000_000;
     LocalState.tickNow(t0);
 
-    const n1Stale = { ...noEm(1, -71.5, -4.5), posTime: new Date(t0 - 20 * 3600 * 1000).toISOString() };
-    const n2Recente = { ...noEm(2, -70.0, -5.5), posTime: new Date(t0 - 2 * 3600 * 1000).toISOString() };
+    const n1Stale = {
+      ...noEm(1, -71.5, -4.5),
+      posTime: new Date(t0 - 20 * 3600 * 1000).toISOString(),
+    };
+    const n2Recente = {
+      ...noEm(2, -70.0, -5.5),
+      posTime: new Date(t0 - 2 * 3600 * 1000).toISOString(),
+    };
     LocalState.setNodes([n1Stale, n2Recente]);
     const m = mapa();
     expect(m.fitBounds).toHaveBeenCalledTimes(1);

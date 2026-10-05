@@ -181,6 +181,75 @@ export function fixAgeLabel(iso: string | null, nowMs: number): string {
   return `há ${Math.floor(s / 86400)} d`;
 }
 
+/** Formata idade em segundos (age_s retornado de /api/nodes/latest). */
+export function formatAgeFromSeconds(
+  ageS: number | null | undefined,
+): string | null {
+  if (ageS === null || ageS === undefined || !Number.isFinite(ageS)) {
+    return null;
+  }
+  if (ageS < 60) {
+    return "agora";
+  }
+  if (ageS < 3600) {
+    return `há ${Math.floor(ageS / 60)} min`;
+  }
+  if (ageS < 86400) {
+    return `há ${Math.floor(ageS / 3600)} h`;
+  }
+  return `há ${Math.floor(ageS / 86400)} d`;
+}
+
+/**
+ * Sinaliza necessidade de estilo de aviso:
+ * time_flag definido ou idade do fix estritamente maior que 1 h (3600 s).
+ */
+export function isAgeWarning(
+  node: {
+    ageS?: number | null;
+    age_s?: number | null;
+    timeFlag?: string | null;
+    time_flag?: string | null;
+    posTime?: string | null;
+  },
+  nowMs: number,
+): boolean {
+  if (node.timeFlag || node.time_flag) {
+    return true;
+  }
+  const ageSeconds = node.ageS ?? node.age_s;
+  if (typeof ageSeconds === "number" && Number.isFinite(ageSeconds)) {
+    return ageSeconds > 3600;
+  }
+  if (node.posTime) {
+    const t = Date.parse(node.posTime);
+    if (!Number.isNaN(t)) {
+      return nowMs - t > 3600 * 1000;
+    }
+  }
+  return false;
+}
+
+/**
+ * Rótulo de idade para o nó: prioriza age_s se presente, senão usa posTime.
+ */
+export function nodeAgeLabel(
+  node: {
+    ageS?: number | null;
+    age_s?: number | null;
+    posTime?: string | null;
+    timeFlag?: string | null;
+    time_flag?: string | null;
+  },
+  nowMs: number,
+): string {
+  const ageSeconds = node.ageS ?? node.age_s;
+  if (typeof ageSeconds === "number" && Number.isFinite(ageSeconds)) {
+    return formatAgeFromSeconds(ageSeconds) ?? "sem fix";
+  }
+  return fixAgeLabel(node.posTime ?? null, nowMs);
+}
+
 /** Data exata no horário do Javari, formato dd/MM/yyyy HH:mm:ss. */
 export function formatDateTimeJavari(iso: string | null): string {
   if (iso === null) {
@@ -205,9 +274,8 @@ export function nodesGeoJson(
   nowMs: number,
 ): // biome-ignore lint/correctness/noUndeclaredVariables: GeoJSON é o namespace global dos tipos de @types/geojson (transitivo do maplibre-gl); o Biome só conhece globais de browser/Node.
 GeoJSON.FeatureCollection {
-  const features = nos.filter(hasConfirmedPosition).map((n) => ({
-    type: "Feature" as const,
-    properties: {
+  const features = nos.filter(hasConfirmedPosition).map((n) => {
+    const properties: Record<string, unknown> = {
       id: n.nodeNum,
       nodeNum: n.nodeNum,
       nome: n.nome,
@@ -221,12 +289,22 @@ GeoJSON.FeatureCollection {
         typeof n.bearing === "number" && Number.isFinite(n.bearing)
           ? ((n.bearing % 360) + 360) % 360
           : 0,
-    },
-    geometry: {
-      type: "Point" as const,
-      coordinates: [n.lon, n.lat],
-    },
-  }));
+    };
+    if (n.ageS !== undefined || n.age_s !== undefined) {
+      properties.age_s = n.ageS ?? n.age_s;
+    }
+    if (n.timeFlag !== undefined || n.time_flag !== undefined) {
+      properties.time_flag = n.timeFlag ?? n.time_flag;
+    }
+    return {
+      type: "Feature" as const,
+      properties,
+      geometry: {
+        type: "Point" as const,
+        coordinates: [n.lon, n.lat],
+      },
+    };
+  });
   return { type: "FeatureCollection", features };
 }
 

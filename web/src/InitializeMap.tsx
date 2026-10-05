@@ -12,7 +12,9 @@ import {
   batteryLabel,
   deviceModelSvgUrl,
   hasConfirmedPosition,
+  isAgeWarning,
   matchesFilters,
+  nodeAgeLabel,
   nodesGeoJson,
 } from "./lib/nodes.js";
 import { useData } from "./providers/DataProvider.jsx";
@@ -310,6 +312,8 @@ interface InfoPinPopup {
   posTime: string | null;
   battery: number | null;
   hex: string;
+  ageS?: number | null;
+  timeFlag?: string | null;
 }
 
 const extrairInfoDoPin = (props: Record<string, unknown>): InfoPinPopup => {
@@ -332,6 +336,14 @@ const extrairInfoDoPin = (props: Record<string, unknown>): InfoPinPopup => {
       node?.battery ??
       (typeof props.battery === "number" ? props.battery : null),
     hex: nodeNum !== null ? node?.nodeId || `!${nodeNum.toString(16)}` : "",
+    ageS:
+      node?.ageS ??
+      node?.age_s ??
+      (typeof props.age_s === "number" ? props.age_s : null),
+    timeFlag:
+      node?.timeFlag ??
+      node?.time_flag ??
+      (typeof props.time_flag === "string" ? props.time_flag : null),
   };
 };
 
@@ -344,6 +356,21 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
     info.battery !== null
       ? `<span class="text-emerald-400 font-semibold tabular-nums">${esc(batteryLabel(info.battery))}</span><span class="text-slate-600">·</span>`
       : "";
+
+  const temAviso = isAgeWarning(
+    { ageS: info.ageS, timeFlag: info.timeFlag, posTime: info.posTime },
+    Date.now(),
+  );
+  const rotuloIdade = nodeAgeLabel(
+    { ageS: info.ageS, timeFlag: info.timeFlag, posTime: info.posTime },
+    Date.now(),
+  );
+  const tagIdade = `
+    <span class="${temAviso ? "text-amber-400 font-semibold" : "text-slate-400"}" title="${info.timeFlag ? `Alerta de horário: ${esc(info.timeFlag)}` : "Idade da posição"}">
+      ${esc(rotuloIdade)}
+    </span>
+    <span class="text-slate-600">·</span>
+  `;
 
   return `
     <div class="flex items-center gap-3.5 pr-4 text-slate-100 min-w-[260px] max-w-[340px]">
@@ -367,6 +394,7 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
         </div>
         <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
           ${tagBateria}
+          ${tagIdade}
           <span>fix: ${esc(dataFixa(info.posTime))}</span>
         </div>
       </div>
@@ -687,24 +715,31 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         if (req !== trackReq) {
           return; // seleção mudou durante o fetch
         }
-        if (t.line && t.line.length >= 2) {
-          const bearing = bearingDaTrilha(t.line);
-          if (bearing !== null) {
-            LocalState.setNodeBearing(sel, bearing);
+        const segments =
+          t.lines && t.lines.length > 0 ? t.lines : t.line ? [t.line] : [];
+
+        if (segments.length > 0) {
+          const lastSeg = segments[segments.length - 1];
+          if (lastSeg.length >= 2) {
+            const bearing = bearingDaTrilha(lastSeg);
+            if (bearing !== null) {
+              LocalState.setNodeBearing(sel, bearing);
+            }
           }
         }
+
+        const lineFeatures = segments.map((seg, idx) => ({
+          type: "Feature" as const,
+          properties: { segment: idx },
+          geometry: { type: "LineString" as const, coordinates: seg },
+        }));
+
         lineSrc.setData(
-          t.line === null
+          lineFeatures.length === 0
             ? EMPTY_FC
             : {
                 type: "FeatureCollection",
-                features: [
-                  {
-                    type: "Feature",
-                    properties: {},
-                    geometry: { type: "LineString", coordinates: t.line },
-                  },
-                ],
+                features: lineFeatures,
               },
         );
         pointsSrc.setData({

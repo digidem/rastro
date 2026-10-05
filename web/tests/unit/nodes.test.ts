@@ -4,11 +4,14 @@ import {
   batteryLevel,
   deviceModelSvgUrl,
   fixAgeLabel,
+  formatAgeFromSeconds,
   formatDateTimeJavari,
   hasConfirmedPosition,
+  isAgeWarning,
   isFixStale,
   matchesFilters,
   matchesQuery,
+  nodeAgeLabel,
   nodeKind,
   nodesGeoJson,
 } from "../../src/lib/nodes.js";
@@ -331,5 +334,60 @@ describe("deviceModelSvgUrl", () => {
     expect(deviceModelSvgUrl("MODELO_INEXISTENTE")).toBe(
       "/devices/unknown.svg",
     );
+  });
+});
+
+describe("formatAgeFromSeconds", () => {
+  it("formata idade a partir de segundos numéricos em português", () => {
+    expect(formatAgeFromSeconds(null)).toBeNull();
+    expect(formatAgeFromSeconds(undefined)).toBeNull();
+    expect(formatAgeFromSeconds(Number.NaN)).toBeNull();
+    expect(formatAgeFromSeconds(0)).toBe("agora");
+    expect(formatAgeFromSeconds(45)).toBe("agora");
+    expect(formatAgeFromSeconds(60)).toBe("há 1 min");
+    expect(formatAgeFromSeconds(720)).toBe("há 12 min");
+    expect(formatAgeFromSeconds(3599)).toBe("há 59 min");
+    expect(formatAgeFromSeconds(3600)).toBe("há 1 h");
+    expect(formatAgeFromSeconds(7200)).toBe("há 2 h");
+    expect(formatAgeFromSeconds(86400)).toBe("há 1 d");
+    expect(formatAgeFromSeconds(172800)).toBe("há 2 d");
+  });
+});
+
+describe("isAgeWarning", () => {
+  it("retorna true se time_flag ou timeFlag estiver presente", () => {
+    expect(isAgeWarning({ timeFlag: "invalid_zero" }, NOW)).toBe(true);
+    // biome-ignore lint/style/useNamingConvention: compatibilidade da API
+    expect(isAgeWarning({ time_flag: "invalid_past" }, NOW)).toBe(true);
+  });
+
+  it("retorna true se age_s ou ageS for maior que 1 hora (3600 s)", () => {
+    expect(isAgeWarning({ ageS: 3601 }, NOW)).toBe(true);
+    // biome-ignore lint/style/useNamingConvention: compatibilidade da API
+    expect(isAgeWarning({ age_s: 7200 }, NOW)).toBe(true);
+    expect(isAgeWarning({ ageS: 3600 }, NOW)).toBe(false);
+    expect(isAgeWarning({ ageS: 720 }, NOW)).toBe(false);
+  });
+
+  it("retorna true se o posTime for mais antigo que 1 hora quando age_s não informado", () => {
+    expect(isAgeWarning({ posTime: horasAtras(2) }, NOW)).toBe(true);
+    expect(isAgeWarning({ posTime: horasAtras(0.5) }, NOW)).toBe(false);
+  });
+});
+
+describe("nodeAgeLabel", () => {
+  it("prioriza ageS/age_s se fornecido", () => {
+    expect(nodeAgeLabel({ ageS: 720, posTime: horasAtras(5) }, NOW)).toBe(
+      "há 12 min",
+    );
+    // biome-ignore lint/style/useNamingConvention: compatibilidade da API
+    expect(nodeAgeLabel({ age_s: 30, posTime: horasAtras(5) }, NOW)).toBe(
+      "agora",
+    );
+  });
+
+  it("recorre a fixAgeLabel caso ageS/age_s não esteja disponível", () => {
+    expect(nodeAgeLabel({ posTime: horasAtras(2) }, NOW)).toBe("há 2 h");
+    expect(nodeAgeLabel({ posTime: null }, NOW)).toBe("sem fix");
   });
 });

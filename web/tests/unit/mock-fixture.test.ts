@@ -165,12 +165,13 @@ describe("mockApiPlugin", () => {
     (plugin.configureServer as any)(fakeServer);
     expect(middlewareFn).toBeDefined();
 
-    const simular = (url: string, method = "GET") => {
+    const simular = (url: string, method = "GET", bodyPayload?: unknown) => {
       let statusCode = 0;
       let headers: Record<string, unknown> = {};
       let body = "";
 
-      const req = { url, method } as IncomingMessage;
+      // biome-ignore lint/suspicious/noExplicitAny: mock de IncomingMessage
+      const req = { url, method, body: bodyPayload } as any;
       const res = {
         writeHead(code: number, h: Record<string, unknown>) {
           statusCode = code;
@@ -187,7 +188,18 @@ describe("mockApiPlugin", () => {
 
       const next = vi.fn();
       middlewareFn?.(req, res, next);
-      return { statusCode, headers, body, next };
+      return {
+        get statusCode() {
+          return statusCode;
+        },
+        get headers() {
+          return headers;
+        },
+        get body() {
+          return body;
+        },
+        next,
+      };
     };
 
     // 1. Rota que não é /api passa adiante
@@ -244,7 +256,9 @@ describe("mockApiPlugin", () => {
     // 11. /api/osm valida coordenadas de zoom e limites
     const r11a = simular("/api/osm/999/999999999/999999999.png");
     expect(r11a.statusCode).toBe(400);
-    expect(JSON.parse(r11a.body).detail).toBe("Coordenadas de tile OSM inválidas");
+    expect(JSON.parse(r11a.body).detail).toBe(
+      "Coordenadas de tile OSM inválidas",
+    );
 
     const r11b = simular("/api/osm/0/5/5.png");
     expect(r11b.statusCode).toBe(400);
@@ -252,7 +266,67 @@ describe("mockApiPlugin", () => {
       "Coordenadas de tile fora dos limites para o zoom",
     );
 
-    // 12. Rota desconhecida responde 404
+    // 12. /api/chat/boats lista barcos da frota
+    const rChatBoats = simular("/api/chat/boats");
+    expect(rChatBoats.statusCode).toBe(200);
+    const boats = JSON.parse(rChatBoats.body);
+    expect(boats.length).toBe(6);
+    expect(boats[0].boat_id).toBe("Barco 1");
+    expect(boats[5].boat_id).toBe("Barco 6");
+
+    // 13. /api/chat/messages lista mensagens com suporte a alerta
+    const rChatMsgs = simular("/api/chat/messages");
+    expect(rChatMsgs.statusCode).toBe(200);
+    const msgs = JSON.parse(rChatMsgs.body);
+    expect(msgs.length).toBeGreaterThanOrEqual(4);
+    expect(msgs.some((m: Record<string, unknown>) => Boolean(m.is_alert))).toBe(
+      true,
+    );
+
+    // 14. /api/chat/messages?since= filtra por cursor
+    const rChatSince = simular("/api/chat/messages?since=2099-01-01T00:00:00Z");
+    expect(rChatSince.statusCode).toBe(200);
+    expect(JSON.parse(rChatSince.body)).toEqual([]);
+
+    // 15. /api/chat/messages?since= com formato inválido retorna 400
+    const rChatInvalidSince = simular("/api/chat/messages?since=invalido");
+    expect(rChatInvalidSince.statusCode).toBe(400);
+
+    // 16. /api/chat/send e /api/chat/outbox/:id gerenciam ciclo de saída
+    const rChatSend = simular("/api/chat/send", "POST", {
+      boat: "Barco 1",
+      text: "Mensagem mock de teste",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rChatSend.statusCode).toBe(200);
+    const sendData = JSON.parse(rChatSend.body);
+    expect(sendData.status).toBe("queued");
+    expect(sendData.id).toBeDefined();
+
+    const rChatOutbox = simular(`/api/chat/outbox/${sendData.id}`);
+    expect(rChatOutbox.statusCode).toBe(200);
+    const outboxData = JSON.parse(rChatOutbox.body);
+    expect(outboxData.status).toBe("queued");
+    expect(outboxData.status_label).toBe("na fila");
+    expect(rChatOutbox.body).not.toContain("lido");
+
+    // 17. /api/chat/send valida limite de 200 bytes UTF-8
+    const rChatSendOver = simular("/api/chat/send", "POST", {
+      boat: "Barco 1",
+      text: "a".repeat(201),
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rChatSendOver.statusCode).toBe(422);
+
+    // 18. /api/chat/send rejeita barco inexistente
+    const rChatSendGhost = simular("/api/chat/send", "POST", {
+      boat: "Barco 999",
+      text: "Teste",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(rChatSendGhost.statusCode).toBe(404);
+
+    // 19. Rota desconhecida responde 404
     const r12 = simular("/api/desconhecida");
     expect(r12.statusCode).toBe(404);
   });

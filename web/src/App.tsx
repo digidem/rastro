@@ -2,6 +2,7 @@ import type { Component } from "solid-js";
 import { Match, Show, Switch, createSignal, onMount } from "solid-js";
 import { InitializeMap } from "./InitializeMap.jsx";
 import { MapWindow } from "./MapWindow.jsx";
+import { ChatPanel } from "./components/ChatPanel.jsx";
 import { Button } from "./components/ui/button.jsx";
 import {
   Body,
@@ -188,6 +189,7 @@ const Conteudo: Component = () => {
       <Match when={LocalState.localState.auth === "ok"}>
         <InitializeMap>
           <MapWindow />
+          <ChatPanel />
         </InitializeMap>
       </Match>
       <Match when={LocalState.localState.auth === "verificando"}>

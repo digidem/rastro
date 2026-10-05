@@ -141,6 +141,33 @@ describe("latest()", () => {
     ]);
   });
 
+  it("mapeia age_s e time_flag quando presentes no payload", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: props(
+              ["node_num", 6],
+              ["node_id", "!11223344"],
+              ["nome", "Barco 6"],
+              ["pos_time", "2026-10-05T12:00:00Z"],
+              ["age_s", 720],
+              ["time_flag", "invalid_past"],
+            ),
+            geometry: { type: "Point", coordinates: [-70.3, -4.5] },
+          },
+        ],
+      }),
+    );
+
+    const nodes = await createApiClient().latest();
+
+    expect(nodes[0].ageS).toBe(720);
+    expect(nodes[0].timeFlag).toBe("invalid_past");
+  });
+
   it("payload antigo sem os campos novos mantém o shape exato", async () => {
     fetchMock.mockResolvedValue(
       jsonRes({
@@ -440,6 +467,13 @@ describe("track()", () => {
       [10.1, 20.1],
       [10.2, 20.2],
     ]);
+    expect(t.lines).toEqual([
+      [
+        [10, 20],
+        [10.1, 20.1],
+        [10.2, 20.2],
+      ],
+    ]);
     expect(t.points).toEqual([
       {
         pos: [10, 20],
@@ -454,6 +488,89 @@ describe("track()", () => {
     ]);
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toBe("/api/nodes/!abcd1234/track");
+  });
+
+  it("suporta múltiplos LineString preservando lacunas em lines", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: { segment: 0 },
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-70.1, -4.5],
+                [-70.2, -4.6],
+              ],
+            },
+          },
+          {
+            type: "Feature",
+            properties: { segment: 1 },
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [-70.4, -4.8],
+                [-70.5, -4.9],
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const api = createApiClient();
+    const t = await api.track("!multi");
+
+    expect(t.lines.length).toBe(2);
+    expect(t.lines[0]).toEqual([
+      [-70.1, -4.5],
+      [-70.2, -4.6],
+    ]);
+    expect(t.lines[1]).toEqual([
+      [-70.4, -4.8],
+      [-70.5, -4.9],
+    ]);
+  });
+
+  it("suporta MultiLineString preservando segmentos em lines", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "MultiLineString",
+              coordinates: [
+                [
+                  [-70.1, -4.5],
+                  [-70.2, -4.6],
+                ],
+                [
+                  [-70.4, -4.8],
+                  [-70.5, -4.9],
+                ],
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    const api = createApiClient();
+    const t = await api.track("!multi");
+
+    expect(t.lines.length).toBe(2);
+    expect(t.lines[0]).toEqual([
+      [-70.1, -4.5],
+      [-70.2, -4.6],
+    ]);
+    expect(t.lines[1]).toEqual([
+      [-70.4, -4.8],
+      [-70.5, -4.9],
+    ]);
   });
 });
 

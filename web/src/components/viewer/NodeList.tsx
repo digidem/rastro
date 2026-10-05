@@ -6,9 +6,10 @@ import {
   batteryLabel,
   batteryLevel,
   deviceModelSvgUrl,
-  fixAgeLabel,
   hasConfirmedPosition,
+  isAgeWarning,
   isFixStale,
+  nodeAgeLabel,
   nodeKind,
 } from "../../lib/nodes.js";
 import type { NodeInfo, NodeKind } from "../../store.js";
@@ -150,12 +151,26 @@ export const NodeList: Component<NodeListProps> = (props) => {
                       <span
                         class={`tabular-nums ${
                           hasConfirmedPosition(n)
-                            ? "text-slate-400"
+                            ? isAgeWarning(n, props.nowMs())
+                              ? "text-amber-400 font-semibold"
+                              : "text-slate-400"
                             : "text-amber-400 font-medium"
                         }`}
                       >
-                        {fixAgeLabel(n.posTime, props.nowMs())}
+                        {nodeAgeLabel(n, props.nowMs())}
                       </span>
+                      <Show when={isAgeWarning(n, props.nowMs())}>
+                        <span
+                          class="rounded border border-amber-600/80 bg-amber-950/40 px-1 text-[10px] text-amber-300 font-semibold"
+                          title={
+                            n.timeFlag
+                              ? `Alerta de horário: ${n.timeFlag}`
+                              : "Fix com mais de 1 h"
+                          }
+                        >
+                          {n.timeFlag ? "Horário suspeito" : "Fix > 1h"}
+                        </span>
+                      </Show>
                       <Show when={isFixStale(n.posTime, props.nowMs())}>
                         <span
                           class="rounded border border-amber-600/80 bg-amber-950/40 px-1 text-[10px] text-amber-300 font-semibold"
