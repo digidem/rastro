@@ -7,6 +7,8 @@ COPY rastro_gateway/__init__.py /app/rastro_gateway/__init__.py
 COPY rastro_gateway/common /app/rastro_gateway/common
 COPY rastro_gateway/bridge /app/rastro_gateway/bridge
 COPY rastro_gateway/ingest /app/rastro_gateway/ingest
+COPY rastro_gateway/native /app/rastro_gateway/native
+COPY rastro_gateway/chat /app/rastro_gateway/chat
 RUN pip install --no-cache-dir /app/rastro_gateway
 # ponto de montagem do volume compartilhado da CA (CapRover), dono uid 1883 (o do
 # broker): se o ingest montar o volume antes do broker, o Docker copia este dono

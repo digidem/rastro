@@ -208,9 +208,11 @@ class Ingester:
         cfg: MqttConfig,
         batch_max: int = BATCH_MAX_RECORDS,
         batch_secs: float = BATCH_MAX_SECS,
+        native=None,
     ) -> None:
         self._client = client
         self._db = database
+        self._native = native  # NativeIngest (WP-D) ou None — caminho legado intacto
         self._names = names
         self._fleet_ids = fleet_ids
         self._cfg = cfg
@@ -246,8 +248,17 @@ class Ingester:
             result, _mid = client.subscribe(topic, qos=1)
             if result != mqtt.MQTT_ERR_SUCCESS:
                 log.error("FALHA: subscribe %s recusado (rc=%s)", topic, result)
+        # Ingest nativo (WP-D): assinatura extra no MESMO cliente, só quando
+        # ativo. Sessão persistente e manual-ack já vêm do build_client.
+        if self._native is not None:
+            self._native.on_connect(client)
 
     def on_message(self, client, userdata, msg: mqtt.MQTTMessage) -> None:
+        # Ingest nativo (WP-D): tópicos sob o root nativo vão para o
+        # NativeIngest; ele mesmo nunca propaga exceção (mesma regra abaixo).
+        if self._native is not None and self._native.handles(msg.topic):
+            self._native.on_message(client, msg)
+            return
         # NUNCA propagar exceção para o paho: o loop_forever morre e o contêiner
         # entra em crash-loop (gate F2 R1). Payload ruim = log + ack e seguir.
         try:

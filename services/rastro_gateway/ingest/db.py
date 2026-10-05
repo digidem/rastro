@@ -17,9 +17,31 @@ from psycopg_pool import ConnectionPool
 
 log = logging.getLogger(__name__)
 
+# Kinds que decodificam para dado de domínio (base do dedupe ``packet_seen``):
+# undecryptable/malformed/opaque NUNCA reclamam o (from_num, packet_id) — o
+# pacote opaco pode chegar de novo com PSK válida e aí sim virar domínio.
+_KINDS_DE_DOMINIO = ("position", "telemetry", "nodeinfo", "text")
+
+# Janela do dedupe entre gateways: ``packet_seen`` mais velho que isso é
+# re-claimado (id reutilizado nunca vira "duplicado eterno") e é o alvo de
+# ``prune_packet_seen`` (hook de manutenção, NÃO agendado).
+PACKET_SEEN_MAX_AGE_SECS = 7 * 86400
+
+# Duração da locação (lease) durável do ``claim_outbox``: worker que não
+# completar o envio dentro desse prazo tem a linha devolvida à fila (outro
+# worker pode reivindicar). ``mark_outbox`` transiciona a partir da locação.
+OUTBOX_LEASE_SECS = 60
+
 # Prazo total que o ingester dá ao Postgres no boot (F3b) antes de desistir —
 # compose com depends_on healthy ainda deixa janela para restart/volume init.
 STARTUP_TIMEOUT_PADRAO_SECS = 120.0
+
+
+def _limpa_texto(valor: str | None) -> str | None:
+    """Remove ``\\x00`` — Postgres TEXT rejeita NUL e nomes/texto vêm da malha."""
+    if valor is None:
+        return None
+    return valor.replace("\x00", "")
 
 # Arquivo publicado pelo app "-setup" (CapRover) num volume compartilhado com SÓ
 # host/porta/sslmode do Postgres — nunca usuário nem senha.
@@ -386,3 +408,724 @@ class Db:
         with conn.cursor() as cur:
             cur.executemany(cls._SQL_TELEMETRY, rows)
             return cur.rowcount
+
+    # -------------------------------------------------------------------------
+    # Ingest nativo Meshtastic + chat (WP-B / Tarefas 4 e 5)
+    # -------------------------------------------------------------------------
+
+    def store_native(self, envelopes: list) -> dict[str, int]:
+        """Processa e armazena envelopes nativos decodificados (DecodedEnvelope).
+
+        Idempotente, transacional (uma transação por lote) com deduplicação
+        estrita por (from_num, packet_id) entre gateways e registro em raw_envelopes.
+        Envelope que o banco REJEITA (IntegrityError/DataError) não trava o lote:
+        SAVEPOINT por envelope, o rejeitado é gravado SÓ como bruto
+        (duplicate=false) e o lote segue — ackável (problema do produtor, B1).
+        Só erro OPERACIONAL (OperationalError: banco caiu) derruba o lote sem
+        ack para o chamador reenfileirar.
+        """
+        counts = {
+            "raw": 0,
+            "positions": 0,
+            "duplicates": 0,
+            "chat": 0,
+            "nodeinfo": 0,
+            "telemetry": 0,
+            "own_downlink": 0,
+            "poison": 0,
+        }
+        if not envelopes:
+            return counts
+
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                for env in envelopes:
+                    try:
+                        # SAVEPOINT por envelope: rejeição isolada, o resto do
+                        # lote segue (mesma regra do _store_one_by_one legado).
+                        with conn.transaction():
+                            deltas = self._store_envelope(cur, env)
+                    except (psycopg.errors.IntegrityError, psycopg.errors.DataError) as exc:
+                        counts["poison"] += 1
+                        log.error(
+                            "FALHA: envelope rejeitado pelo banco (from=%s id=%s): %s — "
+                            "gravado como bruto e ackado; produtor fora do contrato?",
+                            getattr(env, "from_num", "?"),
+                            getattr(env, "packet_id", "?"),
+                            str(exc).splitlines()[0][:120],
+                        )
+                        if self._gravar_bruto_veneno(conn, cur, env):
+                            counts["raw"] += 1
+                        continue
+                    except psycopg.errors.OperationalError:
+                        raise  # banco fora: lote inteiro volta, NADA é ackado
+                    for chave, valor in deltas.items():
+                        counts[chave] += valor
+
+        return counts
+
+    @staticmethod
+    def _topico_de(env, gw_num: int | None) -> str:
+        """Tópico do envelope (do extra ou sintetizado), sem ``\\x00``."""
+        extra = env.extra if isinstance(env.extra, dict) else {}
+        topico = _limpa_texto(extra.get("topic") or "")
+        if topico:
+            return topico
+        canal = env.channel or "EVU"
+        gw_str = env.gateway_id or (f"!{gw_num:08x}" if gw_num else "unknown")
+        return f"univaja/mesh/2/e/{canal}/{gw_str}"
+
+    def _gravar_bruto_veneno(self, conn, cur, env) -> bool:
+        """Bruto do envelope venenoso: melhor esforço num novo SAVEPOINT.
+
+        O savepoint do envelope rolou para trás TUDO (inclusive o bruto dele);
+        sem esta re-gravação, o envelope ruim sumiria da auditoria. Devolve
+        True quando o bruto foi gravado. Se até o bruto for rejeitado, loga e
+        segue — nunca derruba o lote. Erro OPERACIONAL propaga.
+        """
+        try:
+            with conn.transaction():
+                extra = env.extra if isinstance(env.extra, dict) else {}
+                cur.execute(
+                    """
+                    INSERT INTO raw_envelopes (
+                        received_at, topic, channel, gateway_num, from_num,
+                        packet_id, duplicate, raw
+                    ) VALUES (now(), %s, %s, %s, %s, %s, false, %s)
+                    """,
+                    (
+                        self._topico_de(env, getattr(env, "gateway_num", None)),
+                        _limpa_texto(env.channel) or "",
+                        env.gateway_num,
+                        env.from_num,
+                        env.packet_id,
+                        extra.get("raw") or b"",
+                    ),
+                )
+            return True
+        except (psycopg.errors.IntegrityError, psycopg.errors.DataError) as exc2:
+            log.error(
+                "FALHA: bruto do envelope venenoso também rejeitado: %s",
+                str(exc2).splitlines()[0][:120],
+            )
+            return False
+
+    def _store_envelope(self, cur, env) -> dict[str, int]:
+        """Um envelope dentro do seu SAVEPOINT; devolve os acréscimos a counts.
+
+        Toda exceção de conteúdo (IntegrityError/DataError) sobe para o
+        ``store_native`` rolar o savepoint e isolar o envelope.
+        """
+        deltas = {
+            "raw": 0,
+            "positions": 0,
+            "duplicates": 0,
+            "chat": 0,
+            "nodeinfo": 0,
+            "telemetry": 0,
+            "own_downlink": 0,
+        }
+        # Gateway numérico (do campo explícito ou do ID '!xxxxxxxx')
+        gw_num = env.gateway_num
+        if gw_num is None and env.gateway_id and env.gateway_id.startswith("!"):
+            try:
+                gw_num = int(env.gateway_id[1:], 16)
+            except ValueError:
+                gw_num = None
+
+        # 1. Atualiza status do gateway transmissor
+        if gw_num is not None:
+            cur.execute(
+                """
+                INSERT INTO gateway_status (gateway_num, last_uplink, uplinks)
+                VALUES (%s, now(), 1)
+                ON CONFLICT (gateway_num) DO UPDATE SET
+                    last_uplink = now(),
+                    uplinks = gateway_status.uplinks + 1
+                """,
+                (gw_num,),
+            )
+
+        # 2. Deduplicação via packet_seen — SÓ kinds que decodificam para
+        # domínio (undecryptable/malformed/opaque não reclamam o (from, id):
+        # podem voltar depois com PSK válida e aí sim virar domínio).
+        is_duplicate = False
+        if (
+            env.kind in _KINDS_DE_DOMINIO
+            and env.from_num is not None
+            and env.packet_id is not None
+        ):
+            cur.execute(
+                """
+                INSERT INTO packet_seen (from_num, packet_id, first_gateway, first_seen)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (from_num, packet_id) DO UPDATE SET
+                    first_gateway = EXCLUDED.first_gateway,
+                    first_seen = EXCLUDED.first_seen
+                WHERE packet_seen.first_seen <= now() - (%s || ' seconds')::interval
+                RETURNING 1
+                """,
+                (env.from_num, env.packet_id, gw_num, PACKET_SEEN_MAX_AGE_SECS),
+            )
+            if cur.fetchone() is None:
+                is_duplicate = True
+
+        if is_duplicate:
+            deltas["duplicates"] += 1
+
+        # 3. Gravação obrigatória do envelope bruto. received_at é CHEGADA
+        # (now()); rx_time do gateway nunca é relógio de referência aqui.
+        raw_bytes = b""
+        if isinstance(env.extra, dict):
+            raw_bytes = env.extra.get("raw") or b""
+
+        cur.execute(
+            """
+            INSERT INTO raw_envelopes (
+                received_at, topic, channel, gateway_num, from_num, packet_id, duplicate, raw
+            ) VALUES (now(), %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                self._topico_de(env, gw_num),
+                _limpa_texto(env.channel) or "",
+                gw_num,
+                env.from_num,
+                env.packet_id,
+                is_duplicate,
+                raw_bytes,
+            ),
+        )
+        deltas["raw"] += 1
+
+        # Se for duplicata de pacote já visto, descarta das tabelas de domínio
+        if is_duplicate:
+            return deltas
+
+        # 4. Tabelas de domínio conforme tipo de payload
+        # (a) Posição geográfica
+        if env.kind == "position" and env.position is not None and env.from_num is not None:
+            pos = env.position
+            node_id = f"!{env.from_num:08x}"
+            cur.execute(
+                """
+                INSERT INTO nodes (node_num, node_id, last_seen, updated_at)
+                VALUES (%s, %s, now(), now())
+                ON CONFLICT (node_num) DO UPDATE SET
+                    last_seen = now(),
+                    updated_at = now()
+                """,
+                (env.from_num, node_id),
+            )
+            if not (pos.lat_i == 0 and pos.lon_i == 0):
+                cur.execute(
+                    """
+                    INSERT INTO positions (
+                        node_num, pos_time, time_source, lat_i, lon_i,
+                        altitude_m, sats_in_view, hop_limit, snr, rssi,
+                        received_at, packet_id, gateway_num, time_flag, observed_at
+                    ) VALUES (
+                        %s, to_timestamp(%s::double precision), %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        now(),
+                        %s, %s, %s,
+                        CASE WHEN %s::double precision IS NULL THEN NULL ELSE to_timestamp(%s::double precision) END
+                    )
+                    ON CONFLICT (node_num, pos_time) DO NOTHING
+                    """,
+                    (
+                        env.from_num,
+                        pos.time,
+                        pos.time_source,
+                        pos.lat_i,
+                        pos.lon_i,
+                        pos.altitude_m,
+                        pos.sats,
+                        env.hop_limit,
+                        env.snr,
+                        env.rssi,
+                        env.packet_id,
+                        gw_num,
+                        pos.time_flag,
+                        env.rx_time,
+                        env.rx_time,
+                    ),
+                )
+                if cur.rowcount > 0:
+                    deltas["positions"] += 1
+
+        # (b) Informações do nó (NodeInfo)
+        elif env.kind == "nodeinfo" and env.nodeinfo is not None and env.from_num is not None:
+            info = env.nodeinfo
+            # node_id SEMPRE derivado de from_num: o user.id da malha não é
+            # controlado por nós e colide com o UNIQUE de nodes.node_id.
+            node_id = f"!{env.from_num:08x}"
+            cur.execute(
+                """
+                INSERT INTO node_info (node_num, long_name, short_name, hw_model, updated_at)
+                VALUES (%s, %s, %s, %s, now())
+                ON CONFLICT (node_num) DO UPDATE SET
+                    long_name = EXCLUDED.long_name,
+                    short_name = EXCLUDED.short_name,
+                    hw_model = COALESCE(EXCLUDED.hw_model, node_info.hw_model),
+                    updated_at = now()
+                """,
+                (
+                    env.from_num,
+                    _limpa_texto(info.long_name) or "",
+                    _limpa_texto(info.short_name) or "",
+                    _limpa_texto(info.hw_model),
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO nodes (node_num, node_id, friendly_name, last_seen, updated_at)
+                VALUES (%s, %s, %s, now(), now())
+                ON CONFLICT (node_num) DO UPDATE SET
+                    friendly_name = COALESCE(EXCLUDED.friendly_name, nodes.friendly_name),
+                    last_seen = now(),
+                    updated_at = now()
+                """,
+                (
+                    env.from_num,
+                    node_id,
+                    _limpa_texto(info.long_name) or info.short_name or None,
+                ),
+            )
+            deltas["nodeinfo"] += 1
+
+        # (c) Mensagem de chat / texto
+        elif env.kind == "text" and env.text is not None and env.from_num is not None and env.packet_id is not None:
+            txt = env.text
+            # 6. Downlink nosso ecoando de volta (re-uplink LoRa/broker): o
+            # remetente é um gateway virtual — não é chat do barco.
+            cur.execute(
+                "SELECT 1 FROM virtual_gateways WHERE virtual_node_num = %s LIMIT 1",
+                (env.from_num,),
+            )
+            if cur.fetchone() is not None:
+                deltas["own_downlink"] += 1
+                return deltas
+            # 7. boat_id do VÍNCULO VIGENTE em boat_devices (não confia em
+            # dado do envelope). Vigência: valid_from <= agora < COALESCE(valid_to, ∞).
+            cur.execute(
+                """
+                SELECT boat_id FROM boat_devices
+                WHERE node_num = %s
+                  AND valid_from <= now()
+                  AND (valid_to IS NULL OR valid_to > now())
+                ORDER BY valid_from DESC
+                LIMIT 1
+                """,
+                (env.from_num,),
+            )
+            boat_row = cur.fetchone()
+            boat_id = boat_row[0] if boat_row else None
+            # Janela do dedupe: a UNIQUE(from_num, packet_id) é permanente, mas o
+            # dedupe do packet_seen expira em PACKET_SEEN_MAX_AGE_SECS. Passada a
+            # janela, o (from, id) reutilizado com texto novo ATUALIZA a linha
+            # antiga (o papel ingest não tem DELETE); dentro da janela, a
+            # redelivery cai no ON CONFLICT DO NOTHING abaixo.
+            cur.execute(
+                """
+                UPDATE chat_messages
+                SET text = %s, is_alert = %s,
+                    observed_at = CASE WHEN %s::double precision IS NULL THEN NULL ELSE to_timestamp(%s::double precision) END,
+                    received_at = now()
+                WHERE from_num = %s AND packet_id = %s
+                  AND received_at < now() - (%s || ' seconds')::interval
+                """,
+                (
+                    _limpa_texto(txt.text),
+                    txt.is_alert,
+                    env.rx_time,
+                    env.rx_time,
+                    env.from_num,
+                    env.packet_id,
+                    PACKET_SEEN_MAX_AGE_SECS,
+                ),
+            )
+            if cur.rowcount > 0:
+                deltas["chat"] += 1
+            cur.execute(
+                """
+                INSERT INTO chat_messages (
+                    direction, boat_id, from_num, packet_id, text, is_alert, observed_at, received_at
+                ) VALUES (
+                    'in', %s, %s, %s, %s, %s,
+                    CASE WHEN %s::double precision IS NULL THEN NULL ELSE to_timestamp(%s::double precision) END,
+                    now()
+                )
+                ON CONFLICT (from_num, packet_id) DO NOTHING
+                """
+                ,
+                (
+                    boat_id,
+                    env.from_num,
+                    env.packet_id,
+                    _limpa_texto(txt.text),
+                    txt.is_alert,
+                    env.rx_time,
+                    env.rx_time,
+                ),
+            )
+            if cur.rowcount > 0:
+                deltas["chat"] += 1
+
+        # (d) Telemetria do dispositivo + estado de energia (node_power)
+        elif env.kind == "telemetry" and env.telemetry is not None and env.from_num is not None:
+            telem = env.telemetry
+            node_id = f"!{env.from_num:08x}"
+            cur.execute(
+                """
+                INSERT INTO nodes (node_num, node_id, last_seen, updated_at)
+                VALUES (%s, %s, now(), now())
+                ON CONFLICT (node_num) DO UPDATE SET
+                    last_seen = now(),
+                    updated_at = now()
+                """,
+                (env.from_num, node_id),
+            )
+            cur.execute(
+                """
+                INSERT INTO device_telemetry (
+                    node_num, telem_time, time_source,
+                    battery_level, voltage, channel_util, air_util_tx, uptime_s, received_at
+                ) VALUES (
+                    %s, to_timestamp(%s::double precision), %s,
+                    %s, %s, %s, %s, %s,
+                    CASE WHEN %s::double precision IS NULL THEN now() ELSE to_timestamp(%s::double precision) END
+                )
+                ON CONFLICT (node_num, telem_time) DO NOTHING
+                """,
+                (
+                    env.from_num,
+                    telem.time,
+                    telem.time_source,
+                    telem.battery_level,
+                    telem.voltage,
+                    telem.channel_util,
+                    telem.air_util_tx,
+                    telem.uptime_s,
+                    env.rx_time,
+                    env.rx_time,
+                ),
+            )
+            if telem.battery_level is not None or telem.voltage is not None:
+                cur.execute(
+                    """
+                    INSERT INTO node_power (node_num, battery_level, voltage, updated_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (node_num) DO UPDATE SET
+                        battery_level = COALESCE(EXCLUDED.battery_level, node_power.battery_level),
+                        voltage = COALESCE(EXCLUDED.voltage, node_power.voltage),
+                        updated_at = now()
+                    """,
+                    (env.from_num, telem.battery_level, telem.voltage),
+                )
+            deltas["telemetry"] += 1
+
+        return deltas
+
+    def purge_expired(self, now=None) -> dict[str, int]:
+        """Expurgo de registros antigos segundo variáveis de retenção.
+
+        Lê RASTRO_RAW_RETENTION_DAYS e RASTRO_CHAT_RETENTION_DAYS.
+        Sem as variáveis definidas ou vazias: no-op (não apaga nada).
+        """
+        raw_env = os.environ.get("RASTRO_RAW_RETENTION_DAYS", "").strip()
+        chat_env = os.environ.get("RASTRO_CHAT_RETENTION_DAYS", "").strip()
+        raw_days = int(raw_env) if raw_env.isdigit() else None
+        chat_days = int(chat_env) if chat_env.isdigit() else None
+
+        if raw_days is None and chat_days is None:
+            return {"raw": 0, "chat": 0}
+
+        deleted = {"raw": 0, "chat": 0}
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                if raw_days is not None and raw_days > 0:
+                    cur.execute(
+                        """
+                        DELETE FROM raw_envelopes
+                        WHERE received_at < (
+                            CASE WHEN %s::timestamptz IS NULL THEN now() ELSE %s::timestamptz END
+                            - (%s || ' days')::interval
+                        )
+                        """,
+                        (now, now, raw_days),
+                    )
+                    deleted["raw"] = cur.rowcount
+
+                if chat_days is not None and chat_days > 0:
+                    cur.execute(
+                        """
+                        DELETE FROM chat_messages
+                        WHERE received_at < (
+                            CASE WHEN %s::timestamptz IS NULL THEN now() ELSE %s::timestamptz END
+                            - (%s || ' days')::interval
+                        )
+                        """,
+                        (now, now, chat_days),
+                    )
+                    deleted["chat"] = cur.rowcount
+
+        return deleted
+
+    def prune_packet_seen(self, now=None) -> int:
+        """Apaga ``packet_seen`` mais velho que a janela do dedupe (hook).
+
+        Companion do ``purge_expired`` (retenção): hook de manutenção explícito
+        (retorna quantas linhas apagou), NÃO agendado por nada — a janela de
+        7 dias já impede dedupe eterno no upsert (``WHERE first_seen <=
+        now() - 7 days``); este método só recolhe o lixo antigo.
+        """
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM packet_seen
+                    WHERE first_seen < (
+                        CASE WHEN %s::timestamptz IS NULL THEN now() ELSE %s::timestamptz END
+                    ) - (%s || ' seconds')::interval
+                    """,
+                    (now, now, PACKET_SEEN_MAX_AGE_SECS),
+                )
+                return cur.rowcount
+
+    def claim_outbox(self, limit: int = 10, per_boat_limit: int = 3, now=None) -> list[dict]:
+        """Marca expirados e reivindica 'queued' com locação durável (lease).
+
+        Linhas fora do TTL viram 'expired'. Cada linha reivindicada recebe
+        locação: status='sending' + lease_until=agora+OUTBOX_LEASE_SECS —
+        workers concorrentes não reivindicam a mesma linha (FOR UPDATE SKIP
+        LOCKED) e locação vencida (>60 s) volta a ser reivindicável. As linhas
+        permanecem locadas após o commit (lease durável): quem publica é o
+        worker reivindicante, e ``mark_outbox`` transiciona a partir da locação
+        (de 'sending'/'queued' para o estado final).
+        Retorna até `limit` mensagens ainda válidas, com limite por barco
+        (``per_boat_limit``, padrão 3): um barco barulhento não trava a fila
+        dos outros (ROW_NUMBER por boat_id; None = sem limite por barco).
+        Assinatura e chaves de retorno inalteradas (contrato com chat/outbox).
+        """
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                agora_sql = (
+                    "CASE WHEN %s::timestamptz IS NULL THEN now() "
+                    "ELSE %s::timestamptz END"
+                )
+                # 1. Locação vencida volta para a fila (stale lease)
+                cur.execute(
+                    f"""
+                    UPDATE chat_outbox
+                    SET status = 'queued', lease_until = NULL
+                    WHERE status = 'sending'
+                      AND lease_until IS NOT NULL
+                      AND lease_until <= {agora_sql}
+                    """,
+                    (now, now),
+                )
+                # 2. Expira o que venceu (enfileirado OU locado)
+                cur.execute(
+                    f"""
+                    UPDATE chat_outbox
+                    SET status = 'expired'
+                    WHERE status IN ('queued', 'sending')
+                      AND expires_at <= {agora_sql}
+                    """,
+                    (now, now),
+                )
+                # 3. Claim atômico: ranqueia por barco, trava as eleitas (SKIP
+                # LOCKED: outro worker segue sem bloquear); a condição
+                # status='queued' re-verificada sob a trava fecha a janela de
+                # corrida com um mark_outbox concorrente.
+                cur.execute(
+                    f"""
+                    WITH elegiveis AS (
+                        SELECT o.id, o.boat_id, o.created_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY o.boat_id
+                                   ORDER BY o.created_at ASC, o.id ASC
+                               ) AS rn
+                        FROM chat_outbox o
+                        WHERE o.status = 'queued'
+                          AND o.expires_at > {agora_sql}
+                    ),
+                    eleitas AS (
+                        SELECT e.id
+                        FROM elegiveis e
+                        WHERE e.rn <= COALESCE(%s, 2147483647)
+                        ORDER BY e.created_at ASC, e.id ASC
+                        LIMIT %s
+                    ),
+                    travadas AS (
+                        SELECT o.id
+                        FROM chat_outbox o
+                        JOIN eleitas t ON t.id = o.id
+                        WHERE o.status = 'queued'
+                        FOR UPDATE OF o SKIP LOCKED
+                    )
+                    UPDATE chat_outbox o
+                    SET status = 'sending',
+                        lease_until = {agora_sql} + (%s || ' seconds')::interval
+                    FROM travadas x
+                    WHERE o.id = x.id
+                    RETURNING o.id
+                    """,
+                    (now, now, per_boat_limit, limit, now, now, OUTBOX_LEASE_SECS),
+                )
+                ids = [row[0] for row in cur.fetchall()]
+                if not ids:
+                    return []
+                # Ordenação estável para o consumidor (UPDATE..RETURNING não
+                # garante ordem); mesmas chaves de retorno de antes.
+                cur.execute(
+                    """
+                    SELECT id, boat_id, text, created_by, created_at, expires_at,
+                           status, sent_at, packet_id, error, lease_until
+                    FROM chat_outbox
+                    WHERE id = ANY(%s)
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (ids,),
+                )
+                cols = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+            return [dict(zip(cols, r)) for r in rows]
+
+    def mark_outbox(
+        self,
+        outbox_id: int,
+        status: str,
+        packet_id: int | None = None,
+        error: str | None = None,
+    ) -> bool:
+        """Transiciona a mensagem a partir da locação do claim (FIX-5).
+
+        Só transiciona linhas 'sending' (locadas) ou 'queued' (não reivindicadas
+        — retrocompatibilidade com marcações diretas). Estados terminais
+        ('sent'/'expired'/'failed') não são re-marcados e limpam a locação;
+        'queued' sobre linha locada persiste o packet_id SEM derrubar a locação
+        (o envio ainda está em curso — o chat persiste o id antes de publicar).
+        """
+        if status not in ("queued", "sending", "sent", "expired", "failed"):
+            raise ValueError(f"status inválido para chat_outbox: {status}")
+
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE chat_outbox
+                    SET status = CASE
+                            WHEN chat_outbox.status = 'sending' AND %s = 'queued' THEN 'sending'
+                            ELSE %s
+                        END,
+                        sent_at = CASE WHEN %s = 'sent' THEN now() ELSE sent_at END,
+                        packet_id = COALESCE(%s, packet_id),
+                        error = %s,
+                        lease_until = CASE WHEN %s IN ('sent', 'expired', 'failed') THEN NULL ELSE lease_until END
+                    WHERE id = %s
+                      AND status IN ('queued', 'sending')
+                    """,
+                    (status, status, status, packet_id, error, status, outbox_id),
+                )
+                return cur.rowcount > 0
+
+    # -------------------------------------------------------------------------
+    # Alertas (WP-D): leituras do ciclo + gravação do estado em alert_state
+    # -------------------------------------------------------------------------
+
+    def alert_state_rows(self) -> list[dict]:
+        """Linhas de ``alert_state`` como dicts (epochs float; None onde vazio)."""
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT key, node_num, kind,
+                           EXTRACT(EPOCH FROM since)::double precision AS since,
+                           CASE WHEN cleared_at IS NULL THEN NULL
+                                ELSE EXTRACT(EPOCH FROM cleared_at)::double precision END AS cleared_at
+                    FROM alert_state
+                    """
+                )
+                cols = [desc[0] for desc in cur.description]
+                return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def gateway_uplink_times(self) -> dict[int, float]:
+        """``{gateway_num: epoch do último uplink}`` a partir de gateway_status."""
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT gateway_num, "
+                    "EXTRACT(EPOCH FROM last_uplink)::double precision FROM gateway_status"
+                )
+                return {row[0]: row[1] for row in cur.fetchall()}
+
+    def node_activity(self) -> dict[int, dict]:
+        """Por nó: ``first_seen/last_seen`` + tempos dos 2 fixes mais recentes.
+
+        Formato: ``{node_num: {first_seen, last_seen, fix_time, prev_time,
+        displacement_m}}`` — epochs float; ``displacement_m`` é o deslocamento
+        haversine entre o último fix e o anterior (base de ``posicao_parada``).
+        Nó sem fix → fix/prev/deslocamento None.
+        """
+        # Coordenadas NÃO são legíveis pelo papel ingest: a função SECURITY
+        # DEFINER devolve só tempos e o deslocamento (m) entre os 2 últimos fixes.
+        sql = "SELECT node_num, first_seen, last_seen, fix_time, prev_time, displacement_m FROM node_activity_summary()"
+        out: dict[int, dict] = {}
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                cols = [desc[0] for desc in cur.description]
+                for row in cur.fetchall():
+                    info = dict(zip(cols, row))
+                    out[int(info.pop("node_num"))] = info
+        return out
+
+    def save_alert_events(
+        self,
+        raised: list[dict],
+        cleared: list[dict],
+        now=None,
+    ) -> None:
+        """Grava raises/clears do ciclo em ``alert_state`` (uma transação).
+
+        ``raised``: dicts com ``key/node_num/kind/since`` (epoch float ou None).
+        ``cleared``: dicts com ``key/cleared_at``. ``since`` só reinicia em linha
+        previamente LIMPA — linha ativa mantém o ``since`` original (raise-uma-vez).
+        """
+        if not raised and not cleared:
+            return
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                if raised:
+                    cur.executemany(
+                        """
+                        INSERT INTO alert_state (key, node_num, kind, since, cleared_at)
+                        VALUES (%s, %s, %s,
+                                CASE WHEN %s::double precision IS NULL THEN now()
+                                     ELSE to_timestamp(%s::double precision) END,
+                                NULL)
+                        ON CONFLICT (key) DO UPDATE SET
+                            since = CASE WHEN alert_state.cleared_at IS NOT NULL
+                                         THEN EXCLUDED.since
+                                         ELSE alert_state.since END,
+                            node_num = EXCLUDED.node_num,
+                            kind = EXCLUDED.kind,
+                            cleared_at = NULL
+                        """,
+                        [
+                            (r["key"], r["node_num"], r["kind"], r.get("since"), r.get("since"))
+                            for r in raised
+                        ],
+                    )
+                if cleared:
+                    cur.executemany(
+                        """
+                        UPDATE alert_state
+                        SET cleared_at = CASE WHEN %s::double precision IS NULL THEN now()
+                                              ELSE to_timestamp(%s::double precision) END
+                        WHERE key = %s AND cleared_at IS NULL
+                        """
+                        ,
+                        [(c["cleared_at"], c["cleared_at"], c["key"]) for c in cleared],
+                    )

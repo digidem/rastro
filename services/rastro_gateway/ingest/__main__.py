@@ -20,6 +20,7 @@ import psycopg
 
 from rastro_gateway.common import fleet_names
 from rastro_gateway.ingest import db, mqtt_in
+from rastro_gateway.native import alerts, service
 
 log = logging.getLogger("rastro.ingest")
 
@@ -89,6 +90,41 @@ def aguardar_banco(database, timeout_secs: float) -> int:
             return EXIT_CONFIG
 
 
+def _iniciar_flushers(ing, native) -> None:
+    """Sobe o flusher por idade do legado E do nativo (quando ativo).
+
+    Sem o flusher nativo, mensagens só saem quando 20 acumulam (batch_max) —
+    pouco tráfego ficaria retido até 5 s + in-flight preso no broker.
+    """
+    ing.start()
+    if native is not None:
+        native.start()
+
+
+def _iniciar_ciclo_alertas(database, stop_event: threading.Event):
+    """Ciclo de alertas (WP-D): thread de timer, só com ``RASTRO_ALERTS_ENABLED=1``.
+
+    Nunca é iniciado por padrão. Erro do ciclo é logado e o loop continua
+    (thread de timer NUNCA morre em silêncio — mesma regra do flush).
+    """
+    if os.environ.get(alerts.ENV_ALERTS_ENABLED, "") != "1":
+        return None
+    intervalo = float(
+        os.environ.get(alerts.ENV_INTERVALO_SECS) or alerts.INTERVALO_PADRAO_SECS
+    )
+
+    def _loop():
+        while not stop_event.wait(intervalo):
+            try:
+                alerts.run_alert_cycle(database, time.time())
+            except Exception:
+                log.exception("FALHA: ciclo de alertas")
+
+    th = threading.Thread(target=_loop, name="rastro-alertas", daemon=True)
+    th.start()
+    return th
+
+
 def main() -> int:
     _setup_logging()
     if not db.aguardar_conn_file():
@@ -104,6 +140,17 @@ def main() -> int:
     except (ValueError, RuntimeError) as exc:
         log.error("FALHA: configuração inválida: %s", exc)
         return EXIT_CONFIG
+
+    # Ingest nativo (WP-D): valida a config ANTES de abrir pool/broker — PSK
+    # ausente/inválida com a flag ligada é erro de configuração (exit 2), e a
+    # PSK nunca vaza para o log (NativeConfig repr mascara a chave).
+    native_cfg = None
+    if os.environ.get(service.ENV_ENABLED, "") == "1":
+        try:
+            native_cfg = service.NativeConfig.from_env()
+        except ValueError as exc:
+            log.error("FALHA: configuração do ingest nativo inválida: %s", exc)
+            return EXIT_CONFIG
 
     # Arquivo de nomes da frota (opcional) lido uma vez no boot (é o cache daqui pra frente).
     names = fleet_names.load_fleet_names()
@@ -145,27 +192,39 @@ def main() -> int:
     if codigo:
         database.close()
         return codigo
+    # NativeIngest (WP-D) no MESMO cliente; None = só legado (flag desligada).
+    native = None
+    if native_cfg is not None:
+        native = service.NativeIngest(client, database, cfg=native_cfg)
     ing = mqtt_in.Ingester(
         client,
         database,
         names,
         fleet_ids,
         cfg=mqtt_cfg,
+        native=native,
     )
 
     shutdown_done = threading.Event()
+    parar_alertas = threading.Event()
     stopping = {"asked": False, "flush_ok": True}
 
     def _shutdown() -> None:
         """Thread dedicada de desligamento (gate F2 R3): flush final COM o socket
         ainda vivo (acks chegam ao broker) e disconnect só depois — nunca dentro
         do handler de sinal (a thread de sinal pode segurar locks do paho)."""
-        ing.stop()
-        pendentes = ing.pending()
+        parar_alertas.set()  # para o ciclo de alertas (se ativo)
+        consumidores = [ing] + ([native] if native is not None else [])
+        for consumidor in consumidores:
+            consumidor.stop()
+        pendentes = sum(c.pending() for c in consumidores)
         if pendentes:
             log.info("Flush final: %d msgs pendentes", pendentes)
         for attempt in range(1, FLUSH_FINAL_ATTEMPTS + 1):
-            if ing.flush():
+            ok = True
+            for consumidor in consumidores:
+                ok = consumidor.flush() and ok
+            if ok:
                 break
             log.warning(
                 "FALHA: flush final %d/%d não commitou — não ackado; "
@@ -193,7 +252,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    ing.start()
+    # Flusher por idade (legado + nativo): native.start nunca era chamado —
+    # mensagens nativas só saíam quando 20 acumulavam (ver _iniciar_flushers).
+    _iniciar_flushers(ing, native)
+    # Ciclo de alertas (WP-D): thread de timer só com RASTRO_ALERTS_ENABLED=1 —
+    # NUNCA iniciado por padrão (design §0: hooks, sem agendamento próprio).
+    _iniciar_ciclo_alertas(database, parar_alertas)
     # connect_async: o retry da PRIMEIRA conexão fica por conta do
     # loop_forever(retry_first_connection=True) — connect síncrono levantaria
     # se o broker ainda não estivesse pronto (depends_on não garante) (gate F2 R2)

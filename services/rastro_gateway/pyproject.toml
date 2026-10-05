@@ -7,6 +7,7 @@ dependencies = [
   "meshtastic>=2.6",
   "paho-mqtt>=2.0,<3",
   "psycopg[binary,pool]>=3.1",
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,8 @@ packages = [
   "rastro_gateway.common",
   "rastro_gateway.ingest",
   "rastro_gateway.bridge",
+  "rastro_gateway.native",
+  "rastro_gateway.chat",
 ]
 
 # a raiz do projeto é o próprio pacote `rastro_gateway` (tem __init__.py) —
