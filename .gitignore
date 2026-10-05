@@ -1,4 +1,9 @@
 # Secrets and per-deployment state — never commit
+.env
+.env.*
+*.env
+!.env.example
+!deploy/env.example
 deploy/.env
 deploy/mosquitto/passwd
 deploy/mosquitto/certs/*
