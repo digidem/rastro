@@ -23,6 +23,7 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
 from rastro_gateway.chat.outbox import Outbox
+from rastro_gateway.chat.seed import seed_from_env
 from rastro_gateway.ingest import db
 from rastro_gateway.ingest.mqtt_in import _resolver_ca, aguardar_ca
 from rastro_gateway.native import crypto
@@ -180,8 +181,24 @@ class MqttPublisher:
             return self._results.pop(mid, False)
 
 
+def _ocioso() -> int:
+    """Chat desligado (RASTRO_CHAT_ENABLED != 1): fica vivo sem conectar em nada.
+
+    Evita crash-loop no CapRover quando o app existe mas a chave EVU/nós ainda
+    não foram configurados. Sai limpo no SIGTERM/SIGINT.
+    """
+    parar = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: parar.set())
+    signal.signal(signal.SIGINT, lambda *_: parar.set())
+    log.info("Chat desligado (RASTRO_CHAT_ENABLED != 1): aguardando; nada é publicado")
+    parar.wait()
+    return EXIT_OK
+
+
 def main() -> int:
     _setup_logging()
+    if os.environ.get("RASTRO_CHAT_ENABLED", "1") != "1":
+        return _ocioso()
     psk = load_psk()
 
     if not db.aguardar_conn_file():
@@ -201,6 +218,18 @@ def main() -> int:
         log.error("FALHA: banco de dados Postgres indisponível ou schema incorreto: %s", exc)
         database.close()
         return EXIT_DEPENDENCIA
+
+    # Seed idempotente das tabelas de CONFIG (virtual_gateways/boat_devices) a partir
+    # de RASTRO_NATIVE_NODES; o papel ingest tem INSERT/UPDATE apenas nelas (sem
+    # coordenadas). Falha aqui = problema de permissão/banco: encerra com código 3.
+    try:
+        barcos, nos = seed_from_env(database._pool, os.environ)
+    except Exception as exc:
+        log.error("FALHA: seed do ingest nativo (RASTRO_NATIVE_NODES) falhou: %s", type(exc).__name__)
+        database.close()
+        return EXIT_DEPENDENCIA
+    if barcos:
+        log.info("Ingest nativo: config semeada (%d barcos, %d nós)", barcos, nos)
 
     mqtt_host = os.environ.get("RASTRO_MQTT_HOST", "localhost")
     mqtt_port = int(os.environ.get("RASTRO_MQTT_PORT", "8883"))

@@ -17,10 +17,13 @@ umask 077
 LC_ALL=C
 export LC_ALL
 
-TPL_DIR=/rastro
-SECRETS_DIR=/mosquitto/secrets
-DATA_DIR=/mosquitto/data
-PUBLIC_DIR=/mosquitto/public
+TPL_DIR=${RASTRO_TPL_DIR:-/rastro}
+if [ ! -d "$TPL_DIR" ]; then
+  TPL_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+fi
+SECRETS_DIR=${RASTRO_SECRETS_DIR:-/mosquitto/secrets}
+DATA_DIR=${RASTRO_DATA_DIR:-/mosquitto/data}
+PUBLIC_DIR=${RASTRO_PUBLIC_DIR:-/mosquitto/public}
 PKI_DIR=$DATA_DIR/pki
 
 # Nova linha literal, usada para rejeitar valor de variável com nova linha embutida.
@@ -224,6 +227,72 @@ if [ -n "${RASTRO_ACCOUNTS_FILE:-}" ]; then
   fi
   RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-false}
   unset RASTRO_ACCOUNTS_FILE
+elif [ -n "${RASTRO_NATIVE_NODES:-}" ]; then
+  # Modo nativo derivado (RASTRO_NATIVE_NODES + RASTRO_NATIVE_SECRET)
+  if [ -z "${RASTRO_NATIVE_SECRET:-}" ]; then
+    erro "RASTRO_NATIVE_SECRET não definida — obrigatória quando RASTRO_NATIVE_NODES estiver configurada"
+  fi
+  if [ "${#RASTRO_NATIVE_SECRET}" -lt 24 ]; then
+    erro "RASTRO_NATIVE_SECRET muito curta: mínimo 24 caracteres"
+  fi
+  case "$RASTRO_NATIVE_SECRET" in
+    *"$NL"*) erro "RASTRO_NATIVE_SECRET não pode conter nova linha" ;;
+  esac
+  if [ -z "${RASTRO_MQTT_PASSWORD_INGEST:-}" ]; then
+    erro "RASTRO_MQTT_PASSWORD_INGEST não definida — obrigatória (senha do usuário 'ingest')"
+  fi
+  if [ "${#RASTRO_MQTT_PASSWORD_INGEST}" -lt 24 ]; then
+    erro "RASTRO_MQTT_PASSWORD_INGEST muito curta: mínimo 24 caracteres"
+  fi
+  case "$RASTRO_MQTT_PASSWORD_INGEST" in
+    *:*) erro "RASTRO_MQTT_PASSWORD_INGEST não pode conter ':' (é o separador do arquivo passwd)" ;;
+    *"$NL"*) erro "RASTRO_MQTT_PASSWORD_INGEST não pode conter nova linha" ;;
+  esac
+  if [ -z "${RASTRO_MQTT_PASSWORD_OUTBOX:-}" ]; then
+    erro "RASTRO_MQTT_PASSWORD_OUTBOX não definida — obrigatória no modo nativo (senha do usuário 'outbox')"
+  fi
+  if [ "${#RASTRO_MQTT_PASSWORD_OUTBOX}" -lt 24 ]; then
+    erro "RASTRO_MQTT_PASSWORD_OUTBOX muito curta: mínimo 24 caracteres"
+  fi
+  case "$RASTRO_MQTT_PASSWORD_OUTBOX" in
+    *:*) erro "RASTRO_MQTT_PASSWORD_OUTBOX não pode conter ':' (é o separador do arquivo passwd)" ;;
+    *"$NL"*) erro "RASTRO_MQTT_PASSWORD_OUTBOX não pode conter nova linha" ;;
+  esac
+  if [ -n "${RASTRO_MQTT_PASSWORD_GATEWAY:-}" ]; then
+    if [ "${#RASTRO_MQTT_PASSWORD_GATEWAY}" -lt 24 ]; then
+      erro "RASTRO_MQTT_PASSWORD_GATEWAY muito curta: mínimo 24 caracteres"
+    fi
+    case "$RASTRO_MQTT_PASSWORD_GATEWAY" in
+      *:*) erro "RASTRO_MQTT_PASSWORD_GATEWAY não pode conter ':' (é o separador do arquivo passwd)" ;;
+      *"$NL"*) erro "RASTRO_MQTT_PASSWORD_GATEWAY não pode conter nova linha" ;;
+    esac
+  fi
+
+  # Deriva as contas em arquivo privado temporário (modo 0600 em $RUN)
+  if ! python3 "$TPL_DIR/derive.py" "$RUN/accounts.json"; then
+    erro "derive.py falhou ao processar contas nativas a partir do ambiente"
+  fi
+
+  # Chama accounts.py para gerar passwd (texto puro) e aclfile
+  if ! python3 "$TPL_DIR/accounts.py" "$RUN/accounts.json" "$RUN/passwd" "$RUN/aclfile"; then
+    erro "accounts.py falhou ao processar contas nativas"
+  fi
+
+  # Remove arquivo temporário de contas com senhas em texto puro
+  rm -f "$RUN/accounts.json"
+
+  # hasheia no próprio lugar (-U não recebe senha alguma na linha de comando)
+  if ! mosquitto_passwd -U "$RUN/passwd"; then
+    erro "mosquitto_passwd falhou ao gerar os hashes de $RUN/passwd (binário ausente?)"
+  fi
+
+  # Remove segredos do ambiente antes do exec
+  unset RASTRO_NATIVE_SECRET
+  unset RASTRO_MQTT_PASSWORD_INGEST
+  unset RASTRO_MQTT_PASSWORD_OUTBOX
+  unset RASTRO_MQTT_PASSWORD_GATEWAY
+
+  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-false}
 else
   # Modo legado (gateway/ingest)
   RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-true}

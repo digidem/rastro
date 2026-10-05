@@ -257,7 +257,10 @@ SELECT format('GRANT SELECT (node_num, node_id, friendly_name, fleet_id) ON %I.n
 -- migrate-02-native.sh — manter os três idênticos.
 \if :tem_native
 SELECT format('GRANT INSERT, SELECT, UPDATE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.node_power, %I.chat_messages, %I.alert_state TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'ingest') \gexec
-SELECT format('GRANT SELECT ON %I.virtual_gateways, %I.boat_devices TO %I', :'db', :'db', :'ingest') \gexec
+-- Config do chat (gateways virtuais e vínculos de dispositivos): o processo de
+-- chat usa o papel ingest e semeia estas tabelas de config (sem coordenadas) no boot.
+SELECT format('GRANT INSERT, SELECT, UPDATE ON %I.virtual_gateways, %I.boat_devices TO %I', :'db', :'db', :'ingest') \gexec
+SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.boat_devices_id_seq TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT SELECT, UPDATE ON %I.chat_outbox TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.raw_envelopes_id_seq, %I.chat_messages_id_seq TO %I', :'db', :'db', :'ingest') \gexec
 \endif

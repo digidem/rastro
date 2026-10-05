@@ -1,6 +1,6 @@
 # Outbox do chat (Tarefa 5): mesma base do ingest, outro processo.
 # Uso: docker build -f rastro_gateway/Dockerfile.chat -t communityfirst/rastro-chat:<tag> --build-arg BASE_TAG=<tag> services
 # build context: services/
-ARG BASE_TAG=0.7.0
+ARG BASE_TAG=0.8.0
 FROM communityfirst/rastro-ingest:${BASE_TAG}
 CMD ["python", "-m", "rastro_gateway.chat"]

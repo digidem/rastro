@@ -122,6 +122,15 @@ def load_accounts(file_path: str | Path) -> dict:
             raise ValueError("O campo 'monitor' deve ser um objeto")
         monitor_pw = validate_password("monitor", data["monitor"].get("password", ""))
 
+    # legacy_prefix (opcional)
+    legacy_prefix = None
+    if "legacy_prefix" in data and data["legacy_prefix"] is not None:
+        if not isinstance(data["legacy_prefix"], str):
+            raise ValueError("O campo 'legacy_prefix' deve ser uma string")
+        clean_legacy = data["legacy_prefix"].strip().strip("/")
+        if clean_legacy:
+            legacy_prefix = validate_topic_root(clean_legacy)
+
     # gateway (legado opcional)
     gateway_pw = None
     gateway_prefix = "rastro"
@@ -195,6 +204,8 @@ def load_accounts(file_path: str | Path) -> dict:
         "virtual_gateways": virtual_gateways,
         "nodes": nodes,
     }
+    if legacy_prefix is not None:
+        validated["legacy_prefix"] = legacy_prefix
     if gateway_pw is not None:
         validated["gateway"] = {"password": gateway_pw, "prefix": gateway_prefix}
     if monitor_pw is not None:
@@ -238,12 +249,17 @@ def generate_acl(accounts: dict) -> str:
         f"topic read {root}/2/e/#",
     ]
 
+    legacy_pfx = None
     if "gateway" in accounts:
-        prefix = accounts["gateway"].get("prefix", "rastro")
+        legacy_pfx = accounts["gateway"].get("prefix", "rastro")
+    elif "legacy_prefix" in accounts:
+        legacy_pfx = accounts.get("legacy_prefix", "rastro")
+
+    if legacy_pfx:
         lines.extend([
-            f"topic read {prefix}/positions/#",
-            f"topic read {prefix}/telemetry/#",
-            f"topic read {prefix}/status/#",
+            f"topic read {legacy_pfx}/positions/#",
+            f"topic read {legacy_pfx}/telemetry/#",
+            f"topic read {legacy_pfx}/status/#",
         ])
 
     lines.append("")

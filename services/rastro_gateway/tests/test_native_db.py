@@ -1129,22 +1129,28 @@ def test_viewer_role_reads_and_inserts_outbox(db, pg_session):
                 cur.fetchone()
 
 
-def test_ingest_role_cannot_write_reference_tables(db, pg_session):
-    """Achado 4: ingest não grava mais virtual_gateways/boat_devices (só lê)."""
+def test_ingest_role_writes_seed_config_tables(db, pg_session):
+    """H1: o papel ingest grava as tabelas de CONFIG do seed do chat (sem coordenadas)."""
     with psycopg.connect(
         _conn_de(pg_session, f"{pg_session['dbname']}_ingest", SENHA_INGEST),
         autocommit=True,
     ) as conn:
         with conn.cursor() as cur:
+            cur.execute("SET search_path = rastro, public")
+            cur.execute(
+                "INSERT INTO virtual_gateways (boat_id, gateway_id, virtual_node_num, active) "
+                "VALUES ('x', '!x0000001', 1, true)"
+            )
+            # UPDATE do seed: reativação de vgw existente
+            cur.execute("UPDATE virtual_gateways SET active = true WHERE boat_id = 'x'")
+            # IDENTITY de boat_devices: INSERT exige USAGE na sequência
+            cur.execute(
+                "INSERT INTO boat_devices (node_num, boat_id, valid_from) VALUES (1, 'x', now())"
+            )
+            # coordenadas continuam proibidas para o papel ingest
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                cur.execute(
-                    "INSERT INTO virtual_gateways (boat_id, gateway_id, virtual_node_num) "
-                    "VALUES ('x', '!x000', 1)"
-                )
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                cur.execute(
-                    "INSERT INTO boat_devices (node_num, boat_id, valid_from) VALUES (1, 'x', now())"
-                )
+                cur.execute("SELECT lat_i FROM positions")
+                cur.fetchone()
 
 
 def _parse_url(url: str) -> dict:

@@ -132,7 +132,12 @@ SELECT format('SET search_path = %I, public', :'db') \gexec
 SELECT format('GRANT INSERT, SELECT, UPDATE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.node_power, %I.chat_messages, %I.alert_state TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'ingest')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
 
-SELECT format('GRANT SELECT ON %I.virtual_gateways, %I.boat_devices TO %I', :'db', :'db', :'ingest')
+-- Config do chat (gateways virtuais e vínculos de dispositivos): o processo de
+-- chat usa o papel ingest e semeia estas tabelas de config (sem coordenadas) no boot.
+SELECT format('GRANT INSERT, SELECT, UPDATE ON %I.virtual_gateways, %I.boat_devices TO %I', :'db', :'db', :'ingest')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
+
+SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.boat_devices_id_seq TO %I', :'db', :'ingest')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
 
 SELECT format('GRANT SELECT, UPDATE ON %I.chat_outbox TO %I', :'db', :'ingest')

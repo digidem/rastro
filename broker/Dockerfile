@@ -10,10 +10,10 @@
 FROM eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
 
 # Nada de segredo na imagem: só modelos e o entrypoint.
-COPY mosquitto.conf.tmpl aclfile.tmpl entrypoint.sh accounts.py /rastro/
+COPY mosquitto.conf.tmpl aclfile.tmpl entrypoint.sh accounts.py derive.py /rastro/
 # Modos explícitos (independem do modo dos arquivos no host e funcionam com qualquer
 # builder, sem depender de recurso específico de BuildKit): modelos 0444, script 0555.
-RUN chmod 0444 /rastro/mosquitto.conf.tmpl /rastro/aclfile.tmpl && chmod 0555 /rastro/entrypoint.sh /rastro/accounts.py
+RUN chmod 0444 /rastro/mosquitto.conf.tmpl /rastro/aclfile.tmpl && chmod 0555 /rastro/entrypoint.sh /rastro/accounts.py /rastro/derive.py
 # /mosquitto/data: persistência (o volume montado precisa ter a mesma posse);
 # /mosquitto/secrets: destino dos certificados montados (somente leitura).
 # /mosquitto/data/pki: PKI privada do modo TLS automático (chaves; fica no volume de dados).

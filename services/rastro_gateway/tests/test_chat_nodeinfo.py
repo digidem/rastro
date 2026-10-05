@@ -352,3 +352,27 @@ def test_nodeinfo_publish_does_not_pass_chat_expiry_property() -> None:
         assert getattr(props, "MessageExpiryInterval", None) is None
 
 
+
+
+def test_chat_desligado_fica_ocioso_e_sai_no_sigterm(monkeypatch, caplog):
+    """RASTRO_CHAT_ENABLED=0: não exige PSK, não conecta, sai com 0 no SIGTERM."""
+    import os
+    import signal
+    import threading
+
+    from rastro_gateway.chat import __main__ as chat_main
+
+    monkeypatch.setenv("RASTRO_CHAT_ENABLED", "0")
+    monkeypatch.delenv("RASTRO_EVU_PSK_B64", raising=False)
+    guardados = {}
+    monkeypatch.setattr(signal, "signal", lambda sig, h: guardados.__setitem__(sig, h))
+    resultado = {}
+    t = threading.Thread(target=lambda: resultado.__setitem__("rc", chat_main.main()))
+    t.start()
+    for _ in range(100):
+        if signal.SIGTERM in guardados:
+            break
+        threading.Event().wait(0.02)
+    guardados[signal.SIGTERM](signal.SIGTERM, None)
+    t.join(timeout=5)
+    assert resultado.get("rc") == 0

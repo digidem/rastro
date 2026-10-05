@@ -42,6 +42,7 @@ if [ "$BUILD" = 1 ]; then
   echo "== build das imagens"
   docker build -q -t communityfirst/rastro-broker:$SIM_TAG "$RAIZ/broker" >/dev/null
   docker build -q -t communityfirst/rastro-ingest:$SIM_TAG -f "$RAIZ/services/rastro_gateway/Dockerfile" "$RAIZ/services" >/dev/null
+  docker build -q -t communityfirst/rastro-chat:$SIM_TAG -f "$RAIZ/services/rastro_gateway/Dockerfile.chat" --build-arg BASE_TAG=$SIM_TAG "$RAIZ/services" >/dev/null
   docker build -q -t communityfirst/rastro-api:$SIM_TAG -f "$RAIZ/services/rastro_api/Dockerfile" "$RAIZ/services" >/dev/null
   docker build -q -t communityfirst/rastro-web:$SIM_TAG "$RAIZ/web" >/dev/null
   docker build -q -t communityfirst/rastro-pgtools:$SIM_TAG -f "$RAIZ/deploy/postgres/Dockerfile" "$RAIZ" >/dev/null
