@@ -82,7 +82,14 @@ valida_sans() {
         erro "RASTRO_BROKER_SANS: nome inválido — use só letras, dígitos, '.' e '-' (sem espaços)"
         ;;
     esac
-    saida=${saida:+$saida,}DNS:$nome
+    case "$nome" in
+      [0-9]*.[0-9]*.[0-9]*.[0-9]*)
+        saida=${saida:+$saida,}IP:$nome
+        ;;
+      *)
+        saida=${saida:+$saida,}DNS:$nome
+        ;;
+    esac
   done
   if [ -z "$saida" ]; then
     erro "RASTRO_BROKER_SANS não tem nenhum nome — informe ao menos um nome DNS do broker"
@@ -201,44 +208,68 @@ if [ "${#PREFIX}" -gt 32 ]; then
   erro "RASTRO_MQTT_TOPIC_PREFIX inválida: mais de 32 caracteres"
 fi
 
-# (c) senhas dos dois usuários fixos da imagem (gateway escreve, ingest só lê)
-if [ -z "${RASTRO_MQTT_PASSWORD_GATEWAY:-}" ]; then
-  erro "RASTRO_MQTT_PASSWORD_GATEWAY não definida — obrigatória (senha do usuário 'gateway')"
-fi
-if [ -z "${RASTRO_MQTT_PASSWORD_INGEST:-}" ]; then
-  erro "RASTRO_MQTT_PASSWORD_INGEST não definida — obrigatória (senha do usuário 'ingest')"
-fi
-pw_gateway=$RASTRO_MQTT_PASSWORD_GATEWAY
-pw_ingest=$RASTRO_MQTT_PASSWORD_INGEST
+# (c) senhas e ACL: se RASTRO_ACCOUNTS_FILE estiver definida (WP-C), gera via accounts.py;
+# caso contrário, mantém comportamento legado com usuários fixos gateway e ingest.
+if [ -n "${RASTRO_ACCOUNTS_FILE:-}" ]; then
+  if [ ! -f "$RASTRO_ACCOUNTS_FILE" ] || [ ! -s "$RASTRO_ACCOUNTS_FILE" ]; then
+    erro "RASTRO_ACCOUNTS_FILE definido mas o arquivo não existe ou está vazio: $RASTRO_ACCOUNTS_FILE"
+  fi
+  # Chama accounts.py para gerar passwd (texto puro) e aclfile
+  if ! python3 "$TPL_DIR/accounts.py" "$RASTRO_ACCOUNTS_FILE" "$RUN/passwd" "$RUN/aclfile"; then
+    erro "accounts.py falhou ao processar $RASTRO_ACCOUNTS_FILE"
+  fi
+  # hasheia no próprio lugar (-U não recebe senha alguma na linha de comando)
+  if ! mosquitto_passwd -U "$RUN/passwd"; then
+    erro "mosquitto_passwd falhou ao gerar os hashes de $RUN/passwd (binário ausente?)"
+  fi
+  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-false}
+  unset RASTRO_ACCOUNTS_FILE
+else
+  # Modo legado (gateway/ingest)
+  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-true}
+  if [ -z "${RASTRO_MQTT_PASSWORD_GATEWAY:-}" ]; then
+    erro "RASTRO_MQTT_PASSWORD_GATEWAY não definida — obrigatória (senha do usuário 'gateway')"
+  fi
+  if [ -z "${RASTRO_MQTT_PASSWORD_INGEST:-}" ]; then
+    erro "RASTRO_MQTT_PASSWORD_INGEST não definida — obrigatória (senha do usuário 'ingest')"
+  fi
+  pw_gateway=$RASTRO_MQTT_PASSWORD_GATEWAY
+  pw_ingest=$RASTRO_MQTT_PASSWORD_INGEST
 
-if [ "${#pw_gateway}" -lt 24 ]; then
-  erro "RASTRO_MQTT_PASSWORD_GATEWAY muito curta: mínimo 24 caracteres"
-fi
-if [ "${#pw_ingest}" -lt 24 ]; then
-  erro "RASTRO_MQTT_PASSWORD_INGEST muito curta: mínimo 24 caracteres"
-fi
-case "$pw_gateway" in
-  *:*) erro "RASTRO_MQTT_PASSWORD_GATEWAY não pode conter ':' (é o separador do arquivo passwd)" ;;
-  *"$NL"*) erro "RASTRO_MQTT_PASSWORD_GATEWAY não pode conter nova linha" ;;
-esac
-case "$pw_ingest" in
-  *:*) erro "RASTRO_MQTT_PASSWORD_INGEST não pode conter ':' (é o separador do arquivo passwd)" ;;
-  *"$NL"*) erro "RASTRO_MQTT_PASSWORD_INGEST não pode conter nova linha" ;;
-esac
+  if [ "${#pw_gateway}" -lt 24 ]; then
+    erro "RASTRO_MQTT_PASSWORD_GATEWAY muito curta: mínimo 24 caracteres"
+  fi
+  if [ "${#pw_ingest}" -lt 24 ]; then
+    erro "RASTRO_MQTT_PASSWORD_INGEST muito curta: mínimo 24 caracteres"
+  fi
+  case "$pw_gateway" in
+    *:*) erro "RASTRO_MQTT_PASSWORD_GATEWAY não pode conter ':' (é o separador do arquivo passwd)" ;;
+    *"$NL"*) erro "RASTRO_MQTT_PASSWORD_GATEWAY não pode conter nova linha" ;;
+  esac
+  case "$pw_ingest" in
+    *:*) erro "RASTRO_MQTT_PASSWORD_INGEST não pode conter ':' (é o separador do arquivo passwd)" ;;
+    *"$NL"*) erro "RASTRO_MQTT_PASSWORD_INGEST não pode conter nova linha" ;;
+  esac
 
-# texto puro só existe um instante, num arquivo 0600 dentro do diretório 0700 acima
-{
-  printf 'gateway:%s\n' "$pw_gateway"
-  printf 'ingest:%s\n' "$pw_ingest"
-} > "$RUN/passwd" || erro "falha ao escrever o arquivo passwd em $RUN"
+  # texto puro só existe um instante, num arquivo 0600 dentro do diretório 0700 acima
+  {
+    printf 'gateway:%s\n' "$pw_gateway"
+    printf 'ingest:%s\n' "$pw_ingest"
+  } > "$RUN/passwd" || erro "falha ao escrever o arquivo passwd em $RUN"
 
-# hasheia no próprio lugar (-U não recebe senha alguma na linha de comando)
-if ! mosquitto_passwd -U "$RUN/passwd"; then
-  erro "mosquitto_passwd falhou ao gerar os hashes de $RUN/passwd (binário ausente?)"
+  # hasheia no próprio lugar (-U não recebe senha alguma na linha de comando)
+  if ! mosquitto_passwd -U "$RUN/passwd"; then
+    erro "mosquitto_passwd falhou ao gerar os hashes de $RUN/passwd (binário ausente?)"
+  fi
+  # segredo fora do alcance do processo que herda este ambiente (exec abaixo)
+  unset pw_gateway pw_ingest
+  unset RASTRO_MQTT_PASSWORD_GATEWAY RASTRO_MQTT_PASSWORD_INGEST
+
+  # (e) ACL renderizada legado — PREFIX já foi validado, logo é seguro para o sed
+  if ! sed "s/@PREFIX@/$PREFIX/g" "$TPL_DIR/aclfile.tmpl" > "$RUN/aclfile"; then
+    erro "falha ao renderizar a ACL a partir de $TPL_DIR/aclfile.tmpl"
+  fi
 fi
-# segredo fora do alcance do processo que herda este ambiente (exec abaixo)
-unset pw_gateway pw_ingest
-unset RASTRO_MQTT_PASSWORD_GATEWAY RASTRO_MQTT_PASSWORD_INGEST
 
 # (g) persistência: sem volume gravável não há fila QoS 1 sobrevivendo a restart (T4)
 if ! touch "$DATA_DIR/.rastro-write-test" 2>/dev/null ||
@@ -301,17 +332,13 @@ fi
 # a CA em uso (qualquer dos três modos) é publicada para ingest/web
 publica_ca "$CAFILE"
 
-# (e) ACL renderizada — PREFIX já foi validado, logo é seguro para o sed
-if ! sed "s/@PREFIX@/$PREFIX/g" "$TPL_DIR/aclfile.tmpl" > "$RUN/aclfile"; then
-  erro "falha ao renderizar a ACL a partir de $TPL_DIR/aclfile.tmpl"
-fi
-
 # (f) conf renderizado (delimitador '|' porque os caminhos contêm '/')
 if ! sed -e "s|@CAFILE@|$CAFILE|g" \
   -e "s|@CERTFILE@|$CERTFILE|g" \
   -e "s|@KEYFILE@|$KEYFILE|g" \
   -e "s|@PASSWD@|$RUN/passwd|g" \
   -e "s|@ACL@|$RUN/aclfile|g" \
+  -e "s|@RETAIN_AVAILABLE@|$RETAIN_AVAILABLE|g" \
   "$TPL_DIR/mosquitto.conf.tmpl" > "$RUN/mosquitto.conf"; then
   erro "falha ao renderizar a configuração a partir de $TPL_DIR/mosquitto.conf.tmpl"
 fi

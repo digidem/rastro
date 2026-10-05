@@ -1,0 +1,71 @@
+{
+  "root": "univaja/mesh",
+  "ingest": {
+    "password": "fake-ingest-secret-key-min24chars-only"
+  },
+  "outbox": {
+    "password": "fake-outbox-secret-key-min24chars-only"
+  },
+  "gateway": {
+    "password": "fake-gateway-secret-key-min24chars-only",
+    "prefix": "rastro"
+  },
+  "virtual_gateways": [
+    {
+      "boat": "b1",
+      "gateway_id": "!f0000001"
+    },
+    {
+      "boat": "b2",
+      "gateway_id": "!f0000002"
+    },
+    {
+      "boat": "b3",
+      "gateway_id": "!f0000003"
+    },
+    {
+      "boat": "b4",
+      "gateway_id": "!f0000004"
+    },
+    {
+      "boat": "b5",
+      "gateway_id": "!f0000005"
+    },
+    {
+      "boat": "b6",
+      "gateway_id": "!f0000006"
+    }
+  ],
+  "nodes": [
+    {
+      "user": "!a0000001",
+      "password": "fake-boat-b1-node-pass-min24chars",
+      "boat": "b1"
+    },
+    {
+      "user": "!a0000002",
+      "password": "fake-boat-b2-node-pass-min24chars",
+      "boat": "b2"
+    },
+    {
+      "user": "!a0000003",
+      "password": "fake-boat-b3-node-pass-min24chars",
+      "boat": "b3"
+    },
+    {
+      "user": "!a0000004",
+      "password": "fake-boat-b4-node-pass-min24chars",
+      "boat": "b4"
+    },
+    {
+      "user": "!a0000005",
+      "password": "fake-boat-b5-node-pass-min24chars",
+      "boat": "b5"
+    },
+    {
+      "user": "!a0000006",
+      "password": "fake-boat-b6-node-pass-min24chars",
+      "boat": "b6"
+    }
+  ]
+}

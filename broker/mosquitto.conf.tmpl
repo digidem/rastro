@@ -32,6 +32,11 @@ max_queued_messages 100000
 max_inflight_messages 20
 # amigável ao padrão paho; mantém a ordenação por cliente
 
+# Retain desligado por padrão no modo nativo (R6) para impedir que mensagens
+# antigas cheguem a novos assinantes. No modo legado (sem RASTRO_ACCOUNTS_FILE),
+# retain pode ser mantido para suportar status/LWT do gateway.
+retain_available @RETAIN_AVAILABLE@
+
 # O usuário do processo vem da IMAGEM (diretiva USER, uid não-root dono do volume de
 # dados) — e não da diretiva `user` abaixo: nenhum setuid interno disputa com o
 # orquestrador (fonte única de verdade). passwd/ACL/certs são sempre legíveis por esse

@@ -10,11 +10,23 @@ Imagem do Mosquitto 2.1 que se configura sozinha na partida, a partir de variáv
 
 | Nome | Obrigatória | Descrição |
 |---|---|---|
-| `RASTRO_MQTT_PASSWORD_GATEWAY` | sim | senha do usuário `gateway`; mínimo 24 caracteres, sem `:` nem quebra de linha |
-| `RASTRO_MQTT_PASSWORD_INGEST` | sim | senha do usuário `ingest`; mesmas regras |
+| `RASTRO_MQTT_PASSWORD_GATEWAY` | sim (legado) | senha do usuário `gateway`; mínimo 24 caracteres, sem `:` nem quebra de linha |
+| `RASTRO_MQTT_PASSWORD_INGEST` | sim (legado) | senha do usuário `ingest`; mesmas regras |
 | `RASTRO_MQTT_TOPIC_PREFIX` | não (`rastro`) | prefixo dos tópicos: `[a-z0-9_-]`, 1–32 caracteres |
+| `RASTRO_ACCOUNTS_FILE` | não | caminho do JSON de contas e ACL granular por nó/barco (WP-C; substitui senhas legadas) |
 | `RASTRO_TLS_CA_B64`, `RASTRO_TLS_SERVER_CRT_B64`, `RASTRO_TLS_SERVER_KEY_B64` | ver TLS | PEMs em base64 de uma linha |
 | `RASTRO_BROKER_DRY_RUN` | não | `1` valida e gera a configuração, imprime `OK: configuração gerada` e sai (testes) |
+
+## Contas e ACL Nativa (WP-C)
+
+Quando `RASTRO_ACCOUNTS_FILE` aponta para um arquivo JSON (ver `accounts.example.json`), `accounts.py` gera no boot o arquivo de senhas e a ACL nominal com isolamento estrito:
+
+- **`ingest`**: somente leitura em `<root>/2/e/#` (sem escrita).
+- **`outbox`**: somente escrita nos tópicos dos gateways virtuais `<root>/2/e/EVU/<vgw>` (sem leitura).
+- **Nós (`!id`)**: somente escrita em `<root>/2/e/+/!id` e somente leitura no gateway virtual do respectivo barco (`<root>/2/e/EVU/<vgw>`), sem vazamento entre embarcações.
+- `retain_available false` ativado para evitar replay de mensagens retidas a novos assinantes.
+- Proibição de `%u`; qualquer tópico ou operação não listada é rejeitada por padrão.
+
 
 ## TLS — exatamente uma fonte completa
 
