@@ -32,6 +32,7 @@ umask 077
 
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCHEMA_SQL="$AQUI/init/01-schema.sql"
+NATIVE_SQL="$AQUI/init/02-native.sql"
 SCRAM="$AQUI/scram_verifier.py"
 
 erro() { echo "ERRO: $*" >&2; exit 1; }
@@ -225,7 +226,9 @@ SQL
 fi
 
 # --- 8. schema, migração aditiva e GRANTs (exatos: revoga tudo e concede o mínimo) --------
-psql_em "$DB" "${VARS[@]}" -v schema_sql="$SCHEMA_SQL" -v modo="$MODO" <<'SQL'
+TEM_NATIVE=0
+[ ! -f "$NATIVE_SQL" ] || TEM_NATIVE=1
+psql_em "$DB" "${VARS[@]}" -v schema_sql="$SCHEMA_SQL" -v native_sql="$NATIVE_SQL" -v tem_native="$TEM_NATIVE" -v modo="$MODO" <<'SQL'
 SELECT format('SET ROLE %I', :'owner') \gexec
 SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', :'db') \gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I, %I, %I, %I', :'db', :'ingest', :'viewer', :'maint', :'backup') \gexec
@@ -234,22 +237,42 @@ SELECT format('SET search_path = %I', :'db') \gexec
 SELECT (:'modo' = 'normal') AS aplicar_schema \gset
 \if :aplicar_schema
 \i :schema_sql
+\if :tem_native
+\i :native_sql
+\endif
 \endif
 SELECT format('REVOKE ALL ON SCHEMA %I FROM PUBLIC', :'db') \gexec
 SELECT format('GRANT USAGE ON SCHEMA %I TO %I, %I, %I, %I', :'db', :'ingest', :'viewer', :'maint', :'backup') \gexec
 SELECT format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM PUBLIC, %I, %I, %I, %I', :'db', :'ingest', :'viewer', :'maint', :'backup') \gexec
 SELECT format('REVOKE ALL ON ALL SEQUENCES IN SCHEMA %I FROM PUBLIC, %I, %I, %I, %I', :'db', :'ingest', :'viewer', :'maint', :'backup') \gexec
--- ingest: só insere histórico; SELECT apenas nas colunas do alvo de ON CONFLICT (não lê rastros)
-SELECT format('GRANT INSERT ON %I.positions, %I.device_telemetry TO %I', :'db', :'db', :'ingest') \gexec
+-- ingest: só insere histórico; SELECT apenas nas colunas que lê de fato
+-- (alvo de ON CONFLICT do legado e leitura de node_activity do ciclo de alertas)
+SELECT format('GRANT INSERT ON %I.positions, %I.device_telemetry, %I.nodes TO %I', :'db', :'db', :'db', :'ingest') \gexec
 SELECT format('GRANT SELECT (node_num, pos_time) ON %I.positions TO %I', :'db', :'ingest') \gexec
+SELECT format('GRANT EXECUTE ON FUNCTION %I.node_activity_summary() TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT SELECT (node_num, telem_time) ON %I.device_telemetry TO %I', :'db', :'ingest') \gexec
-SELECT format('GRANT INSERT ON %I.nodes TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT UPDATE (node_id, friendly_name, fleet_id, last_seen, updated_at) ON %I.nodes TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT SELECT (node_num, node_id, friendly_name, fleet_id) ON %I.nodes TO %I', :'db', :'ingest') \gexec
+-- Conjunto canônico nativo: idêntico à seção 11 da 02-native.sql e ao
+-- migrate-02-native.sh — manter os três idênticos.
+\if :tem_native
+SELECT format('GRANT INSERT, SELECT, UPDATE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.node_power, %I.chat_messages, %I.alert_state TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'ingest') \gexec
+SELECT format('GRANT SELECT ON %I.virtual_gateways, %I.boat_devices TO %I', :'db', :'db', :'ingest') \gexec
+SELECT format('GRANT SELECT, UPDATE ON %I.chat_outbox TO %I', :'db', :'ingest') \gexec
+SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.raw_envelopes_id_seq, %I.chat_messages_id_seq TO %I', :'db', :'db', :'ingest') \gexec
+\endif
 -- viewer: leitura
 SELECT format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.vw_ultima_posicao TO %I', :'db', :'db', :'db', :'db', :'viewer') \gexec
+\if :tem_native
+SELECT format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.boat_devices TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'viewer') \gexec
+SELECT format('GRANT INSERT (boat_id, text, created_by, expires_at) ON %I.chat_outbox TO %I', :'db', :'viewer') \gexec
+SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.chat_outbox_id_seq TO %I', :'db', :'viewer') \gexec
+\endif
 -- maint: retenção e limpeza de teste
 SELECT format('GRANT SELECT, DELETE ON %I.nodes, %I.positions, %I.device_telemetry TO %I', :'db', :'db', :'db', :'maint') \gexec
+\if :tem_native
+SELECT format('GRANT SELECT, DELETE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.chat_messages, %I.chat_outbox, %I.virtual_gateways, %I.boat_devices, %I.node_power, %I.alert_state TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'maint') \gexec
+\endif
 -- backup: pg_dump do schema (tabelas, view e sequências de identidade)
 SELECT format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO %I', :'db', :'backup') \gexec
 SELECT format('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO %I', :'db', :'backup') \gexec
