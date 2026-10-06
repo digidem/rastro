@@ -33,7 +33,8 @@ def test_latest_duas_features(client, dados):
         assert chave in props
 
 
-def test_track_hex(client, dados):
+def test_track_hex(client, dados, monkeypatch):
+    monkeypatch.setenv("RASTRO_TRACK_GAP_SECS", "0")  # sem segmentar por lacuna (fixture tem 1h entre fixes)
     resposta = client.get("/api/nodes/!aaaa0001/track", headers=AUTH)
     assert resposta.status_code == 200
     feats = resposta.json()["features"]
@@ -60,7 +61,8 @@ def test_track_hex(client, dados):
     assert [p["properties"]["sats"] for p in points] == [7, 8, 6]
 
 
-def test_track_node_num_mesmo_resultado(client, dados):
+def test_track_node_num_mesmo_resultado(client, dados, monkeypatch):
+    monkeypatch.setenv("RASTRO_TRACK_GAP_SECS", "0")
     hex_resp = client.get("/api/nodes/!aaaa0001/track", headers=AUTH)
     num_resp = client.get(f"/api/nodes/{int('aaaa0001', 16)}/track", headers=AUTH)
     assert num_resp.status_code == 200

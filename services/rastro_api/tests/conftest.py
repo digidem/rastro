@@ -20,6 +20,7 @@ from rastro_api.api.main import create_app  # noqa: E402
 TEST_DB = "rastro_api_test"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = REPO_ROOT / "deploy" / "postgres" / "init" / "01-schema.sql"
+NATIVE_PATH = REPO_ROOT / "deploy" / "postgres" / "init" / "02-native.sql"  # colunas/tabelas do ingest nativo
 
 # Banco de teste FORÇADO — os testes jamais abrem o banco de produção.
 os.environ["RASTRO_PG_DB"] = TEST_DB
@@ -60,6 +61,7 @@ def banco_teste():
         try:
             with _pg_connect(TEST_DB) as conn:
                 conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+                conn.execute(NATIVE_PATH.read_text(encoding="utf-8"))
                 conn.commit()
             yield TEST_DB
         finally:
