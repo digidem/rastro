@@ -11,7 +11,7 @@ import pytest
 
 # Fixtures compartilhadas (test_pg_url, pg_session, db, db_ingest): sessão de
 # Postgres descartável, limpeza por teste, papel ingest real.
-from tests.test_native_db import db, db_ingest, pg_session, test_pg_url  # noqa: F401
+from .test_native_db import db, db_ingest, pg_session, test_pg_url  # noqa: F401
 
 from rastro_gateway.chat.seed import seed_from_env
 
