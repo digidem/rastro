@@ -5,12 +5,13 @@ import {
   type BatteryLevel,
   batteryLabel,
   batteryLevel,
-  deviceModelSvgUrl,
+  hardwareModelLabel,
   hasConfirmedPosition,
   isAgeWarning,
   isFixStale,
   nodeAgeLabel,
   nodeKind,
+  nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
 import type { NodeInfo, NodeKind } from "../../store.js";
 import { Button } from "../ui/button.jsx";
@@ -36,12 +37,13 @@ export interface NodeListProps {
   nodes: () => NodeInfo[];
   totalCount: () => number;
   filteredCount: () => number;
+  inactiveCount?: () => number;
   nowMs: () => number;
 }
 
 /** Lista rolável da malha que ocupa todo o espaço vertical disponível. */
 export const NodeList: Component<NodeListProps> = (props) => {
-  const { localState, select, resetFilters } = useStore();
+  const { localState, select, resetFilters, toggleShowInactive } = useStore();
   let listRef: HTMLDivElement | undefined;
 
   // Ao selecionar um nó, rola suavemente para ele na lista
@@ -59,16 +61,42 @@ export const NodeList: Component<NodeListProps> = (props) => {
 
   return (
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Header com contagem */}
-      <div class="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800 bg-slate-900/80 shrink-0">
+      {/* Header com contagem e toggle de inativos */}
+      <div class="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800 bg-slate-900/80 shrink-0 gap-2">
         <Text class="text-xs uppercase font-bold tracking-wider text-slate-400">
           Nós recebidos
         </Text>
-        <span class="rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-slate-300 border border-slate-700/80">
-          {props.filteredCount() === props.totalCount()
-            ? `${props.totalCount()} nós`
-            : `${props.filteredCount()} de ${props.totalCount()} nós`}
-        </span>
+        <div class="flex items-center gap-1.5">
+          <Show when={props.inactiveCount && props.inactiveCount() > 0}>
+            <button
+              type="button"
+              aria-pressed={localState.showInactive}
+              onClick={() => toggleShowInactive()}
+              title={
+                localState.showInactive
+                  ? "Ocultar nós inativos (> 7 dias)"
+                  : "Exibir nós inativos (> 7 dias)"
+              }
+              class={`text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 ${
+                localState.showInactive
+                  ? "bg-amber-950/70 border-amber-500/80 text-amber-200"
+                  : "bg-slate-800/80 hover:bg-slate-700/80 border-slate-700/80 text-slate-400"
+              }`}
+            >
+              <span>
+                {localState.showInactive ? "Ocultar >7d" : "Mostrar >7d"}
+              </span>
+              <span class="rounded-full bg-slate-900/80 px-1 py-0 text-[10px] tabular-nums font-mono text-slate-300">
+                {props.inactiveCount?.() ?? 0}
+              </span>
+            </button>
+          </Show>
+          <span class="rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-slate-300 border border-slate-700/80">
+            {props.filteredCount() === props.totalCount()
+              ? `${props.totalCount()} nós`
+              : `${props.filteredCount()} de ${props.totalCount()} nós`}
+          </span>
+        </div>
       </div>
 
       <Switch>
@@ -78,6 +106,31 @@ export const NodeList: Component<NodeListProps> = (props) => {
             onLimpar={resetFilters}
             podeLimpar={false}
           />
+        </Match>
+        <Match
+          when={
+            props.filteredCount() === 0 &&
+            (props.inactiveCount?.() ?? 0) > 0 &&
+            !localState.showInactive
+          }
+        >
+          <div class="flex flex-col items-start gap-2.5 p-4 text-xs">
+            <Text class="text-slate-300">
+              {props.inactiveCount?.() === 1
+                ? "1 nó recebido está oculto por ter mais de 7 dias sem sinal."
+                : `${props.inactiveCount?.()} nós recebidos estão ocultos por terem mais de 7 dias sem sinal.`}
+            </Text>
+            <button
+              type="button"
+              class="rounded-lg bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 border border-amber-500/80 px-3 py-1.5 text-xs font-semibold transition-colors flex items-center gap-1.5"
+              onClick={() => toggleShowInactive()}
+            >
+              <span>Mostrar nós inativos</span>
+              <span class="rounded-full bg-slate-900/80 px-1.5 py-0.2 text-[10px] font-mono text-slate-300">
+                {props.inactiveCount?.()}
+              </span>
+            </button>
+          </div>
         </Match>
         <Match when={props.filteredCount() === 0}>
           <Vazio status="ready" onLimpar={resetFilters} podeLimpar={true} />
@@ -110,10 +163,10 @@ export const NodeList: Component<NodeListProps> = (props) => {
                     />
                   </Show>
 
-                  {/* Ícone SVG do modelo do dispositivo */}
+                  {/* Ícone SVG (apenas sidebar: barco regional ou placa do rádio) */}
                   <div class="h-9 w-9 shrink-0 rounded-md bg-slate-900 border border-slate-700/70 p-1 flex items-center justify-center">
                     <img
-                      src={deviceModelSvgUrl(n.hwModel)}
+                      src={nodeSidebarSvgUrl(n)}
                       alt=""
                       class="h-full w-full object-contain filter drop-shadow"
                       aria-hidden="true"
@@ -137,6 +190,18 @@ export const NodeList: Component<NodeListProps> = (props) => {
                       <span class="text-slate-300 font-medium">
                         {ROTULO_CATEGORIA.get(nodeKind(n)) ?? ""}
                       </span>
+                      <Show when={hardwareModelLabel(n)}>
+                        {(hw) => (
+                          <>
+                            <span aria-hidden="true" class="text-slate-600">
+                              ·
+                            </span>
+                            <span class="text-[11px] font-medium text-slate-300 bg-slate-800/80 px-1 py-0.5 rounded border border-slate-700/60">
+                              {hw()}
+                            </span>
+                          </>
+                        )}
+                      </Show>
                       <span aria-hidden="true" class="text-slate-600">
                         ·
                       </span>

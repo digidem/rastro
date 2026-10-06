@@ -6,12 +6,13 @@ import { useStore } from "../../hooks/useStore.jsx";
 import {
   type BatteryLevel,
   batteryLevel,
-  deviceModelSvgUrl,
   formatDateTimeJavari,
+  hardwareModelLabel,
   hasConfirmedPosition,
   isAgeWarning,
   nodeAgeLabel,
   nodeKind,
+  nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
 import type { NodeInfo, NodeKind } from "../../store.js";
 
@@ -79,7 +80,7 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
             <div class="flex items-center gap-3">
               <div class="h-10 w-10 shrink-0 rounded-lg bg-slate-900 border border-slate-700/80 p-1 flex items-center justify-center shadow-inner">
                 <img
-                  src={deviceModelSvgUrl(node().hwModel)}
+                  src={nodeSidebarSvgUrl(node())}
                   alt={node().hwModel ?? "Dispositivo"}
                   class="h-full w-full object-contain filter drop-shadow"
                 />
@@ -156,7 +157,8 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
                 {/* Linha 2: Modelo */}
                 <span class="text-slate-400 text-[11px]">Modelo</span>
                 <span class="font-mono text-slate-200 truncate col-span-3">
-                  {textoOuNaoInformado(node().hwModel)}
+                  {hardwareModelLabel(node()) ??
+                    textoOuNaoInformado(node().hwModel)}
                 </span>
 
                 {/* Posição geográfica */}

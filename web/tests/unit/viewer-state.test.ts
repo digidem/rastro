@@ -125,12 +125,22 @@ describe("LocalState — reset de sessão", () => {
   });
 });
 
-describe("LocalState — seleção", () => {
+describe("LocalState — seleção e inativos", () => {
   it("select alterna entre nó e null", () => {
     LocalState.select(42);
     expect(LocalState.localState.selected).toBe(42);
 
     LocalState.select(null);
     expect(LocalState.localState.selected).toBeNull();
+  });
+
+  it("setShowInactive e toggleShowInactive alternam flag de nós inativos", () => {
+    expect(LocalState.localState.showInactive).toBe(false);
+
+    LocalState.toggleShowInactive();
+    expect(LocalState.localState.showInactive).toBe(true);
+
+    LocalState.setShowInactive(false);
+    expect(LocalState.localState.showInactive).toBe(false);
   });
 });

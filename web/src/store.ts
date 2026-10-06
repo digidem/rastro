@@ -3,6 +3,9 @@ import { createStore, reconcile } from "solid-js/store";
 /** Categoria operacional do nó; "unknown" quando o contrato não informa. */
 export type NodeKind = "boat" | "fixed_station" | "handheld" | "unknown";
 
+/** Modo do mapa base de fundo (default: satellite). */
+export type BasemapMode = "satellite" | "osm" | "local";
+
 /** Filtro de categoria: "all" inclui os nós sem categoria conhecida. */
 export type KindFilter = "all" | NodeKind;
 
@@ -75,7 +78,21 @@ interface LocalState {
   chatOpen: boolean;
   unreadChatCount: number;
   hasAlertUnread: boolean;
+  /** Exibir nós inativos com mais de 7 dias (default: false, nós > 7d ficam ocultos). */
+  showInactive: boolean;
+  /** Camada do mapa base ativa: satellite (padrão), osm ou local. */
+  basemapMode: BasemapMode;
 }
+
+const carregarBasemapPadrao = (): BasemapMode => {
+  if (typeof window !== "undefined" && window.localStorage) {
+    const salvo = window.localStorage.getItem("rastro_basemap");
+    if (salvo === "satellite" || salvo === "osm" || salvo === "local") {
+      return salvo;
+    }
+  }
+  return "satellite";
+};
 
 const [localState, setLocalState] = createStore<LocalState>({
   nodes: {},
@@ -93,6 +110,8 @@ const [localState, setLocalState] = createStore<LocalState>({
   chatOpen: false,
   unreadChatCount: 0,
   hasAlertUnread: false,
+  showInactive: false,
+  basemapMode: carregarBasemapPadrao(),
 });
 
 // Substitui a lista inteira (reconcile remove nós que sumiram do latest).
@@ -127,6 +146,18 @@ const setUnreadChatCount = (n: number | ((prev: number) => number)) => {
   setLocalState("unreadChatCount", n);
 };
 const setHasAlertUnread = (b: boolean) => setLocalState("hasAlertUnread", b);
+const setShowInactive = (show: boolean) => setLocalState("showInactive", show);
+const toggleShowInactive = () => setLocalState("showInactive", (v) => !v);
+const setBasemapMode = (mode: BasemapMode) => {
+  setLocalState("basemapMode", mode);
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      window.localStorage.setItem("rastro_basemap", mode);
+    } catch {
+      // Ignora falhas de localStorage (ex: quota ou modo privado estrito)
+    }
+  }
+};
 
 /** Limpa busca e filtros; mantém seleção e status de carga. */
 const resetFilters = () => {
@@ -147,6 +178,7 @@ const resetViewerState = () => {
   setLocalState("chatOpen", false);
   setLocalState("unreadChatCount", 0);
   setLocalState("hasAlertUnread", false);
+  setLocalState("showInactive", false);
 };
 
 const setNodeBearing = (nodeNum: number, bearing: number) => {
@@ -163,6 +195,9 @@ export const LocalState = {
   setQuery,
   setKindFilter,
   setConditionFilter,
+  setShowInactive,
+  toggleShowInactive,
+  setBasemapMode,
   tickNow,
   setLatestStatus,
   setAuth,

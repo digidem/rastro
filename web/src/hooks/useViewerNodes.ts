@@ -1,5 +1,10 @@
 import { createMemo, onCleanup } from "solid-js";
-import { hasConfirmedPosition, matchesFilters } from "../lib/nodes.js";
+import {
+  hasConfirmedPosition,
+  isNodeOlderThan7Days,
+  matchesFilters,
+} from "../lib/nodes.js";
+import type { NodeInfo } from "../store.js";
 import { LocalState } from "../store.js";
 
 /**
@@ -7,6 +12,23 @@ import { LocalState } from "../store.js";
  * sem re-requisitar nada. Nenhum tick move a câmera.
  */
 const TICK_MS = 60_000;
+
+function compareLastSeenDesc(a: NodeInfo, b: NodeInfo): number {
+  const timeA = a.posTime
+    ? Date.parse(a.posTime)
+    : a.age_s ?? a.ageS
+      ? -((a.age_s ?? a.ageS) as number)
+      : 0;
+  const timeB = b.posTime
+    ? Date.parse(b.posTime)
+    : b.age_s ?? b.ageS
+      ? -((b.age_s ?? b.ageS) as number)
+      : 0;
+  if (timeA !== timeB) {
+    return timeB - timeA;
+  }
+  return a.nome.localeCompare(b.nome);
+}
 
 /**
  * Deriva a lista de nós (total, filtrada, selecionada e posicionada) a partir
@@ -20,8 +42,8 @@ export function useViewerNodes() {
   const nowMs = () => LocalState.localState.nowMs;
   const allNodes = createMemo(() => Object.values(LocalState.localState.nodes));
 
-  const filteredNodes = createMemo(() =>
-    allNodes().filter((n) =>
+  const filteredNodes = createMemo(() => {
+    const list = allNodes().filter((n) =>
       matchesFilters(
         n,
         {
@@ -31,8 +53,12 @@ export function useViewerNodes() {
         },
         nowMs(),
       ),
-    ),
-  );
+    );
+    const ativos = LocalState.localState.showInactive
+      ? list
+      : list.filter((n) => !isNodeOlderThan7Days(n, nowMs()));
+    return [...ativos].sort(compareLastSeenDesc);
+  });
 
   const selectedNode = createMemo(() => {
     const sel = LocalState.localState.selected;
@@ -48,6 +74,9 @@ export function useViewerNodes() {
   const positionedCount = createMemo(
     () => allNodes().filter(hasConfirmedPosition).length,
   );
+  const inactiveCount = createMemo(
+    () => allNodes().filter((n) => isNodeOlderThan7Days(n, nowMs())).length,
+  );
 
   return {
     nowMs,
@@ -58,5 +87,6 @@ export function useViewerNodes() {
     totalCount,
     filteredCount,
     positionedCount,
+    inactiveCount,
   };
 }
