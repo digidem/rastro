@@ -23,8 +23,14 @@ export const MapWindow: Component = () => {
   );
 
   // Derivado UMA vez por sessão de tela e compartilhado com os componentes.
-  const { nowMs, filteredNodes, selectedNode, totalCount, filteredCount } =
-    useViewerNodes();
+  const {
+    nowMs,
+    filteredNodes,
+    selectedNode,
+    totalCount,
+    filteredCount,
+    inactiveCount,
+  } = useViewerNodes();
 
   onMount(() => {
     initializeMap();
@@ -66,7 +72,7 @@ export const MapWindow: Component = () => {
 
       {/* Overlay: só os controles capturam ponteiro; o mapa continua arrastável. */}
       <div class="pointer-events-none relative z-10 h-full min-h-0">
-        <div class="pointer-events-auto absolute left-2 top-2">
+        <div class="pointer-events-none absolute inset-x-2 top-2 z-10">
           <MapControls
             sidebarOpen={() => sidebarAberta()}
             onToggleSidebar={() => setSidebarAberta((v) => !v)}
@@ -74,7 +80,7 @@ export const MapWindow: Component = () => {
         </div>
 
         <Show when={sidebarAberta()}>
-          <aside class="pointer-events-auto absolute right-0 top-0 flex h-full w-[368px] max-w-[calc(100vw-1rem)] flex-col p-2">
+          <aside class="pointer-events-auto absolute right-0 top-0 flex h-full w-[368px] max-w-[calc(100vw-1rem)] flex-col p-2 z-20">
             <Root class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-700/80 bg-slate-900/95 shadow-2xl backdrop-blur-md text-slate-100">
               <Header class="border-b border-slate-700/80 px-4 py-2.5 bg-slate-900/90 shrink-0 flex items-center justify-between">
                 <Title class="text-slate-100 font-bold text-sm tracking-wide">
@@ -122,6 +128,7 @@ export const MapWindow: Component = () => {
                   nodes={filteredNodes}
                   totalCount={totalCount}
                   filteredCount={filteredCount}
+                  inactiveCount={inactiveCount}
                   nowMs={nowMs}
                 />
               </div>
