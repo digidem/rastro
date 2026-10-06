@@ -13,6 +13,12 @@
 | 7 | Apagar o app `rastro-setup` no CapRover | ✅ Concluída (2026-10-05, a pedido do dono; volumes preservados) | Mantém a senha de admin do PostgreSQL em texto no ambiente (docs/OPERACAO-caprover.md §3). Só recriar se precisar reprovisionar | 🟠 Média |
 | 8 | Commitar arquivos pendentes (`AGENTS.md`, `TODO.md`, `scripts/rastro_cleanup_legacy_db.py`, `.gitignore`, `.agents/`) | ⏳ Aguardando | Requer aprovação do usuário para commit | 🟡 Baixa |
 | 9 | Provisionamento USB (`tsk` thread `provisao-usb`, #8–#11): commitar script/doc/skill; verificar ingestão de `atalaia-mobile-1` ponta a ponta; escolher nome curto; exercitar ramos não testados do script | ⏳ Aberto | Ver `tsk list --all` | 🟠 Média |
+| 10 | Web App: Fixtures e ambiente local com dados reais do servidor | ✅ Concluída (2026-10-06) | Proxy no `vite.config.ts` apontando para `:8080`, `web/.env.development` com token, fixtures atualizados com baterias 101%, nós > 7d e `age_s` | 🔴 Alta |
+| 11 | Web App: Detecção de nós de barco pelo nome ("barco") e ícone de embarcação | 📝 Planejado | Substring "barco" (case-insensitive/normalizado) determina `boat`, usando `boat.svg` no mapa (rotacionado pelo azimute) e na lista | 🔴 Alta |
+| 12 | Web App: Ordenação da lista por último visto e filtro de nós > 7 dias com toggle | 📝 Planejado | Ordenar decrescente por `posTime`/`last_seen`, esconder por padrão nós inativos (> 7 dias) com botão toggle para exibir | 🔴 Alta |
+| 13 | Web App: Exibição do modelo de hardware e imagem SVG na lista de nós | 📝 Planejado | Mostrar nome/badge do hardware do nó e renderização correta do SVG (barco/hardware) | 🔴 Alta |
+| 14 | Web App: Trilhas contínuas e suaves para nós de barco deselecionados | 📝 Planejado | Desenhar linha de histórico suave/suavemente esmaecida para barcos mesmo quando deselecionados | 🔴 Alta |
+| 15 | Web App: Botão de camadas com Satélite como mapa padrão | 📝 Planejado | Seletor de camada no mapa (Satélite como default, OSM e PMTiles vetorial local) | 🔴 Alta |
 
 > **Arquivos ainda não commitados** (verificados via `git status`): `AGENTS.md`, `TODO.md`, `scripts/rastro_cleanup_legacy_db.py`, `rastro_flow.png`, `rastro_flow_readme.png`.
 
@@ -252,7 +258,13 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 **EM PRODUÇÃO COM NÓS EM CAMPO — contrato congelado: ver AGENTS.md §5 (derivação da senha, segredo, canal EVU, tópicos, ACL, banco). Nada disso muda sem plano de migração aprovado.**
 
 **Pendências (ordem sugerida):**
-- [ ] **Decidir (bloqueia commit das edições da outra sessão)**: senha em 30 vs 32 caracteres (migração com aceitação dupla?), ACL ampliada (`EVU/+`, `PKI/+`, `stat/<id>`) e `RETAIN_AVAILABLE=true`, `broker/captain-definition`. Nada disso foi commitado; os arquivos seguem modificados na árvore de trabalho.
+- [x] Senha MQTT em 30 caracteres, `retain` + `write stat/<id>`, `captain-definition`: commitados (`867b61b`, `8aef48e`, `659b657`) e enviados; produção roda a imagem `img-captain-rastro-broker:6` construída da fonte. Barco e móvel de Ituí em campo funcionando (286 envelopes/24h do barco).
+- [ ] **NUNCA** `deploy-image rastro-broker …:0.8.0` nem instalar pelo template com a tag padrão 0.8.0 (derivam 32 caracteres e trancam o barco). Retorno seguro: `img-captain-rastro-broker:6` (conferir retenção da imagem no CapRover).
+- [ ] Publicar **todas** as imagens como `0.8.1` a partir do tree commitado (tag `v0.8.1`, **não** reaproveitar/enviar `v0.8.0`), rodar `deploy/sim/run.sh`, só então subir o default do template (`$$cap_tag`, repo `caprover-one-click-apps`, commit `aee41cc` ainda NÃO enviado: não enviar antes). Depois trocar o broker de produção em janela planejada, observando a reconexão do barco de Ituí.
+- [ ] **Estreitar o ACL** dos barcos (só o gateway virtual próprio + `write stat/<id>`) após prova em bancada com um Heltec, e **antes** de ligar o 2º barco com downlink; atualizar as checagens 6/7 e a de retain do `deploy/sim/native_rig_test.py` (hoje divergentes) e o teste unitário `test_broker_native_env.py:228`. Dropar `read PKI/+` se não houver admin PKI por MQTT.
+- [ ] Verificar o broker em produção: sha256 de `/rastro/*` no contêiner contra `broker/` local (só leitura) e nomes (não valores) das variáveis do app.
+- [ ] `univaja-lora` sem remoto git (`fee73ba`, `b08dcf5` só locais). Docs/AGENTS/TUTORIAL do 30 caracteres estão na árvore, misturados com o rename EVU de outra sessão, não commitados. Rodar `fleet_sync.py --check` antes de commitar o `fleet_sync.py` modificado.
+- [ ] Web: 1 teste do `pnpm test` falha na árvore atual (trabalho da outra sessão em fixtures/vite); não commitado.
 - [ ] **1º rádio real**: configurar um nó de barco (servidor `137.116.59.230:8883` ou `rastro-broker.javari.guardianconnector.net`, TLS, usuário = id do nó, senha = `python3 scripts/rastro_node_credentials.py --secret <RASTRO_NATIVE_SECRET do app rastro-broker> --node '!id'`, raiz `univaja/mesh`, canal EVU com uplink+downlink, Wi-Fi ligado). Depois conferir `raw_envelopes`/`gateway_status`/`positions` (sem imprimir coordenadas). Ainda NÃO testado com firmware real: envelopes do Heltec V4, fila de 16 mensagens, como o app Meshtastic mostra o remetente «Rastro».
 - [ ] Testes de campo (tarefa 5): escritório→tripulação e tripulação→escritório com humano; Starlink desligada/religada; 5–6 barcos ao mesmo tempo sem vazar mensagem entre rios; barco offline = mensagem expira (TTL).
 - [ ] Sexto barco (Atalaia): só `atx1` (teste) existe no inventário; quando houver `univaja-atalaia-barco-1`, rodar `python3 scripts/rastro_nodes_from_fleet.py --apply`. `cartao-2/3` (kind boat, sem nome da frota) ficaram de fora de propósito.
@@ -274,3 +286,42 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [ ] Texto do chat: mesma política de retenção das posições, ou menor; nunca registrar o conteúdo em logs.
 - [ ] Modelo de dados: texto, NodeInfo, id do pacote, gateway vs remetente, observado vs recebido, outbox do chat, gateways virtuais (6 barcos + cidade), vínculo dispositivo→barco com validade, **estado de energia/bateria por Nó Solar** para os alertas de energia.
 - [ ] Alertas de energia: telemetria de bateria dos Nós Solares (900 s) com limiares por classe e alerta antes do apagão.
+
+---
+
+## Tarefas 10 a 15: Melhorias do Visualizador Web (Frontend SolidJS)
+
+### Tarefa 10: Fixtures e Ambiente Local com Dados Reais do Servidor — ✅ Concluída em 2026-10-06
+- [x] Proxy de desenvolvimento configurado em `web/vite.config.ts` encaminhando `/api` para `http://127.0.0.1:8080` (API FastAPI real em contêiner).
+- [x] Configuração `web/.env.development` com `VITE_API_TOKEN` e `VITE_API_TARGET`.
+- [x] Atualização de `web/src/fixtures/nodesFixture.ts` para mimetizar dados reais:
+  - Baterias conectadas a 5V/USB reportando 101% (ex.: `univaja-curuca-barco-1`, `univaja-itui-barco-1`).
+  - Nós inativos com mais de 7 dias (ex.: `univaja-itui-barco-1` com 8 dias / visto em 2026-09-28 no banco real, `curuca-campo-1` com 9 dias, `jaquirana-campo-1` com 12 dias).
+  - Presença de `age_s` no contrato GeoJSON de `/api/nodes/latest`.
+- [x] Testes unitários atualizados em `web/tests/unit/mock-fixture.test.ts` (14 testes passando).
+
+### Tarefa 11: Detecção de Nós de Barco pelo Nome ("barco") e Ícone de Embarcação
+- [ ] Atualizar lógica em `web/src/lib/nodes.ts` para detectar nós como `kind: "boat"` quando `nome` contiver a palavra "barco" (case-insensitive e normalizado sem acento), mesmo que o backend não envie metadado de `kind`.
+- [ ] Exibir o ícone de barco (`boat-icon` com rotação por azimute) no MapLibre para todos os nós detectados como barco.
+- [ ] Exibir o ícone do barco na lista de nós (`NodeList.tsx`) e a tag de categoria "Barco".
+- [ ] Atualizar testes em `tests/unit/nodes.test.ts`.
+
+### Tarefa 12: Ordenação da Lista por Último Visto e Filtro de Inativos (> 7 Dias) com Toggle
+- [ ] Ordenar a lista de nós por último visto (`posTime` / `last_seen`) em ordem decrescente (mais recentes primeiro; nós sem fix ao final).
+- [ ] Esconder por padrão nós cujo fix mais recente tem mais de 7 dias de idade (`ageS > 7 * 86400`).
+- [ ] Adicionar botão/toggle na interface da lista ("Mostrar inativos (> 7 dias)" ou ícone com contagem) para revelar ou ocultar nós antigos sob demanda.
+
+### Tarefa 13: Exibição do Modelo de Hardware e Imagem SVG na Lista de Nós (Apenas na Sidebar)
+- [ ] Exibir o SVG do dispositivo **exclusivamente na sidebar** (card da lista e inspector), **nunca no mapa** (o mapa usa apenas os marcadores circulares e o ícone de barco).
+- [ ] Exibir o nome textual/badge do modelo de hardware na lista quando disponível (ou inferido via prefixo/tabela).
+- [ ] Garantir que o SVG correto seja renderizado no card de cada nó na lista: `boat.svg` para barcos, SVG do hardware correspondente (`heltec_v4.svg`, `tbeam.svg`, etc.) para outros rádios, com fallback legível para `unknown.svg`.
+
+### Tarefa 14: Trilhas de Barcos: Coletivas quando Nenhum Selecionado, Exclusiva quando Selecionado
+- [ ] Quando **nenhum nó estiver selecionado**: desenhar as trilhas de todos os barcos de forma contínua e suave (linha mais fina/sutil, sem pontos individuais de fix), evitando poluição visual.
+- [ ] Quando **um nó estiver selecionado**: **esconder o caminho de todos os outros nós**, exibindo exclusivamente a trilha do nó selecionado (com destaque em amarelo e marcadores de fix).
+
+### Tarefa 15: Botão de Camadas com Satélite como Mapa Padrão
+- [ ] Adicionar fonte de mapa satélite (ex.: ArcGIS World Imagery) e defini-la como basemap padrão do mapa.
+- [ ] Criar botão/menu de camadas nos controles do mapa (`MapControls.tsx`) permitindo alternar entre Satélite, OpenStreetMap e Basemap Local (PMTiles offline).
+- [ ] Salvar a preferência da camada no store / localStorage.
+
