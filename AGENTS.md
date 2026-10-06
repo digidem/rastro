@@ -80,3 +80,19 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 
 ## 4. Tarefas Pendentes
 Consulte [TODO.md](file:///home/luandro/Dev/digidem/rastro/TODO.md) para pendências imediatas de infraestrutura, manutenção de banco de dados e diagramas visuais.
+
+---
+
+## 5. Produção com nós em campo — CONTRATO CONGELADO (2026-10-06)
+
+Há rádios reais configurados com o que está abaixo. Mudar qualquer item sem um plano de migração aprovado pelo dono **deixa nós em campo sem conexão ou sem decodificar**, e eles só voltam com visita física/USB. Vale também para `../univaja-lora` (os dois repositórios têm esta mesma regra; mantenha-os iguais).
+
+**Congelado (não alterar de forma silenciosa nem "só para testar"):**
+- Derivação da senha MQTT do nó: `base64url(HMAC-SHA256(RASTRO_NATIVE_SECRET, b"node:"+usuario))` sem `=`, truncada em N caracteres (valor atual **commitado: 32**; ver aviso abaixo). Usuário = id do nó (`!xxxxxxxx`). Em `broker/derive.py`, `services/rastro_gateway/native/derive.py`, `scripts/rastro_node_credentials.py` e `../univaja-lora/scripts/provision/modeA/rastro_derive.py` o resultado tem de ser idêntico.
+- `RASTRO_NATIVE_SECRET` (nunca rotacionar sem plano: muda a senha de TODOS os nós), chave/nome do canal EVU, raiz `univaja/mesh`, porta 8883 TLS, formato dos tópicos `<raiz>/2/e/<canal>/<id>`.
+- Id do gateway virtual (`sha256(b"rastro-vgw:"+barco)`), chave do barco `<rio>-<n>` derivada do `long_name`, ACL por nó (cada barco só lê o tópico do próprio gateway virtual; nenhum barco lê o tráfego de outro), `retain` desligado.
+- Esquema do banco: só migrações aditivas e idempotentes; nada de `DROP`/`RENAME`/mudança de tipo em tabelas usadas por ingest/api.
+
+**Como mudar mesmo assim:** (1) plano escrito com impacto por nó e caminho de volta; (2) aprovação do dono; (3) testar em simulação (`deploy/sim`) e com um rádio de bancada; (4) compatibilidade dupla quando possível (ex.: aceitar a senha antiga e a nova no broker durante a transição); (5) só então publicar imagem nova e fazer deploy, um app por vez, conferindo `raw_envelopes`/`gateway_status` depois.
+
+**Aviso — mudança NÃO commitada em andamento (outra sessão):** truncar a senha em **30** caracteres (limite do firmware: campo de 32 bytes com terminador nulo, ou seja, 31 úteis). Isso muda a senha de todo nó já configurado com 32. Antes de commitar: confirmar com `fleet.json`/dono quais rádios já receberam a senha de 32, o que o firmware realmente guardou (truncou em 31?) e se o broker precisa aceitar as duas durante a migração. Mudanças de ACL (`read` em `<raiz>/2/e/EVU/+` e `PKI/+`, `write` em `<raiz>/2/stat/<id>`) e `RASTRO_RETAIN_AVAILABLE=true` também estão pendentes de revisão: a primeira reabre o vazamento entre barcos e a segunda contraria o desenho (retain off).
