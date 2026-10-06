@@ -10,9 +10,11 @@ import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import { bearingDaTrilha } from "./lib/bearing.js";
 import {
   batteryLabel,
-  deviceModelSvgUrl,
+  hardwareModelLabel,
   hasConfirmedPosition,
   isAgeWarning,
+  isBoatNode,
+  isNodeOlderThan7Days,
   matchesFilters,
   nodeAgeLabel,
   nodesGeoJson,
@@ -60,10 +62,12 @@ function limitesDosPontos(
   ];
 }
 
-// Basemap PADRÃO: tiles do OpenStreetMap servidos pela API (/api/osm/…, com token; o
-// navegador não fala com o OSM). Ele já nasce no estilo — nenhuma fonte "que pode
-// falhar" no boot: uma source pmtiles ausente (404) deixava o mapa eternamente
-// "não carregado" (evento load nunca disparava) e os pins nunca apareciam.
+// Basemap PADRÃO: Imagens de satélite (ArcGIS World Imagery).
+const SATELLITE_TILES =
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+// Tiles do OpenStreetMap servidos pela API (/api/osm/…, com token; o
+// navegador não fala com o OSM).
 const OSM_TILES = (): string =>
   `${window.location.origin}/api/osm/{z}/{x}/{y}.png`;
 
@@ -102,21 +106,54 @@ const CAMADAS_PMTILES: LayerSpecification[] = [
   },
 ];
 
-// Se existir um basemap próprio (/tiles/basemap.pmtiles), troca o OSM por ele:
-// funciona offline e sem nenhuma requisição externa.
-function usarBasemapLocal(map: maplibregl) {
-  if (map.getSource("basemap") !== undefined) {
+// Assegura que a fonte e camadas do basemap local (PMTiles) existam no mapa
+function garantirBasemapLocal(map: maplibregl) {
+  if (map.getSource("basemap") === undefined) {
+    map.addSource("basemap", {
+      type: "vector",
+      url: TILES_URL,
+      attribution: "© OpenStreetMap contributors",
+    });
+    for (const camada of CAMADAS_PMTILES) {
+      map.addLayer(camada, "boat-tracks-line");
+    }
+  }
+}
+
+// Aplica a visibilidade do mapa base conforme o modo selecionado
+function aplicarModoBasemap(map: maplibregl, modo: string) {
+  const visSat = modo === "satellite" ? "visible" : "none";
+  const visOsm = modo === "osm" ? "visible" : "none";
+  const visLocal = modo === "local" ? "visible" : "none";
+
+  if (map.getLayer("satellite-base")) {
+    map.setLayoutProperty("satellite-base", "visibility", visSat);
+  }
+  if (map.getLayer("osm-base")) {
+    map.setLayoutProperty("osm-base", "visibility", visOsm);
+  }
+
+  if (modo === "local") {
+    existeBasemapLocal().then((existe) => {
+      if (existe) {
+        garantirBasemapLocal(map);
+        for (const camada of CAMADAS_PMTILES) {
+          if (map.getLayer(camada.id)) {
+            map.setLayoutProperty(camada.id, "visibility", "visible");
+          }
+        }
+      } else {
+        // Fallback para satélite se o arquivo PMTiles não existir localmente
+        LocalState.setBasemapMode("satellite");
+      }
+    });
     return;
   }
-  map.addSource("basemap", {
-    type: "vector",
-    url: TILES_URL,
-    attribution: "© OpenStreetMap contributors",
-  });
   for (const camada of CAMADAS_PMTILES) {
-    map.addLayer(camada, "track-line");
+    if (map.getLayer(camada.id)) {
+      map.setLayoutProperty(camada.id, "visibility", visLocal);
+    }
   }
-  map.setLayoutProperty("osm-base", "visibility", "none");
 }
 
 async function existeBasemapLocal(): Promise<boolean> {
@@ -152,11 +189,18 @@ const EMPTY_FC: FeatureCollectionLike = {
   features: [],
 };
 
-// Estilo inline com o schema planetiler (layers water/landcover/boundary).
+// Estilo inline com satélite padrão e suporte a OSM e PMTiles
 const estilo: StyleSpecification = {
   version: 8,
   glyphs: GLYPHS_URL,
   sources: {
+    satellite: {
+      type: "raster",
+      tiles: [SATELLITE_TILES],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: "Esri, Maxar, Earthstar Geographics, CNES/Airbus DS",
+    },
     osm: {
       type: "raster",
       tiles: [OSM_TILES()],
@@ -164,6 +208,7 @@ const estilo: StyleSpecification = {
       maxzoom: 19,
       attribution: "© OpenStreetMap contributors",
     },
+    "boat-tracks": { type: "geojson", data: EMPTY_FC },
     nodes: { type: "geojson", data: EMPTY_FC },
     track: { type: "geojson", data: EMPTY_FC },
     "track-points": { type: "geojson", data: EMPTY_FC },
@@ -174,7 +219,29 @@ const estilo: StyleSpecification = {
       type: "background",
       paint: { "background-color": "#121b14" },
     },
-    { id: "osm-base", type: "raster", source: "osm" },
+    {
+      id: "satellite-base",
+      type: "raster",
+      source: "satellite",
+      layout: { visibility: "visible" },
+    },
+    {
+      id: "osm-base",
+      type: "raster",
+      source: "osm",
+      layout: { visibility: "none" },
+    },
+    {
+      id: "boat-tracks-line",
+      type: "line",
+      source: "boat-tracks",
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "#38bdf8",
+        "line-width": 1.5,
+        "line-opacity": 0.55,
+      },
+    },
     {
       id: "track-line",
       type: "line",
@@ -348,7 +415,12 @@ const extrairInfoDoPin = (props: Record<string, unknown>): InfoPinPopup => {
 };
 
 const gerarHtmlPopup = (info: InfoPinPopup): string => {
-  const svgUrl = deviceModelSvgUrl(info.hwModel);
+  const rotuloModelo = info.hwModel
+    ? (hardwareModelLabel({
+        nome: info.nome,
+        hwModel: info.hwModel,
+      } as { nome: string; hwModel?: string | null }) ?? info.hwModel)
+    : "Modelo não informado";
   const tagCurta = info.shortName
     ? `<span class="font-semibold text-slate-200">${esc(info.shortName)}</span><span class="text-slate-500">·</span>`
     : "";
@@ -373,30 +445,21 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
   `;
 
   return `
-    <div class="flex items-center gap-3.5 pr-4 text-slate-100 min-w-[260px] max-w-[340px]">
-      <div class="w-20 h-20 shrink-0 rounded-lg bg-slate-950 border border-slate-700/80 p-2 flex items-center justify-center shadow-inner">
-        <img
-          src="${esc(svgUrl)}"
-          alt="${esc(info.hwModel || "Dispositivo")}"
-          class="w-full h-full object-contain filter drop-shadow"
-        />
+    <div class="px-3 py-2 text-slate-100 min-w-[240px] max-w-[320px]">
+      <div class="font-bold text-white text-sm leading-snug truncate" title="${esc(info.nome)}">
+        ${esc(info.nome)}
       </div>
-      <div class="min-w-0 flex-1">
-        <div class="font-bold text-white text-sm leading-snug truncate" title="${esc(info.nome)}">
-          ${esc(info.nome)}
-        </div>
-        <div class="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5">
-          ${tagCurta}
-          <span class="font-mono text-emerald-400 bg-slate-950 px-1 py-0.2 rounded border border-slate-800 text-[10px] font-medium">${esc(info.hex)}</span>
-        </div>
-        <div class="text-[11px] font-medium text-slate-300 mt-1 truncate">
-          ${esc(info.hwModel || "Modelo não informado")}
-        </div>
-        <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
-          ${tagBateria}
-          ${tagIdade}
-          <span>fix: ${esc(dataFixa(info.posTime))}</span>
-        </div>
+      <div class="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5">
+        ${tagCurta}
+        <span class="font-mono text-emerald-400 bg-slate-950 px-1 py-0.2 rounded border border-slate-800 text-[10px] font-medium">${esc(info.hex)}</span>
+      </div>
+      <div class="text-[11px] font-medium text-slate-300 mt-1.5 truncate">
+        ${esc(rotuloModelo)}
+      </div>
+      <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
+        ${tagBateria}
+        ${tagIdade}
+        <span>fix: ${esc(dataFixa(info.posTime))}</span>
       </div>
     </div>
   `;
@@ -455,6 +518,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   );
   const [carregado, setCarregado] = createSignal(false);
   let trackReq = 0; // descarta resposta de trilha de seleção anterior
+  let boatTrackReq = 0; // descarta resposta de trilhas coletivas anterior
   let interagiu = false; // o usuário mexeu no mapa: para de recentralizar sozinho
   let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
@@ -495,10 +559,12 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           registrarIconeBarco(map);
         }
       });
-      // Basemap próprio (offline) tem prioridade sobre o OSM, se o arquivo existir.
+      // Basemap próprio (offline): verifica se o arquivo existe e respeita o modo ativo
       existeBasemapLocal().then((existe) => {
         if (existe) {
-          usarBasemapLocal(map);
+          garantirBasemapLocal(map);
+          const modoAtual = LocalState.localState.basemapMode;
+          aplicarModoBasemap(map, modoAtual);
         }
       });
       // Cursor pointer ao passar o mouse sobre o pin
@@ -777,6 +843,116 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       | undefined;
     lineSrc?.setData(EMPTY_FC);
     pointsSrc?.setData(EMPTY_FC);
+  });
+
+  // Mapa base: reage a mudanças em localState.basemapMode
+  createEffect(() => {
+    const modo = LocalState.localState.basemapMode;
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    aplicarModoBasemap(map, modo);
+  });
+
+  // Trilhas coletivas dos barcos:
+  // - Quando NENHUM nó estiver selecionado (selected === null): exibe as trilhas suaves de todos os barcos.
+  // - Quando ALGUM nó for selecionado (selected !== null): oculta todas as trilhas coletivas (visibilidade = none).
+  createEffect(() => {
+    const sel = LocalState.localState.selected;
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+
+    if (sel !== null) {
+      // Regra 14: Se um nó for selecionado, esconde as trilhas de todos os outros barcos.
+      if (map.getLayer("boat-tracks-line")) {
+        map.setLayoutProperty("boat-tracks-line", "visibility", "none");
+      }
+      return;
+    }
+
+    // Regra 14: Nenhum nó selecionado -> exibe o caminho coletivo e suave dos barcos.
+    if (map.getLayer("boat-tracks-line")) {
+      map.setLayoutProperty("boat-tracks-line", "visibility", "visible");
+    }
+
+    const boatSrc = map.getSource("boat-tracks") as GeoJSONSource | undefined;
+    if (boatSrc === undefined) {
+      return;
+    }
+
+    const todosNos = Object.values(LocalState.localState.nodes);
+    const nowMs = LocalState.localState.nowMs;
+    const showInactive = LocalState.localState.showInactive;
+    const barcos = todosNos.filter((n) => {
+      if (!isBoatNode(n) || !hasConfirmedPosition(n)) {
+        return false;
+      }
+      if (!showInactive && isNodeOlderThan7Days(n, nowMs)) {
+        return false;
+      }
+      return true;
+    });
+
+    if (barcos.length === 0) {
+      boatSrc.setData(EMPTY_FC);
+      return;
+    }
+
+    if (typeof api?.track !== "function") {
+      return;
+    }
+
+    const req = ++boatTrackReq;
+    // Busca as trilhas dos barcos em paralelo e junta em um único FeatureCollection
+    Promise.allSettled(
+      barcos.map((b) => api.track(b.nodeId || String(b.nodeNum))),
+    ).then((resultados) => {
+      // Descarta se uma nova requisição de trilhas coletivas iniciou ou se um nó foi selecionado
+      if (
+        req !== boatTrackReq ||
+        untrack(() => LocalState.localState.selected) !== null
+      ) {
+        return;
+      }
+      const features: Array<{
+        type: "Feature";
+        properties: { nodeNum: number };
+        geometry: { type: "LineString"; coordinates: [number, number][] };
+      }> = [];
+
+      resultados.forEach((res, idx) => {
+        if (res.status === "fulfilled") {
+          const t = res.value;
+          const segments =
+            t.lines && t.lines.length > 0 ? t.lines : t.line ? [t.line] : [];
+          for (const seg of segments) {
+            if (seg.length >= 2) {
+              features.push({
+                type: "Feature",
+                properties: { nodeNum: barcos[idx].nodeNum },
+                geometry: {
+                  type: "LineString",
+                  coordinates: seg,
+                },
+              });
+            }
+          }
+        }
+      });
+
+      boatSrc.setData(
+        features.length === 0
+          ? EMPTY_FC
+          : {
+              type: "FeatureCollection",
+              // biome-ignore lint/suspicious/noExplicitAny: GeoJSON Features compatíveis com MapLibre
+              features: features as any,
+            },
+      );
+    });
   });
 
   return (

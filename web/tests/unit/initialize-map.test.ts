@@ -33,7 +33,7 @@ vi.mock("maplibre-gl", () => {
     constructor(_opts: unknown) {
       this.opts = _opts;
       instancias.push(this);
-      for (const nome of ["nodes", "track", "track-points"]) {
+      for (const nome of ["nodes", "track", "track-points", "boat-tracks"]) {
         this.sources.set(nome, { setData: vi.fn() });
       }
     }
@@ -291,9 +291,9 @@ describe("InitializeMap — popup", () => {
       ],
     });
     expect(popups).toHaveLength(1);
-    expect(popupAberto().html).toContain("/devices/heltec_v4.svg");
+    expect(popupAberto().html).not.toContain("/devices/heltec_v4.svg");
     expect(popupAberto().html).toContain("Base A");
-    expect(popupAberto().html).toContain("HELTEC_V4");
+    expect(popupAberto().html).toContain("Heltec V4");
 
     // Logout: a geração avança e o popup da sessão velha fecha.
     LocalState.bumpPollingGeracao();
@@ -484,5 +484,78 @@ describe("InitializeMap — enquadramento automático", () => {
     LocalState.tickNow(t0 + 13 * 3600 * 1000);
     expect(source?.setData.mock.calls.at(-1)?.[0].features.length).toBe(2);
     expect(m.fitBounds).toHaveBeenCalledTimes(1); // Câmera estável
+  });
+
+  it("alterna visibilidade das camadas de basemap conforme localState.basemapMode", () => {
+    montar({} as DataValue["api"]);
+    const m = mapa();
+
+    // Default é satellite
+    LocalState.setBasemapMode("osm");
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "satellite-base",
+      "visibility",
+      "none",
+    );
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "osm-base",
+      "visibility",
+      "visible",
+    );
+
+    LocalState.setBasemapMode("satellite");
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "satellite-base",
+      "visibility",
+      "visible",
+    );
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "osm-base",
+      "visibility",
+      "none",
+    );
+  });
+
+  it("esconde trilhas de barcos coletivas quando um nó é selecionado (regra 14)", async () => {
+    const trackMock = vi.fn().mockResolvedValue({
+      nodeId: "!00000001",
+      lines: [
+        [
+          [-70.0, -4.0],
+          [-70.1, -4.1],
+        ],
+      ],
+      points: [],
+    });
+    montar({ track: trackMock } as unknown as DataValue["api"]);
+    const m = mapa();
+
+    // Adiciona um nó barco
+    LocalState.setNodes([
+      { ...noEm(1, -70.0, -4.0), kind: "boat" as const, nome: "Barco Solimões" },
+    ]);
+
+    // Sem seleção: boat-tracks visível
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "boat-tracks-line",
+      "visibility",
+      "visible",
+    );
+
+    // Seleciona um nó: esconde boat-tracks-line
+    LocalState.select(1);
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "boat-tracks-line",
+      "visibility",
+      "none",
+    );
+
+    // Desseleciona: volta a exibir boat-tracks-line
+    LocalState.select(null);
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "boat-tracks-line",
+      "visibility",
+      "visible",
+    );
   });
 });
