@@ -90,7 +90,7 @@ canal `PKI` → `Opaque`. Cifra com chave errada produz protobuf inválido → `
 - Métodos novos em `Db`: `store_native(decoded_list) -> counts` (idempotente, uma transação, mesma disciplina de ack que `store_batch`), `purge_expired(now)`, `claim_outbox(limit)`, `mark_outbox(id, status, packet_id=None, error=None)`.
 
 ### WP-C — broker
-- Mantém listener TCP/TLS 8883 + WebSocket opcional. `retain` efetivamente desligado: `retain_available false`.
+- Mantém listener TCP/TLS 8883 + WebSocket opcional. `retain_available true` (necessário para o *last will* retido do firmware em `<raiz>/2/stat/<id>`, que o nó pode escrever; o Rastro nunca publica com retain).
 - Entrypoint: se `RASTRO_ACCOUNTS_FILE` (JSON, montado, fora do repo) existe, `broker/accounts.py` gera `passwd` (mosquitto_passwd
   -U sobre cópia temporária) e `aclfile` completos; sem o arquivo, comportamento antigo (`gateway`/`ingest`).
   Regerar a cada boot = idempotente; troca de senha = editar arquivo + reiniciar (ou SIGHUP).

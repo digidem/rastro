@@ -37,7 +37,7 @@ O broker suporta duas formas de configuração granular de contas e tópicos nat
    Quando aponta para um arquivo JSON (ver `accounts.example.json`), `accounts.py` gera no boot o arquivo de senhas e a ACL nominal com isolamento estrito.
 
 Em ambos os modos nativos:
-- `retain_available false` é ativado para evitar replay de mensagens retidas a novos assinantes.
+- `retain_available true` (padrão; `RASTRO_RETAIN_AVAILABLE=false` desliga): o firmware Meshtastic envia um *last will* retido em `<raiz>/2/stat/<id>` e o Mosquitto 2 recusa a conexão se `retain` estiver indisponível. Nenhum serviço do Rastro publica mensagens retidas; nenhum envelope é retido.
 - Proibição de `%u`; qualquer tópico ou operação não listada é rejeitada por padrão.
 
 

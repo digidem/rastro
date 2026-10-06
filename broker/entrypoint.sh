@@ -225,7 +225,7 @@ if [ -n "${RASTRO_ACCOUNTS_FILE:-}" ]; then
   if ! mosquitto_passwd -U "$RUN/passwd"; then
     erro "mosquitto_passwd falhou ao gerar os hashes de $RUN/passwd (binário ausente?)"
   fi
-  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-false}
+  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-true}
   unset RASTRO_ACCOUNTS_FILE
 elif [ -n "${RASTRO_NATIVE_NODES:-}" ]; then
   # Modo nativo derivado (RASTRO_NATIVE_NODES + RASTRO_NATIVE_SECRET)
@@ -292,7 +292,7 @@ elif [ -n "${RASTRO_NATIVE_NODES:-}" ]; then
   unset RASTRO_MQTT_PASSWORD_OUTBOX
   unset RASTRO_MQTT_PASSWORD_GATEWAY
 
-  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-false}
+  RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-true}
 else
   # Modo legado (gateway/ingest)
   RETAIN_AVAILABLE=${RASTRO_RETAIN_AVAILABLE:-true}
