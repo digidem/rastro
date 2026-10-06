@@ -333,6 +333,16 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
 
     async authEstado() {
       const res = await request("/api/auth/estado", undefined);
+      if (res.status === 404) {
+        // Backend legado ou contêiner de desenvolvimento sem /api/auth/estado:
+        // Se houver devToken configurado ou se a rota não existir, não bloqueia com erro.
+        const temToken = !!opts.getToken?.();
+        return {
+          exigida: !temToken,
+          autenticado: temToken,
+          diasLembrar: 30,
+        };
+      }
       if (!res.ok) {
         throw new Error(`/api/auth/estado: ${res.status}`);
       }

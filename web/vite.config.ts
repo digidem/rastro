@@ -24,7 +24,22 @@ export default defineConfig(({ mode }) => {
       tsconfigPaths({ root: "./" }),
       ...(isMock ? [mockApiPlugin()] : []),
     ],
-    server: { host: process.env.VITE_HOST ?? "127.0.0.1", port: 5173 },
+    server: {
+      host: process.env.VITE_HOST ?? "127.0.0.1",
+      port: 5173,
+      proxy: !isMock
+        ? {
+            "/api": {
+              target:
+                env.VITE_API_TARGET ||
+                process.env.VITE_API_TARGET ||
+                "http://127.0.0.1:8080",
+              changeOrigin: true,
+              secure: false,
+            },
+          }
+        : undefined,
+    },
     build: { target: "esnext" },
     test: {
       environment: "jsdom",

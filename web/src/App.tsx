@@ -154,6 +154,17 @@ const Conteudo: Component = () => {
       setErro("");
       if (!estado.exigida || estado.autenticado) {
         startSession();
+      } else if (
+        import.meta.env.DEV &&
+        typeof import.meta.env.VITE_API_TOKEN === "string" &&
+        import.meta.env.VITE_API_TOKEN.trim() !== ""
+      ) {
+        try {
+          await api.login(import.meta.env.VITE_API_TOKEN, false);
+          startSession();
+        } catch {
+          LocalState.setAuth("login");
+        }
       } else {
         LocalState.setAuth("login");
       }
