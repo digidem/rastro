@@ -94,9 +94,27 @@ describe("FLEET_NODES fixture", () => {
     expect(itq1?.properties.hw_model).toBe("HELTEC_V4");
     expect(itq1?.properties.altitude_m).toBe(82);
     expect(itq1?.properties.sats).toBe(8);
+    expect(itq1?.properties.age_s).toBe(120); // 2 minutos * 60 s
     expect(typeof itq1?.properties.bearing).toBe("number");
     expect(itq1?.properties.bearing).toBeGreaterThan(0);
     expect(itq1?.properties.bearing).toBeLessThan(360);
+  });
+
+  it("mimetiza dados reais com bateria > 100% e nós inativos (> 7 dias)", () => {
+    const list = getMockNodeInfoList(new Date("2026-09-29T21:00:00Z"));
+    // Nós conectados à alimentação externa reportam bateria 101%
+    const ccb1 = list.find((n) => n.nodeId === "!a35a8478");
+    expect(ccb1?.battery).toBe(101);
+
+    const itb1 = list.find((n) => n.nodeId === "!1ba5b830");
+    expect(itb1?.battery).toBe(101);
+
+    // Nós com mais de 7 dias (7 * 86400 = 604800 s)
+    const inativosMaisDe7Dias = list.filter(
+      (n) => n.ageS !== null && n.ageS !== undefined && n.ageS > 7 * 86400,
+    );
+    expect(inativosMaisDe7Dias.length).toBeGreaterThanOrEqual(3);
+    expect(inativosMaisDe7Dias.map((n) => n.nodeId)).toContain("!1ba5b830");
   });
 
   it("getTrackGeoJson gera LineString e Points ordenados cronologicamente", () => {

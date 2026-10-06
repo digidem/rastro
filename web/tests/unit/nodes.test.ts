@@ -6,13 +6,17 @@ import {
   fixAgeLabel,
   formatAgeFromSeconds,
   formatDateTimeJavari,
+  hardwareModelLabel,
   hasConfirmedPosition,
   isAgeWarning,
+  isBoatNode,
   isFixStale,
+  isNodeOlderThan7Days,
   matchesFilters,
   matchesQuery,
   nodeAgeLabel,
   nodeKind,
+  nodeSidebarSvgUrl,
   nodesGeoJson,
 } from "../../src/lib/nodes.js";
 import type { NodeInfo } from "../../src/store.js";
@@ -94,9 +98,45 @@ describe("nodeKind", () => {
     expect(nodeKind(no({ kind: "handheld" }))).toBe("handheld");
   });
 
-  it("sem metadado, é 'unknown' (nunca um palpite pelo nome)", () => {
-    expect(nodeKind(no())).toBe("unknown");
-    expect(nodeKind(no({ nome: "barco-1" }))).toBe("unknown");
+  it("detecta 'boat' quando o nome contém 'barco' (case-insensitive e sem acentos)", () => {
+    expect(nodeKind(no({ nome: "barco-1" }))).toBe("boat");
+    expect(nodeKind(no({ nome: "univaja-curuca-barco-1" }))).toBe("boat");
+    expect(nodeKind(no({ nome: "BARCO DE APOIO" }))).toBe("boat");
+  });
+
+  it("sem metadado e sem 'barco' no nome, é 'unknown'", () => {
+    expect(nodeKind(no({ nome: "Base Curuçá" }))).toBe("unknown");
+    expect(nodeKind(no({ nome: "Meshtastic 1234" }))).toBe("unknown");
+  });
+});
+
+describe("isBoatNode", () => {
+  it("retorna true para kind boat ou nome contendo barco", () => {
+    expect(isBoatNode(no({ kind: "boat", nome: "Qualquer" }))).toBe(true);
+    expect(isBoatNode(no({ nome: "univaja-itui-barco-1" }))).toBe(true);
+    expect(isBoatNode(no({ nome: "Base Principal" }))).toBe(false);
+  });
+});
+
+describe("hardwareModelLabel e nodeSidebarSvgUrl", () => {
+  it("nodeSidebarSvgUrl retorna boat.svg para barcos e placa de hardware para outros nós", () => {
+    expect(nodeSidebarSvgUrl(no({ nome: "univaja-itui-barco-1", hwModel: "HELTEC_V4" }))).toBe(
+      "/devices/boat.svg",
+    );
+    expect(nodeSidebarSvgUrl(no({ nome: "escritorio-fixo-1", hwModel: "TBEAM" }))).toBe(
+      "/devices/tbeam.svg",
+    );
+    expect(nodeSidebarSvgUrl(no({ nome: "desconhecido", hwModel: null }))).toBe(
+      "/devices/unknown.svg",
+    );
+  });
+
+  it("hardwareModelLabel formata e infere modelos conhecidos", () => {
+    expect(hardwareModelLabel(no({ hwModel: "HELTEC_V4" }))).toBe("Heltec V4");
+    expect(hardwareModelLabel(no({ hwModel: "TRACKER_T1000_E" }))).toBe("T1000-E");
+    expect(hardwareModelLabel(no({ hwModel: null, nome: "univaja-cartao-1" }))).toBe("T1000-E");
+    expect(hardwareModelLabel(no({ hwModel: null, nome: "heltec-v4-itq1" }))).toBe("Heltec V4");
+    expect(hardwareModelLabel(no({ hwModel: null, nome: "estacao-sem-modelo" }))).toBeNull();
   });
 });
 
@@ -110,6 +150,21 @@ describe("isFixStale", () => {
   it("timestamp ausente/inválido nunca é 'antigo'", () => {
     expect(isFixStale(null, NOW)).toBe(false);
     expect(isFixStale("quebrado", NOW)).toBe(false);
+  });
+});
+
+describe("isNodeOlderThan7Days", () => {
+  it("detecta nós com mais de 7 dias usando age_s", () => {
+    expect(isNodeOlderThan7Days({ age_s: 7 * 86400 + 1 }, NOW)).toBe(true);
+    expect(isNodeOlderThan7Days({ age_s: 7 * 86400 - 10 }, NOW)).toBe(false);
+  });
+
+  it("detecta nós com mais de 7 dias usando posTime", () => {
+    const oitoDiasAtras = new Date(NOW - 8 * 86400 * 1000).toISOString();
+    const tresDiasAtras = new Date(NOW - 3 * 86400 * 1000).toISOString();
+    expect(isNodeOlderThan7Days({ posTime: oitoDiasAtras }, NOW)).toBe(true);
+    expect(isNodeOlderThan7Days({ posTime: tresDiasAtras }, NOW)).toBe(false);
+    expect(isNodeOlderThan7Days({ posTime: null }, NOW)).toBe(false);
   });
 });
 

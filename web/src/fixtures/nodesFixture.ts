@@ -110,7 +110,7 @@ export const FLEET_NODES: MockNodeDefinition[] = [
     shortName: "ccb1",
     kind: "boat",
     hwModel: "HELTEC_V4",
-    battery: 76,
+    battery: 101,
     lon: -71.215,
     lat: -4.952,
     altitudeM: 95,
@@ -140,19 +140,19 @@ export const FLEET_NODES: MockNodeDefinition[] = [
     shortName: "itb1",
     kind: "boat",
     hwModel: "HELTEC_V4",
-    battery: 82,
+    battery: 101,
     lon: -70.521,
     lat: -4.815,
     altitudeM: 88,
     sats: 8,
     timeSource: "device",
-    minutesAgo: 12,
+    minutesAgo: 11520, // ~8 dias atrás (> 7 dias, dados reais da bancada)
     trackPoints: [
-      { lon: -70.38, lat: -4.62, altitudeM: 85, sats: 7, minutesAgo: 210 },
-      { lon: -70.42, lat: -4.68, altitudeM: 86, sats: 8, minutesAgo: 160 },
-      { lon: -70.47, lat: -4.74, altitudeM: 87, sats: 8, minutesAgo: 105 },
-      { lon: -70.505, lat: -4.79, altitudeM: 88, sats: 8, minutesAgo: 50 },
-      { lon: -70.521, lat: -4.815, altitudeM: 88, sats: 8, minutesAgo: 12 },
+      { lon: -70.38, lat: -4.62, altitudeM: 85, sats: 7, minutesAgo: 11720 },
+      { lon: -70.42, lat: -4.68, altitudeM: 86, sats: 8, minutesAgo: 11670 },
+      { lon: -70.47, lat: -4.74, altitudeM: 87, sats: 8, minutesAgo: 11615 },
+      { lon: -70.505, lat: -4.79, altitudeM: 88, sats: 8, minutesAgo: 11560 },
+      { lon: -70.521, lat: -4.815, altitudeM: 88, sats: 8, minutesAgo: 11520 },
     ],
     telemetry: {
       batteryLevel: 82,
@@ -391,11 +391,11 @@ export const FLEET_NODES: MockNodeDefinition[] = [
     altitudeM: 98,
     sats: 7,
     timeSource: "device",
-    minutesAgo: 25,
+    minutesAgo: 12960, // 9 dias atrás
     trackPoints: [
-      { lon: -71.248, lat: -5.021, altitudeM: 98, sats: 7, minutesAgo: 240 },
-      { lon: -71.248, lat: -5.021, altitudeM: 98, sats: 7, minutesAgo: 120 },
-      { lon: -71.248, lat: -5.021, altitudeM: 98, sats: 7, minutesAgo: 25 },
+      { lon: -71.248, lat: -5.021, altitudeM: 98, sats: 7, minutesAgo: 13200 },
+      { lon: -71.248, lat: -5.021, altitudeM: 98, sats: 7, minutesAgo: 13080 },
+      { lon: -71.248, lat: -5.021, altitudeM: 98, sats: 7, minutesAgo: 12960 },
     ],
     telemetry: {
       batteryLevel: 90,
@@ -447,11 +447,11 @@ export const FLEET_NODES: MockNodeDefinition[] = [
     altitudeM: 115,
     sats: 7,
     timeSource: "device",
-    minutesAgo: 40,
+    minutesAgo: 17280, // 12 dias atrás
     trackPoints: [
-      { lon: -72.085, lat: -5.71, altitudeM: 115, sats: 7, minutesAgo: 300 },
-      { lon: -72.085, lat: -5.71, altitudeM: 115, sats: 7, minutesAgo: 150 },
-      { lon: -72.085, lat: -5.71, altitudeM: 115, sats: 7, minutesAgo: 40 },
+      { lon: -72.085, lat: -5.71, altitudeM: 115, sats: 7, minutesAgo: 17500 },
+      { lon: -72.085, lat: -5.71, altitudeM: 115, sats: 7, minutesAgo: 17350 },
+      { lon: -72.085, lat: -5.71, altitudeM: 115, sats: 7, minutesAgo: 17280 },
     ],
     telemetry: {
       batteryLevel: 89,
@@ -536,6 +536,7 @@ function mockNodeBearing(d: MockNodeDefinition): number | null {
 export function getMockNodeInfoList(now = new Date()): NodeInfo[] {
   return FLEET_NODES.map((d) => {
     const posTime = relativeIso(d.minutesAgo, now);
+    const ageSeconds = d.minutesAgo !== null ? d.minutesAgo * 60 : null;
     return {
       nodeNum: d.nodeNum,
       nodeId: d.nodeId,
@@ -552,6 +553,8 @@ export function getMockNodeInfoList(now = new Date()): NodeInfo[] {
       timeSource: d.timeSource,
       receivedAt: posTime,
       bearing: mockNodeBearing(d),
+      ageS: ageSeconds,
+      age_s: ageSeconds,
     };
   });
 }
@@ -622,6 +625,7 @@ export function getLatestGeoJson(now = new Date()): {
         ["battery", d.battery],
         ["received_at", posTime],
         ["bearing", mockNodeBearing(d)],
+        ["age_s", d.minutesAgo !== null ? d.minutesAgo * 60 : null],
       ),
     };
   });

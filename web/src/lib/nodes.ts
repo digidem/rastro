@@ -77,8 +77,29 @@ export function matchesQuery(node: NodeInfo, query: string): boolean {
   return campos.some((c) => c !== "" && c.includes(semBang));
 }
 
-/** Categoria efetiva: ausência de metadado é "unknown", nunca um palpite. */
+/**
+ * Detecta se o nó é um barco:
+ * - kind === "boat"
+ * - ou se o nome contiver "barco" (normalizado sem acentos, case-insensitive).
+ */
+export function isBoatNode(node: NodeInfo): boolean {
+  if (node.kind === "boat") {
+    return true;
+  }
+  if (
+    typeof node.nome === "string" &&
+    normalizar(node.nome).includes("barco")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Categoria efetiva: detecta "boat" pelo nome ou kind; senão usa kind ou "unknown". */
 export function nodeKind(node: NodeInfo): NodeKind {
+  if (isBoatNode(node)) {
+    return "boat";
+  }
   return node.kind ?? "unknown";
 }
 
@@ -92,6 +113,33 @@ export function isFixStale(posTime: string | null, nowMs: number): boolean {
     return false;
   }
   return nowMs - t > LIMITE_FIX_ANTIGO_MS;
+}
+
+const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Retorna true se o nó tem mais de 7 dias sem fix/comunicação.
+ * Prioriza ageS/age_s se presente, senão compara posTime com nowMs.
+ */
+export function isNodeOlderThan7Days(
+  node: {
+    ageS?: number | null;
+    age_s?: number | null;
+    posTime?: string | null;
+  },
+  nowMs: number,
+): boolean {
+  const ageSeconds = node.ageS ?? node.age_s;
+  if (typeof ageSeconds === "number" && Number.isFinite(ageSeconds)) {
+    return ageSeconds > 7 * 86400;
+  }
+  if (node.posTime) {
+    const t = Date.parse(node.posTime);
+    if (!Number.isNaN(t)) {
+      return nowMs - t > SETE_DIAS_MS;
+    }
+  }
+  return false;
 }
 
 export interface ViewerFilters {
@@ -339,4 +387,74 @@ export function deviceModelSvgUrl(hwModel: string | null | undefined): string {
     return "/devices/t-echo.svg";
   }
   return "/devices/unknown.svg";
+}
+
+function inferHardwareFromName(nome?: string): string | null {
+  if (!nome) {
+    return null;
+  }
+  const n = nome.toLowerCase();
+  if (n.includes("heltec-v4") || n.includes("heltec_v4")) {
+    return "HELTEC_V4";
+  }
+  if (n.includes("heltec-v3") || n.includes("heltec_v3")) {
+    return "HELTEC_V3";
+  }
+  if (n.includes("tbeam") || n.includes("t-beam")) {
+    return "TBEAM";
+  }
+  if (n.includes("t1000") || n.includes("cartao")) {
+    return "TRACKER_T1000_E";
+  }
+  return null;
+}
+
+/**
+ * Rótulo amigável do modelo de hardware para exibição textual na sidebar.
+ * Normaliza nomes técnicos e infere do nome do nó quando hwModel estiver ausente.
+ */
+export function hardwareModelLabel(node: NodeInfo): string | null {
+  const raw = node.hwModel || inferHardwareFromName(node.nome);
+  if (!raw) {
+    return null;
+  }
+  const m = raw.toUpperCase().replace(/[- ]/g, "_");
+  if (m.includes("HELTEC_V4")) {
+    return "Heltec V4";
+  }
+  if (m.includes("HELTEC_V3")) {
+    return "Heltec V3";
+  }
+  if (m.includes("HELTEC")) {
+    return "Heltec";
+  }
+  if (m.includes("TBEAM") || m.includes("T_BEAM")) {
+    return "T-Beam";
+  }
+  if (m.includes("T1000")) {
+    return "T1000-E";
+  }
+  if (m.includes("WISMESH_TAG") || m.includes("RAK_TAG")) {
+    return "WisMesh Tag";
+  }
+  if (m.includes("RAK4631") || m.includes("RAK_4631")) {
+    return "RAK4631";
+  }
+  if (m.includes("ECHO")) {
+    return "T-Echo";
+  }
+  return raw;
+}
+
+/**
+ * SVG do nó exibido exclusivamente na sidebar (cards da lista e inspector), nunca no mapa.
+ * Se for barco, usa o SVG da embarcação regional (/devices/boat.svg);
+ * senão mapeia para a placa de hardware ou /devices/unknown.svg.
+ */
+export function nodeSidebarSvgUrl(node: NodeInfo): string {
+  if (isBoatNode(node)) {
+    return "/devices/boat.svg";
+  }
+  const inferred = node.hwModel || inferHardwareFromName(node.nome);
+  return deviceModelSvgUrl(inferred);
 }
