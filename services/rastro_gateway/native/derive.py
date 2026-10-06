@@ -32,7 +32,7 @@ def node_password(secret: str, user: str) -> str:
     Nunca logar o resultado: é uma senha.
     """
     digest = hmac.new(secret.encode(), b"node:" + user.encode(), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode().rstrip("=")[:32]
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")[:30]
 
 
 def parse_nodes(valor: str) -> list[tuple[str, str]]:

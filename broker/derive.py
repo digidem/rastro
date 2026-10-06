@@ -45,7 +45,7 @@ def derive_node_password(secret: str, user_id: str) -> str:
     """Deriva a senha do nó a partir do segredo mestre e do ID do usuário.
 
     Algoritmo:
-      base64.urlsafe_b64encode(hmac.new(secret.encode(), b"node:" + u.encode(), sha256).digest()).decode().rstrip("=")[:32]
+      base64.urlsafe_b64encode(hmac.new(secret.encode(), b"node:" + u.encode(), sha256).digest()).decode().rstrip("=")[:30]
     """
     if not isinstance(secret, str) or not secret:
         raise ValueError("O segredo não pode ser vazio")
@@ -53,7 +53,7 @@ def derive_node_password(secret: str, user_id: str) -> str:
         raise ValueError("Identificador de nó não pode ser vazio")
     u = user_id.strip()
     raw = hmac.new(secret.encode("utf-8"), b"node:" + u.encode("utf-8"), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")[:32]
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")[:30]
 
 
 # Aliases compartilhados com services/rastro_gateway/native/derive.py

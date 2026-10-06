@@ -74,39 +74,39 @@ def test_golden_vectors_virtual_gateway():
 def test_golden_vectors_node_password():
     """Valida derivação de senhas de nós com HMAC-SHA256 e Base64 urlsafe."""
     # Algoritmo:
-    # base64.urlsafe_b64encode(hmac.new(secret.encode(), b"node:" + u.encode(), sha256).digest()).decode().rstrip("=")[:32]
+    # base64.urlsafe_b64encode(hmac.new(secret.encode(), b"node:" + u.encode(), sha256).digest()).decode().rstrip("=")[:30]
     # Vetores idênticos aos de test_native_derive.py (H1):
     h1_golden = [
-        ("teste-secreto-h1", "!a0000001", "eIugm-YbMQVV6CCvwqSrIkRH4rJlVq2y"),
-        ("teste-secreto-h1", "!a0000002", "SgArIutL4UOvk5TWmbDhdexP-M0RuiMj"),
+        ("teste-secreto-h1", "!a0000001", "eIugm-YbMQVV6CCvwqSrIkRH4rJlVq"),
+        ("teste-secreto-h1", "!a0000002", "SgArIutL4UOvk5TWmbDhdexP-M0Rui"),
     ]
     for segredo, usuario, esperado in h1_golden:
         pw = derive_mod.derive_node_password(segredo, usuario)
         assert pw == esperado
-        assert len(pw) == 32
+        assert len(pw) == 30
 
     secret1 = "chave-secreta-para-testes-com-mais-de-24-caracteres"
     golden1 = [
-        ("!a0000001", "3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dnG_"),
-        ("!a0000002", "ai82R-XDp37IaEsOWHxOQB3UcZtTZOEq"),
-        ("!b1234567", "yJoscdxrQWqpaxKPiA7g0SKvwni9WETc"),
+        ("!a0000001", "3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dn"),
+        ("!a0000002", "ai82R-XDp37IaEsOWHxOQB3UcZtTZO"),
+        ("!b1234567", "yJoscdxrQWqpaxKPiA7g0SKvwni9WE"),
     ]
     for user, exp_pw in golden1:
         pw = derive_mod.derive_node_password(secret1, user)
         assert pw == exp_pw
-        assert len(pw) == 32
+        assert len(pw) == 30
         assert ":" not in pw
         assert "\n" not in pw
 
     secret2 = "secret-super-secreta-para-testes-24ch"
     golden2 = [
-        ("!a0000001", "l12GH5waJ2ndMTDbAxRuPDn1W12utbXx"),
-        ("!a0000002", "KyZwh9fBvwzEPge5tkmWhZPed5bKdDWs"),
+        ("!a0000001", "l12GH5waJ2ndMTDbAxRuPDn1W12utb"),
+        ("!a0000002", "KyZwh9fBvwzEPge5tkmWhZPed5bKdD"),
     ]
     for user, exp_pw in golden2:
         pw = derive_mod.derive_node_password(secret2, user)
         assert pw == exp_pw
-        assert len(pw) == 32
+        assert len(pw) == 30
 
 
 # ============================================================================
@@ -184,12 +184,12 @@ def test_build_accounts_from_env_e_geracao_arquivos():
     assert len(accounts["nodes"]) == 2
     assert accounts["nodes"][0] == {
         "user": "!a0000001",
-        "password": "3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dnG_",
+        "password": "3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dn",
         "boat": "b1",
     }
     assert accounts["nodes"][1] == {
         "user": "!a0000002",
-        "password": "ai82R-XDp37IaEsOWHxOQB3UcZtTZOEq",
+        "password": "ai82R-XDp37IaEsOWHxOQB3UcZtTZO",
         "boat": "b2",
     }
 
@@ -198,8 +198,8 @@ def test_build_accounts_from_env_e_geracao_arquivos():
     assert "ingest:password-ingest-min24chars\n" in passwd
     assert "outbox:password-outbox-min24chars\n" in passwd
     assert "gateway:password-gateway-min24chars\n" in passwd
-    assert "!a0000001:3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dnG_\n" in passwd
-    assert "!a0000002:ai82R-XDp37IaEsOWHxOQB3UcZtTZOEq\n" in passwd
+    assert "!a0000001:3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dn\n" in passwd
+    assert "!a0000002:ai82R-XDp37IaEsOWHxOQB3UcZtTZO\n" in passwd
 
     # Valida ACL
     acl = accounts_mod.generate_acl(accounts)
@@ -304,7 +304,7 @@ def test_cli_rastro_node_credentials():
         text=True,
         check=True,
     )
-    assert "!a0000001 3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dnG_" in res.stdout
+    assert "!a0000001 3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dn" in res.stdout
     assert "AVISO:" in res.stderr
     assert "secretas" in res.stderr
 
@@ -322,8 +322,8 @@ def test_cli_rastro_node_credentials():
         text=True,
         check=True,
     )
-    assert "!a0000001 3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dnG_" in res2.stdout
-    assert "!a0000002 ai82R-XDp37IaEsOWHxOQB3UcZtTZOEq" in res2.stdout
+    assert "!a0000001 3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dn" in res2.stdout
+    assert "!a0000002 ai82R-XDp37IaEsOWHxOQB3UcZtTZO" in res2.stdout
 
     # Teste via variável de ambiente RASTRO_NATIVE_SECRET
     env = {**os.environ, "RASTRO_NATIVE_SECRET": secret}
@@ -339,7 +339,7 @@ def test_cli_rastro_node_credentials():
         text=True,
         check=True,
     )
-    assert "!a0000001 3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dnG_" in res3.stdout
+    assert "!a0000001 3l2iFDbzOJ5tq9bnS_4zk8YQ6DK9dn" in res3.stdout
 
     # Rejeição de segredo curto
     res_bad = subprocess.run(

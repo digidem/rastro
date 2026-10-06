@@ -19,8 +19,8 @@ VGW_VETORES = [
 
 # --- Vetores dourados: node_password(secret, user) -> senha (NUNCA logar em produção) ---
 PW_VETORES = [
-    ("teste-secreto-h1", "!a0000001", "eIugm-YbMQVV6CCvwqSrIkRH4rJlVq2y"),
-    ("teste-secreto-h1", "!a0000002", "SgArIutL4UOvk5TWmbDhdexP-M0RuiMj"),
+    ("teste-secreto-h1", "!a0000001", "eIugm-YbMQVV6CCvwqSrIkRH4rJlVq"),
+    ("teste-secreto-h1", "!a0000002", "SgArIutL4UOvk5TWmbDhdexP-M0Rui"),
 ]
 
 
