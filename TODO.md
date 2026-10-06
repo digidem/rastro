@@ -14,11 +14,11 @@
 | 8 | Commitar arquivos pendentes (`AGENTS.md`, `TODO.md`, `scripts/rastro_cleanup_legacy_db.py`, `.gitignore`, `.agents/`) | ⏳ Aguardando | Requer aprovação do usuário para commit | 🟡 Baixa |
 | 9 | Provisionamento USB (`tsk` thread `provisao-usb`, #8–#11): commitar script/doc/skill; verificar ingestão de `atalaia-mobile-1` ponta a ponta; escolher nome curto; exercitar ramos não testados do script | ⏳ Aberto | Ver `tsk list --all` | 🟠 Média |
 | 10 | Web App: Fixtures e ambiente local com dados reais do servidor | ✅ Concluída (2026-10-06) | Proxy no `vite.config.ts` apontando para `:8080`, `web/.env.development` com token, fixtures atualizados com baterias 101%, nós > 7d e `age_s` | 🔴 Alta |
-| 11 | Web App: Detecção de nós de barco pelo nome ("barco") e ícone de embarcação | 📝 Planejado | Substring "barco" (case-insensitive/normalizado) determina `boat`, usando `boat.svg` no mapa (rotacionado pelo azimute) e na lista | 🔴 Alta |
-| 12 | Web App: Ordenação da lista por último visto e filtro de nós > 7 dias com toggle | 📝 Planejado | Ordenar decrescente por `posTime`/`last_seen`, esconder por padrão nós inativos (> 7 dias) com botão toggle para exibir | 🔴 Alta |
-| 13 | Web App: Exibição do modelo de hardware e imagem SVG na lista de nós | 📝 Planejado | Mostrar nome/badge do hardware do nó e renderização correta do SVG (barco/hardware) | 🔴 Alta |
-| 14 | Web App: Trilhas contínuas e suaves para nós de barco deselecionados | 📝 Planejado | Desenhar linha de histórico suave/suavemente esmaecida para barcos mesmo quando deselecionados | 🔴 Alta |
-| 15 | Web App: Botão de camadas com Satélite como mapa padrão | 📝 Planejado | Seletor de camada no mapa (Satélite como default, OSM e PMTiles vetorial local) | 🔴 Alta |
+| 11 | Web App: Detecção de nós de barco pelo nome ("barco") e ícone de embarcação | ✅ Concluída (2026-10-06) | Substring "barco" (case-insensitive/normalizado) determina `boat`, usando `boat.svg` no mapa (rotacionado pelo azimute) e na lista | 🔴 Alta |
+| 12 | Web App: Ordenação da lista por último visto e filtro de nós > 7 dias com toggle | ✅ Concluída (2026-10-06) | Ordenar decrescente por `posTime`/`last_seen`, esconder por padrão nós inativos (> 7 dias) com botão toggle para exibir | 🔴 Alta |
+| 13 | Web App: Exibição do modelo de hardware e imagem SVG na lista de nós (apenas na sidebar) | ✅ Concluída (2026-10-06) | Mostrar nome/badge do hardware do nó e SVG exclusivo na sidebar (barco/hardware); mapa sem SVG de hardware | 🔴 Alta |
+| 14 | Web App: Trilhas contínuas e suaves para nós de barco deselecionados | ✅ Concluída (2026-10-06) | Trilhas coletivas suaves de barcos quando deselecionado; ao selecionar um nó, esconde todos os outros caminhos | 🔴 Alta |
+| 15 | Web App: Botão de camadas com Satélite como mapa padrão | ✅ Concluída (2026-10-06) | Seletor de camada no mapa (Satélite como default, OSM e PMTiles vetorial local) com persistência em localStorage | 🔴 Alta |
 
 > **Arquivos ainda não commitados** (verificados via `git status`): `AGENTS.md`, `TODO.md`, `scripts/rastro_cleanup_legacy_db.py`, `rastro_flow.png`, `rastro_flow_readme.png`.
 
@@ -260,7 +260,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 **Pendências (ordem sugerida):**
 - [x] Senha MQTT em 30 caracteres, `retain` + `write stat/<id>`, `captain-definition`: commitados (`867b61b`, `8aef48e`, `659b657`) e enviados; produção roda a imagem `img-captain-rastro-broker:6` construída da fonte. Barco e móvel de Ituí em campo funcionando (286 envelopes/24h do barco).
 - [ ] **NUNCA** `deploy-image rastro-broker …:0.8.0` nem instalar pelo template com a tag padrão 0.8.0 (derivam 32 caracteres e trancam o barco). Retorno seguro: `img-captain-rastro-broker:6` (conferir retenção da imagem no CapRover).
-- [ ] Publicar **todas** as imagens como `0.8.1` a partir do tree commitado (tag `v0.8.1`, **não** reaproveitar/enviar `v0.8.0`), rodar `deploy/sim/run.sh`, só então subir o default do template (`$$cap_tag`, repo `caprover-one-click-apps`, commit `aee41cc` ainda NÃO enviado: não enviar antes). Depois trocar o broker de produção em janela planejada, observando a reconexão do barco de Ituí.
+- [ ] Publicar **todas** as imagens como `0.8.1` a partir do HEAD commitado: **`deploy/sim/run.sh` já rodou em 2026-10-06 sobre o HEAD `5018dd8`: PASS (50)**; o `docker push` foi bloqueado pelo classificador → o dono roda `! bash scripts/rastro_release.sh 0.8.1 --push` (constrói do `git archive HEAD`, recusa tag já existente, não envia tag git). Depois: conferir `docker manifest inspect communityfirst/rastro-broker:0.8.1`, subir o default do template (`$$cap_tag` → 0.8.1; repo `caprover-one-click-apps`, commit `aee41cc` ainda NÃO enviado) e só então trocar o broker de produção em janela planejada (`deploy-image rastro-broker communityfirst/rastro-broker:0.8.1`, observando a reconexão do barco de Ituí; retorno: `img-captain-rastro-broker:6`). Imagem 0.8.1 reproduz o broker em produção (ACL ampla); o ACL estreito vira 0.8.2 após a bancada.
 - [ ] **Estreitar o ACL** dos barcos (só o gateway virtual próprio + `write stat/<id>`) após prova em bancada com um Heltec, e **antes** de ligar o 2º barco com downlink; atualizar as checagens 6/7 e a de retain do `deploy/sim/native_rig_test.py` (hoje divergentes) e o teste unitário `test_broker_native_env.py:228`. Dropar `read PKI/+` se não houver admin PKI por MQTT.
 - [ ] Verificar o broker em produção: sha256 de `/rastro/*` no contêiner contra `broker/` local (só leitura) e nomes (não valores) das variáveis do app.
 - [ ] `univaja-lora` sem remoto git (`fee73ba`, `b08dcf5` só locais). Docs/AGENTS/TUTORIAL do 30 caracteres estão na árvore, misturados com o rename EVU de outra sessão, não commitados. Rodar `fleet_sync.py --check` antes de commitar o `fleet_sync.py` modificado.
@@ -300,28 +300,28 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   - Presença de `age_s` no contrato GeoJSON de `/api/nodes/latest`.
 - [x] Testes unitários atualizados em `web/tests/unit/mock-fixture.test.ts` (14 testes passando).
 
-### Tarefa 11: Detecção de Nós de Barco pelo Nome ("barco") e Ícone de Embarcação
-- [ ] Atualizar lógica em `web/src/lib/nodes.ts` para detectar nós como `kind: "boat"` quando `nome` contiver a palavra "barco" (case-insensitive e normalizado sem acento), mesmo que o backend não envie metadado de `kind`.
-- [ ] Exibir o ícone de barco (`boat-icon` com rotação por azimute) no MapLibre para todos os nós detectados como barco.
-- [ ] Exibir o ícone do barco na lista de nós (`NodeList.tsx`) e a tag de categoria "Barco".
-- [ ] Atualizar testes em `tests/unit/nodes.test.ts`.
+### Tarefa 11: Detecção de Nós de Barco pelo Nome ("barco") e Ícone de Embarcação — ✅ Concluída em 2026-10-06
+- [x] Atualizar lógica em `web/src/lib/nodes.ts` para detectar nós como `kind: "boat"` quando `nome` contiver a palavra "barco" (case-insensitive e normalizado sem acento), mesmo que o backend não envie metadado de `kind`.
+- [x] Exibir o ícone de barco (`boat-icon` com rotação por azimute) no MapLibre para todos os nós detectados como barco.
+- [x] Exibir o ícone do barco na lista de nós (`NodeList.tsx`) e a tag de categoria "Barco".
+- [x] Atualizar testes em `tests/unit/nodes.test.ts`.
 
-### Tarefa 12: Ordenação da Lista por Último Visto e Filtro de Inativos (> 7 Dias) com Toggle
-- [ ] Ordenar a lista de nós por último visto (`posTime` / `last_seen`) em ordem decrescente (mais recentes primeiro; nós sem fix ao final).
-- [ ] Esconder por padrão nós cujo fix mais recente tem mais de 7 dias de idade (`ageS > 7 * 86400`).
-- [ ] Adicionar botão/toggle na interface da lista ("Mostrar inativos (> 7 dias)" ou ícone com contagem) para revelar ou ocultar nós antigos sob demanda.
+### Tarefa 12: Ordenação da Lista por Último Visto e Filtro de Inativos (> 7 Dias) com Toggle — ✅ Concluída em 2026-10-06
+- [x] Ordenar a lista de nós por último visto (`posTime` / `last_seen`) em ordem decrescente (mais recentes primeiro; nós sem fix ao final).
+- [x] Esconder por padrão nós cujo fix mais recente tem mais de 7 dias de idade (`ageS > 7 * 86400`).
+- [x] Adicionar botão/toggle na interface da lista ("Mostrar inativos (> 7 dias)" ou ícone com contagem) para revelar ou ocultar nós antigos sob demanda.
 
-### Tarefa 13: Exibição do Modelo de Hardware e Imagem SVG na Lista de Nós (Apenas na Sidebar)
-- [ ] Exibir o SVG do dispositivo **exclusivamente na sidebar** (card da lista e inspector), **nunca no mapa** (o mapa usa apenas os marcadores circulares e o ícone de barco).
-- [ ] Exibir o nome textual/badge do modelo de hardware na lista quando disponível (ou inferido via prefixo/tabela).
-- [ ] Garantir que o SVG correto seja renderizado no card de cada nó na lista: `boat.svg` para barcos, SVG do hardware correspondente (`heltec_v4.svg`, `tbeam.svg`, etc.) para outros rádios, com fallback legível para `unknown.svg`.
+### Tarefa 13: Exibição do Modelo de Hardware e Imagem SVG na Lista de Nós (Apenas na Sidebar) — ✅ Concluída em 2026-10-06
+- [x] Exibir o SVG do dispositivo **exclusivamente na sidebar** (card da lista e inspector), **nunca no mapa** (o mapa usa apenas os marcadores circulares e o ícone de barco, e o popup do pin usa badge textual).
+- [x] Exibir o nome textual/badge do modelo de hardware na lista quando disponível (ou inferido via prefixo/tabela).
+- [x] Garantir que o SVG correto seja renderizado no card de cada nó na lista: `boat.svg` para barcos, SVG do hardware correspondente (`heltec_v4.svg`, `tbeam.svg`, etc.) para outros rádios, com fallback legível para `unknown.svg`.
 
-### Tarefa 14: Trilhas de Barcos: Coletivas quando Nenhum Selecionado, Exclusiva quando Selecionado
-- [ ] Quando **nenhum nó estiver selecionado**: desenhar as trilhas de todos os barcos de forma contínua e suave (linha mais fina/sutil, sem pontos individuais de fix), evitando poluição visual.
-- [ ] Quando **um nó estiver selecionado**: **esconder o caminho de todos os outros nós**, exibindo exclusivamente a trilha do nó selecionado (com destaque em amarelo e marcadores de fix).
+### Tarefa 14: Trilhas de Barcos: Coletivas quando Nenhum Selecionado, Exclusiva quando Selecionado — ✅ Concluída em 2026-10-06
+- [x] Quando **nenhum nó estiver selecionado**: desenhar as trilhas de todos os barcos de forma contínua e suave (linha mais fina/sutil, sem pontos individuais de fix), evitando poluição visual.
+- [x] Quando **um nó estiver selecionado**: **esconder o caminho de todos os outros nós**, exibindo exclusivamente a trilha do nó selecionado (com destaque em amarelo e marcadores de fix).
 
-### Tarefa 15: Botão de Camadas com Satélite como Mapa Padrão
-- [ ] Adicionar fonte de mapa satélite (ex.: ArcGIS World Imagery) e defini-la como basemap padrão do mapa.
-- [ ] Criar botão/menu de camadas nos controles do mapa (`MapControls.tsx`) permitindo alternar entre Satélite, OpenStreetMap e Basemap Local (PMTiles offline).
-- [ ] Salvar a preferência da camada no store / localStorage.
+### Tarefa 15: Botão de Camadas com Satélite como Mapa Padrão — ✅ Concluída em 2026-10-06
+- [x] Adicionar fonte de mapa satélite (ArcGIS World Imagery) e defini-la como basemap padrão do mapa.
+- [x] Criar botão/menu de camadas nos controles do mapa (`MapControls.tsx`) permitindo alternar entre Satélite, OpenStreetMap e Basemap Local (PMTiles offline).
+- [x] Salvar a preferência da camada no store / localStorage com proteção contra 404 em basemap local ausente.
 
