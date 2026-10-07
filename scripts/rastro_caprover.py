@@ -13,6 +13,9 @@ Uso:
         [--volume ...] [--env K=V ...] [--execute]
   scripts/rastro_caprover.py env-from APP_ORIGEM APP_DESTINO CHAVE [CHAVE ...] [--execute]
         # copia o valor de variáveis entre apps sem imprimir o valor
+  scripts/rastro_caprover.py univaja-secret [--provision-env ARQ] [--execute]
+        # compara RASTRO_NATIVE_SECRET do rastro-broker com UNIVAJA_MQTT_SECRET do provision.env
+        # (padrão ~/.config/univaja/provision.env); com --execute grava/atualiza a linha (modo 600)
 
 Env: --env-file (padrão .env na raiz do repo) com CAP_URL e CAP_PASS.
 """
@@ -155,6 +158,37 @@ def cmd_create_app(cap: Cap, args) -> None:
     print("criado e deploy enfileirado")
 
 
+def cmd_univaja_secret(cap: Cap, args) -> None:
+    broker = cap.apps().get("rastro-broker") or sys.exit("app inexistente: rastro-broker")
+    valor = next((e["value"] for e in broker.get("envVars", []) if e["key"] == "RASTRO_NATIVE_SECRET"), None)
+    if not valor:
+        sys.exit("rastro-broker sem RASTRO_NATIVE_SECRET")
+    arq = Path(args.provision_env).expanduser()
+    atual = ler_env(arq).get("UNIVAJA_MQTT_SECRET") if arq.exists() else None
+    if atual == valor:
+        print(f"OK: UNIVAJA_MQTT_SECRET em {arq} é igual a RASTRO_NATIVE_SECRET (tamanho {len(valor)})")
+        return
+    estado = "ausente" if atual is None else "DIFERENTE do broker"
+    print(f"UNIVAJA_MQTT_SECRET em {arq}: {estado} (valores não impressos)")
+    if not args.execute:
+        print("(dry-run; use --execute para gravar)")
+        return
+    linhas = arq.read_text(encoding="utf-8").splitlines() if arq.exists() else []
+    novas, achou = [], False
+    for ln in linhas:
+        if ln.split("=", 1)[0].strip() == "UNIVAJA_MQTT_SECRET":
+            novas.append(f"UNIVAJA_MQTT_SECRET={valor}"); achou = True
+        else:
+            novas.append(ln)
+    if not achou:
+        novas.append(f"UNIVAJA_MQTT_SECRET={valor}")
+    arq.parent.mkdir(parents=True, exist_ok=True)
+    arq.touch(mode=0o600)
+    arq.chmod(0o600)
+    arq.write_text("\n".join(novas) + "\n", encoding="utf-8")
+    print("gravado (modo 600)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--env-file", default=str(RAIZ / ".env"))
@@ -166,6 +200,7 @@ def main() -> int:
     p = sub.add_parser("env-from"); p.add_argument("origem"); p.add_argument("destino"); p.add_argument("chaves", nargs="+")
     p = sub.add_parser("create-app"); p.add_argument("app"); p.add_argument("--image", required=True)
     p.add_argument("--volume", action="append", default=[]); p.add_argument("--env", action="append", default=[])
+    p = sub.add_parser("univaja-secret"); p.add_argument("--provision-env", default="~/.config/univaja/provision.env")
     for p in sub.choices.values():
         p.add_argument("--execute", action="store_true", help="aplica de verdade (padrão: dry-run)")
     args = ap.parse_args()
@@ -175,7 +210,7 @@ def main() -> int:
     env = ler_env(Path(args.env_file))
     cap = Cap(env["CAP_URL"], env["CAP_PASS"])
     {"status": cmd_status, "deploy-image": cmd_deploy_image, "set-env": cmd_set_env,
-     "env-from": cmd_env_from, "create-app": cmd_create_app}[args.cmd](cap, args)
+     "env-from": cmd_env_from, "create-app": cmd_create_app, "univaja-secret": cmd_univaja_secret}[args.cmd](cap, args)
     return 0
 
 
