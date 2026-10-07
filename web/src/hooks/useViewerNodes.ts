@@ -16,12 +16,12 @@ const TICK_MS = 60_000;
 function compareLastSeenDesc(a: NodeInfo, b: NodeInfo): number {
   const timeA = a.posTime
     ? Date.parse(a.posTime)
-    : a.age_s ?? a.ageS
+    : (a.age_s ?? a.ageS)
       ? -((a.age_s ?? a.ageS) as number)
       : 0;
   const timeB = b.posTime
     ? Date.parse(b.posTime)
-    : b.age_s ?? b.ageS
+    : (b.age_s ?? b.ageS)
       ? -((b.age_s ?? b.ageS) as number)
       : 0;
   if (timeA !== timeB) {
