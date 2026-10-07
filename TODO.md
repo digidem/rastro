@@ -276,7 +276,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   Limitações: sem acesso ao contêiner do CapRover (não dá para exec/logs pela API); produção só muda com o go do dono.
 - [ ] Verificar o broker em produção: sha256 de `/rastro/*` no contêiner contra `broker/` local (só leitura) e nomes (não valores) das variáveis do app.
 - [ ] `univaja-lora` sem remoto git (`fee73ba`, `b08dcf5` só locais). Docs/AGENTS/TUTORIAL do 30 caracteres estão na árvore, misturados com o rename EVU de outra sessão, não commitados. Rodar `fleet_sync.py --check` antes de commitar o `fleet_sync.py` modificado.
-- [x] Web: Todos os 181 testes unitários passando em 12 arquivos (Vitest). Suporte a dados reais via proxy HTTPS/local e auto-login em ambiente de desenvolvimento.
+- [x] Web: Todos os 189 testes unitários passando em 13 arquivos (Vitest). Suporte a dados reais via proxy HTTPS/local e auto-login em ambiente de desenvolvimento.
 - [ ] **1º rádio real**: configurar um nó de barco (servidor `137.116.59.230:8883` ou `rastro-broker.javari.guardianconnector.net`, TLS, usuário = id do nó, senha = `python3 scripts/rastro_node_credentials.py --secret <RASTRO_NATIVE_SECRET do app rastro-broker> --node '!id'`, raiz `univaja/mesh`, canal EVU com uplink+downlink, Wi-Fi ligado). Depois conferir `raw_envelopes`/`gateway_status`/`positions` (sem imprimir coordenadas). Ainda NÃO testado com firmware real: envelopes do Heltec V4, fila de 16 mensagens, como o app Meshtastic mostra o remetente «Rastro».
 - [ ] Testes de campo (tarefa 5): escritório→tripulação e tripulação→escritório com humano; Starlink desligada/religada; 5–6 barcos ao mesmo tempo sem vazar mensagem entre rios; barco offline = mensagem expira (TTL).
 - [ ] Sexto barco (Atalaia): só `atx1` (teste) existe no inventário; quando houver `univaja-atalaia-barco-1`, rodar `python3 scripts/rastro_nodes_from_fleet.py --apply`. `cartao-2/3` (kind boat, sem nome da frota) ficaram de fora de propósito.
@@ -346,30 +346,30 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [x] Semântica ARIA completa (`role="menu"`, `role="menuitemradio"`, `aria-checked`, `aria-expanded`, `aria-haspopup`).
 - [x] Em telas desktop (`>= md`), mantém barra horizontal superior unificada com labels completos.
 
-### Tarefa 17: Clique Fora no Mapa Desseleciona Nós e Fecha Popups — 📝 Planejado
-- [ ] No `web/src/InitializeMap.tsx`, adicionar listener no canvas do mapa (`map.on("click", (e) => ...)`):
+### Tarefa 17: Clique Fora no Mapa Desseleciona Nós e Fecha Popups — ✅ Concluído (caea365)
+- [x] No `web/src/InitializeMap.tsx`, adicionar listener no canvas do mapa (`map.on("click", (e) => ...)`):
   - Verificar se o evento de clique atingiu algum pin (`nodes-circle`, `nodes-boat` ou outros elementos interativos).
   - Se clicou em área livre (água, floresta ou basemap sem nós sob o cursor):
     - Executar `LocalState.select(null)`.
     - Fechar e remover qualquer popup MapLibre ativo (`popup?.remove(); popup = undefined;`).
   - Ao desselecionar, restaurar automaticamente a exibição de trilhas coletivas sutis de barcos (`boat-tracks-line`) sem interferência.
 
-### Tarefa 18: Revisão da Detecção de Barcos e Inferência de Nós Não-Embarcações — 📝 Planejado
-- [ ] **Contexto & Diagnóstico:** Nós que não são embarcações, como `univaja-atalaia-movel-2` (e rádios de mão `movel`, rádios base `teto`, rastreadores `cartao`), não devem ser classificados como barco nem exibir ícone de embarcação.
-- [ ] **Inferência de Categoria (`kind`) no Frontend (`web/src/lib/nodes.ts`):**
+### Tarefa 18: Revisão da Detecção de Barcos e Inferência de Nós Não-Embarcações — 🟡 Parcial (3597427): falta desambiguar pins sobrepostos
+- [x] **Contexto & Diagnóstico:** Nós que não são embarcações, como `univaja-atalaia-movel-2` (e rádios de mão `movel`, rádios base `teto`, rastreadores `cartao`), não devem ser classificados como barco nem exibir ícone de embarcação.
+- [x] **Inferência de Categoria (`kind`) no Frontend (`web/src/lib/nodes.ts`):**
   - Implementar regras de inferência hierárquicas a partir do nome do dispositivo quando `kind` não vier explicitamente do backend:
     - Nomes com `barco`: `kind: "boat"`
     - Nomes com `movel`: `kind: "handheld"` (nunca barco)
     - Nomes com `teto`, `fixo` ou `base`: `kind: "fixed_station"` (nunca barco)
     - Nomes com `cartao` ou `t1000`: `kind: "handheld"` (nunca barco)
   - Regra de exclusão estrita: se o nome contiver palavras-chave de rádio portátil (`movel`, `handheld`, `cartao`) ou estação fixa (`teto`, `base`), **rejeitar terminantemente `isBoatNode`**, mesmo se houver ambiguidade no nome.
-- [ ] **Inferência de Hardware (`hwModel`) e SVGs (`web/src/lib/nodes.ts`):**
+- [x] **Inferência de Hardware (`hwModel`) e SVGs (`web/src/lib/nodes.ts`):**
   - Estender `inferHardwareFromName(nome)` para mapear as convenções da frota:
     - `movel` → `HELTEC_V4` (ou `TBEAM` para nós admin como `admin-movel`)
     - `teto` → `HELTEC_V4`
     - `cartao` → `TRACKER_T1000_E`
   - Garantir que `hardwareModelLabel` e `nodeSidebarSvgUrl` exibam o badge e SVG corretos (ex.: `heltec_v4.svg` ou `tracker-t1000-e.svg`), evitando fallback desnecessário para `unknown.svg` ou ícone de barco incorreto.
-- [ ] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
+- [x] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
   - Quando múltiplos nós estiverem nas mesmas coordenadas exatas (ex.: bancada de testes em Atalaia do Norte), garantir que cliques e z-index permitam selecionar nós individuais e que nós não-embarcações não fiquem mascarados pelo ícone de barco.
 
 ### Tarefa 19: Algoritmo de Barco Parado/Ancorado (Dwell & Anchor Detection) contra Trilhas Falsas — 📝 Planejado
