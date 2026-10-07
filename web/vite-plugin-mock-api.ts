@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import {
+  type MockEventKind,
   getLatestGeoJson,
+  getNodeEvents,
   getTelemetryGeoJson,
   getTrackGeoJson,
 } from "./src/fixtures/nodesFixture.js";
@@ -201,6 +203,7 @@ async function proxyOsmTile(
 
 const TRACK_RE = /^\/api\/nodes\/([^/]+)\/track(?:\?.*)?$/;
 const TELEM_RE = /^\/api\/nodes\/([^/]+)\/telemetry(?:\?.*)?$/;
+const EVENTS_RE = /^\/api\/nodes\/([^/]+)\/events(?:\?.*)?$/;
 const OSM_RE = /^\/api\/osm\/(\d+)\/(\d+)\/(\d+)\.png(?:\?.*)?$/;
 
 function handleAuthRoute(
@@ -643,6 +646,30 @@ function handleNodeRoute(
     }
     const query = parseQueryParams(rawUrl);
     sendJson(res, 200, getTrackGeoJson(target, undefined, query));
+    return true;
+  }
+
+  const eventsMatch = EVENTS_RE.exec(rawUrl);
+  if (eventsMatch && isGetOrHead) {
+    const target = safeDecode(eventsMatch[1]);
+    if (target === null) {
+      sendJson(res, 400, { detail: "Identificador de nó inválido" });
+      return true;
+    }
+    const qs = new URLSearchParams(rawUrl.split("?")[1] ?? "");
+    const kinds = (qs.get("kinds") ?? "")
+      .split(",")
+      .filter((k): k is MockEventKind => ["pos", "telem", "msg"].includes(k));
+    const limit = Number.parseInt(qs.get("limit") ?? "", 10);
+    sendJson(
+      res,
+      200,
+      getNodeEvents(target, {
+        kinds,
+        before: qs.get("before"),
+        limit: Number.isNaN(limit) ? null : limit,
+      }),
+    );
     return true;
   }
 

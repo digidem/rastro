@@ -54,6 +54,7 @@ from rastro_api.api.overlays import Overlays, OverlaysIndisponiveis
 LOGGER = logging.getLogger("rastro_api")
 
 _MAX_LIMIT = 2000
+_EVENTS_MAX_LIMIT = 200
 _DB_ERRORS = (psycopg.Error, PoolTimeout)
 
 
@@ -546,6 +547,57 @@ def create_app() -> FastAPI:
             for r in rows
         ]
         return geojson.collection(features)
+
+    def _parse_cursor(bruto: str) -> tuple[datetime, str, int]:
+        try:
+            ts_s, kind, id_s = bruto.rsplit("|", 2)
+            ts = datetime.fromisoformat(ts_s.replace("Z", "+00:00"))
+            if kind not in queries.EVENT_KINDS:
+                raise ValueError(kind)
+            return ts, kind, int(id_s)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="parâmetro 'before' inválido"
+            ) from None
+
+    @router.get("/nodes/{node}/events")
+    def node_events(
+        node: str,
+        request: Request,
+        kinds: str | None = None,
+        before: str | None = None,
+        from_: Annotated[str | None, Query(alias="from")] = None,
+        to: str | None = None,
+        limit: Annotated[int, Query(ge=1)] = 50,
+    ) -> dict:
+        """Linha do tempo do nó (posição, telemetria, mensagem), paginada por cursor."""
+        if kinds:
+            pedidos = kinds.split(",")
+            escolhidos = tuple(k for k in queries.EVENT_KINDS if k in pedidos)
+            if not escolhidos:
+                raise HTTPException(status_code=400, detail="parâmetro 'kinds' inválido")
+        else:
+            escolhidos = queries.EVENT_KINDS
+        if from_ or to:
+            ts_from, ts_to = _window(from_, to)
+        else:
+            # sem janela explícita: todo o histórico
+            ts_from = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            ts_to = datetime.now(timezone.utc) + timedelta(minutes=5)
+        cursor = _parse_cursor(before) if before else None
+        rows, has_more = _fetch(
+            request, queries.node_events, node, escolhidos, ts_from, ts_to,
+            cursor, min(limit, _EVENTS_MAX_LIMIT),
+        )
+        events = [
+            {k: (geojson.iso_utc(v) if isinstance(v, datetime) else v) for k, v in r.items()}
+            for r in rows
+        ]
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = f"{geojson.iso_utc(last['ts'])}|{last['kind']}|{last['id']}"
+        return {"events": events, "next_cursor": next_cursor}
 
     chat_router = chat.create_router(fetch_fn=_fetch)
     router.include_router(chat_router)

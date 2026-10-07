@@ -803,3 +803,200 @@ export function getTelemetryGeoJson(
     ],
   };
 }
+
+// --- Registros do nó (GET /api/nodes/:node/events) ------------------------------------
+// Dados sintéticos determinísticos (semente = nodeNum), no mesmo formato da API real.
+// Ancorados no carregamento do módulo: o cursor (timestamp absoluto) segue válido
+// entre requisições; a cada 30 s nasce um novo fix para demonstrar a atualização ao vivo.
+
+export type MockEventKind = "pos" | "telem" | "msg";
+
+export interface MockNodeEvent extends Record<string, unknown> {
+  kind: MockEventKind;
+  id: number;
+  ts: string;
+}
+
+export interface EventsQueryOptions {
+  kinds?: MockEventKind[] | null;
+  before?: string | null;
+  limit?: number | null;
+}
+
+const MOCK_BASE_MS = Date.now();
+const LIVE_STEP_MS = 30_000;
+const HISTORY_FIXES = 140;
+
+const MOCK_GATEWAYS: { num: number; name: string | null }[] = [
+  { num: 0x1a2b3c01, name: "base-teste-1" },
+  { num: 0x1a2b3c02, name: "base-teste-2" },
+  { num: 0x1a2b3c03, name: null }, // sem NodeInfo: a UI mostra o id hexadecimal
+];
+
+const MOCK_MESSAGES = [
+  "Saindo da base, tudo certo.",
+  "Chegando ao ponto de apoio.",
+  "Nível do rio baixo, navegando devagar.",
+  "SOCORRO: motor parou no meio do canal",
+  "Voltando para a base.",
+];
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function buildNodeEvents(
+  node: MockNodeDefinition,
+  nowMs: number,
+): MockNodeEvent[] {
+  const rnd = mulberry32(node.nodeNum);
+  const out: MockNodeEvent[] = [];
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const pos = (
+    id: number,
+    ms: number,
+    lat: number,
+    lon: number,
+    live = false,
+  ) => {
+    const gw =
+      rnd() < 0.85
+        ? MOCK_GATEWAYS[Math.floor(rnd() * MOCK_GATEWAYS.length)]
+        : null;
+    const gateway = live ? MOCK_GATEWAYS[0] : gw;
+    out.push({
+      kind: "pos",
+      id,
+      ts: iso(ms),
+      lat,
+      lon,
+      altitude_m:
+        rnd() < 0.9 ? Math.round((node.altitudeM ?? 80) + rnd() * 6 - 3) : null,
+      sats_in_view: rnd() < 0.9 ? 5 + Math.floor(rnd() * 6) : null,
+      snr: gateway ? Math.round((rnd() * 18 - 6) * 100) / 100 : null,
+      rssi: gateway ? -Math.round(70 + rnd() * 50) : null,
+      hop_limit: gateway ? Math.floor(rnd() * 4) : null,
+      packet_id: Math.floor(rnd() * 4294967295),
+      gateway_num: gateway ? gateway.num : null,
+      gateway_name: gateway ? gateway.name : null,
+      time_source: rnd() < 0.06 ? "gateway" : "device",
+      time_flag: rnd() < 0.04 ? "device_clock_ahead" : null,
+      received_at: iso(ms + 4000),
+    });
+  };
+
+  // Histórico: passeio aleatório para trás no tempo a partir da última posição.
+  let ms = MOCK_BASE_MS - (node.minutesAgo ?? 0) * 60_000;
+  let lat = node.lat;
+  let lon = node.lon;
+  for (let i = 0; i < HISTORY_FIXES; i++) {
+    pos(100 + i, ms, lat, lon);
+    ms -= (6 + Math.floor(rnd() * 20)) * 60_000;
+    lat += (rnd() - 0.5) * 0.004;
+    lon += (rnd() - 0.5) * 0.004;
+  }
+  // Ao vivo: um novo fix a cada 30 s depois do carregamento do módulo.
+  const nLive = Math.max(0, Math.floor((nowMs - MOCK_BASE_MS) / LIVE_STEP_MS));
+  for (let k = 1; k <= nLive; k++) {
+    pos(
+      10_000 + k,
+      MOCK_BASE_MS + k * LIVE_STEP_MS,
+      node.lat + k * 0.0002,
+      node.lon + k * 0.0002,
+      true,
+    );
+  }
+
+  // Telemetria a cada ~15 min (só nós com telemetria).
+  if (node.telemetry) {
+    const t = node.telemetry;
+    for (let i = 0; i < 60; i++) {
+      const tms =
+        MOCK_BASE_MS - (node.minutesAgo ?? 0) * 60_000 - i * 15 * 60_000;
+      out.push({
+        kind: "telem",
+        id: 100 + i,
+        ts: iso(tms),
+        battery_level: Math.max(5, Math.round(t.batteryLevel - i * 0.4)),
+        voltage: Math.round((t.voltage - i * 0.003) * 100) / 100,
+        channel_util: Math.round((t.channelUtil + rnd() * 3) * 10) / 10,
+        air_util_tx: Math.round((t.airUtilTx + rnd() * 0.5) * 100) / 100,
+        uptime_s: Math.max(60, t.uptimeS - i * 900),
+        time_source: "device",
+        received_at: iso(tms + 3000),
+      });
+    }
+  }
+
+  // Mensagens: só barcos.
+  if (node.kind === "boat") {
+    MOCK_MESSAGES.forEach((text, i) => {
+      const mms = MOCK_BASE_MS - (20 + i * 95) * 60_000;
+      out.push({
+        kind: "msg",
+        id: 100 + i,
+        ts: iso(mms),
+        direction: "in",
+        text,
+        is_alert: text.startsWith("SOCORRO"),
+        packet_id: 5000 + i,
+        observed_at: iso(mms),
+        received_at: iso(mms + 5000),
+      });
+    });
+  }
+
+  return out;
+}
+
+const cmpKey = (a: MockNodeEvent, b: MockNodeEvent): number => {
+  const ta = Date.parse(a.ts);
+  const tb = Date.parse(b.ts);
+  if (ta !== tb) {
+    return tb - ta;
+  }
+  if (a.kind !== b.kind) {
+    return a.kind < b.kind ? 1 : -1;
+  }
+  return b.id - a.id;
+};
+
+/** Resposta de GET /api/nodes/:node/events (mesmo contrato da API Python). */
+export function getNodeEvents(
+  target: string | number,
+  options: EventsQueryOptions = {},
+  now = new Date(),
+): { events: MockNodeEvent[]; next_cursor: string | null } {
+  const node = findMockNode(target);
+  if (!node) {
+    return { events: [], next_cursor: null };
+  }
+  const kinds = options.kinds?.length ? options.kinds : ["msg", "pos", "telem"];
+  let all = buildNodeEvents(node, now.getTime())
+    .filter((e) => kinds.includes(e.kind))
+    .sort(cmpKey);
+  if (options.before) {
+    const [tsS, kind, idS] = options.before.split("|");
+    const cur = {
+      kind: kind as MockEventKind,
+      id: Number(idS),
+      ts: tsS,
+    } as MockNodeEvent;
+    all = all.filter((e) => cmpKey(cur, e) < 0);
+  }
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const page = all.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    events: page,
+    next_cursor:
+      all.length > limit && last ? `${last.ts}|${last.kind}|${last.id}` : null,
+  };
+}

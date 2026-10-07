@@ -8,4 +8,6 @@ export const MapContext = createContext<{
   fitAllNodes: () => void;
   /** Centraliza no nó selecionado (ação explícita de "Centralizar no mapa"). */
   centerOnNode: (nodeNum: number) => void;
+  /** Centraliza num ponto qualquer (ex.: fix histórico do registro do nó). */
+  centerOnPoint: (lon: number, lat: number) => void;
 }>();

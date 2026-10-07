@@ -1,6 +1,10 @@
 import type { Component } from "solid-js";
 import { Show } from "solid-js";
-import { CrosshairSimpleIcon, XIcon } from "solid-phosphor/regular";
+import {
+  ClockCounterClockwiseIcon,
+  CrosshairSimpleIcon,
+  XIcon,
+} from "solid-phosphor/regular";
 import { useMap } from "../../hooks/useMap.jsx";
 import { useStore } from "../../hooks/useStore.jsx";
 import {
@@ -48,6 +52,8 @@ const textoOuNaoInformado = (v: string | number | null | undefined): string =>
 export interface NodeInspectorProps {
   node: () => NodeInfo | undefined;
   nowMs: () => number;
+  /** Abre a visão de registros do nó (substitui a lista na sidebar). */
+  onOpenLog?: () => void;
 }
 
 /** Detalhe do nó selecionado: compacto, ergonômico e de alto contraste. */
@@ -127,6 +133,17 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
               />
               <span>Centralizar no mapa</span>
             </button>
+
+            <Show when={props.onOpenLog}>
+              <button
+                type="button"
+                class="w-full h-9 rounded-lg border border-slate-700 bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center justify-center gap-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+                onClick={() => props.onOpenLog?.()}
+              >
+                <ClockCounterClockwiseIcon class="h-4 w-4" aria-hidden="true" />
+                <span>Ver registros</span>
+              </button>
+            </Show>
 
             {/* Grupo 3: Telemetria e Especificações */}
             <div class="bg-slate-900/90 p-3 rounded-lg border border-slate-800/90 shadow-inner">

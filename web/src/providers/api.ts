@@ -23,6 +23,51 @@ export interface TrackPoint {
   sats: number | null;
 }
 
+export type NodeEventKind = "pos" | "telem" | "msg";
+
+/** Registro do nó (GET /api/nodes/:n/events); campos crus da API em snake_case. */
+export interface NodeEvent {
+  kind: NodeEventKind;
+  id: number;
+  ts: string;
+  received_at?: string | null;
+  // pos
+  lat?: number;
+  lon?: number;
+  altitude_m?: number | null;
+  sats_in_view?: number | null;
+  snr?: number | null;
+  rssi?: number | null;
+  hop_limit?: number | null;
+  packet_id?: number | null;
+  gateway_num?: number | null;
+  gateway_name?: string | null;
+  time_source?: string;
+  time_flag?: string | null;
+  // telem
+  battery_level?: number | null;
+  voltage?: number | null;
+  channel_util?: number | null;
+  air_util_tx?: number | null;
+  uptime_s?: number | null;
+  // msg
+  direction?: "in" | "out";
+  text?: string;
+  is_alert?: boolean;
+}
+
+export interface NodeEventsPage {
+  events: NodeEvent[];
+  /** Cursor da página seguinte (mais antiga); null = fim do histórico. */
+  nextCursor: string | null;
+}
+
+export interface NodeEventsQuery {
+  kinds?: NodeEventKind[];
+  before?: string | null;
+  limit?: number;
+}
+
 /** Estado de auth (GET /api/auth/estado); campos normalizados do snake_case cru. */
 export interface AuthEstado {
   exigida: boolean;
@@ -37,6 +82,8 @@ export interface ApiClient {
     lines: LngLat[][];
     points: TrackPoint[];
   }>;
+  /** Registros do nó (posição, telemetria, mensagem), mais novos primeiro. */
+  events(node: string, query?: NodeEventsQuery): Promise<NodeEventsPage>;
   ping(): Promise<boolean>;
   /** Estado de autenticação público (cookie/token ainda não enviado). */
   authEstado(): Promise<AuthEstado>;
@@ -316,6 +363,30 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
         trackFromFeature(f, acc);
       }
       return acc;
+    },
+
+    async events(node, query = {}) {
+      const qs = new URLSearchParams();
+      if (query.kinds !== undefined && query.kinds.length > 0) {
+        qs.set("kinds", query.kinds.join(","));
+      }
+      if (query.before) {
+        qs.set("before", query.before);
+      }
+      qs.set("limit", String(query.limit ?? 50));
+      const path = `/api/nodes/${encodeURIComponent(node)}/events?${qs}`;
+      const res = await request(path, opts.getToken?.());
+      if (!res.ok) {
+        throw new Error(`${path}: ${res.status}`);
+      }
+      const body = (await res.json()) as {
+        events?: NodeEvent[];
+        next_cursor?: string | null;
+      };
+      return {
+        events: body.events ?? [],
+        nextCursor: body.next_cursor ?? null,
+      };
     },
 
     async ping() {

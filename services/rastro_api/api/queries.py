@@ -229,3 +229,92 @@ def get_outbox_message(conn: Any, outbox_id: int) -> dict | None:
     row = conn.execute(_SQL_GET_OUTBOX, (outbox_id,)).fetchone()
     return dict(row) if row else None
 
+
+
+# --- Registros (linha do tempo) do nó -------------------------------------------------
+# Três fontes lidas separadamente e fundidas em Python (cada uma limitada a limit+1 linhas).
+# Ordem total: (ts, kind, id) DESC — kind desempata em texto ('msg' < 'pos' < 'telem').
+
+EVENT_KINDS = ("msg", "pos", "telem")
+
+_TS_MSG = "COALESCE(m.observed_at, m.received_at)"
+
+# kind → (SELECT base já filtrado pelo nó, expressão de tempo, expressão de id)
+_EVENT_SOURCES = {
+    "pos": (
+        """
+        SELECT p.id, p.pos_time AS ts, p.lat, p.lon, p.altitude_m, p.sats_in_view,
+               p.snr, p.rssi, p.hop_limit, p.packet_id, p.gateway_num,
+               p.time_source, p.time_flag, p.received_at,
+               NULLIF(gi.long_name, '') AS gateway_name
+        FROM positions p
+        LEFT JOIN node_info gi ON gi.node_num = p.gateway_num
+        WHERE p.node_num = %s
+        """,
+        "p.pos_time", "p.id",
+    ),
+    "telem": (
+        """
+        SELECT t.id, t.telem_time AS ts, t.battery_level, t.voltage, t.channel_util,
+               t.air_util_tx, t.uptime_s, t.time_source, t.received_at
+        FROM device_telemetry t
+        WHERE t.node_num = %s
+        """,
+        "t.telem_time", "t.id",
+    ),
+    "msg": (
+        f"""
+        SELECT m.id, {_TS_MSG} AS ts, m.direction, m.text, m.is_alert,
+               m.packet_id, m.observed_at, m.received_at
+        FROM chat_messages m
+        WHERE m.from_num = %s
+        """,
+        _TS_MSG, "m.id",
+    ),
+}
+
+
+def _kind_sql(kind: str, node_num: int, ts_from, ts_to, cursor, limit: int):
+    base, ts_expr, id_expr = _EVENT_SOURCES[kind]
+    sql = base + f" AND {ts_expr} >= %s AND {ts_expr} <= %s"
+    params: list[Any] = [node_num, ts_from, ts_to]
+    if cursor is not None:
+        c_ts, c_kind, c_id = cursor
+        if kind > c_kind:
+            sql += f" AND {ts_expr} < %s"
+            params.append(c_ts)
+        elif kind == c_kind:
+            sql += f" AND ({ts_expr} < %s OR ({ts_expr} = %s AND {id_expr} < %s))"
+            params += [c_ts, c_ts, c_id]
+        else:
+            sql += f" AND {ts_expr} <= %s"
+            params.append(c_ts)
+    sql += f" ORDER BY {ts_expr} DESC, {id_expr} DESC LIMIT %s"
+    params.append(limit)
+    return sql, params
+
+
+def node_events(
+    conn: Any,
+    node: str,
+    kinds: tuple[str, ...],
+    ts_from: dt.datetime,
+    ts_to: dt.datetime,
+    cursor: tuple[dt.datetime, str, int] | None,
+    limit: int,
+) -> tuple[list[dict], bool]:
+    """Registros do nó, mais novos primeiro. Retorna (linhas, há_mais).
+
+    Cada linha traz ``kind``, ``id`` e ``ts`` além dos campos da fonte.
+    Nó desconhecido → ([], False).
+    """
+    node_num = resolve_node(conn, node)
+    if node_num is None:
+        return [], False
+    merged: list[dict] = []
+    for kind in kinds:
+        sql, params = _kind_sql(kind, node_num, ts_from, ts_to, cursor, limit + 1)
+        for row in conn.execute(sql, params).fetchall():
+            merged.append({**row, "kind": kind})
+    merged.sort(key=lambda r: (r["ts"], r["kind"], r["id"]), reverse=True)
+    return merged[:limit], len(merged) > limit

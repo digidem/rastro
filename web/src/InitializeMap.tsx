@@ -819,6 +819,14 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     });
   };
 
+  // Ação explícita (clique num fix do registro do nó).
+  const centerOnPoint = (lon: number, lat: number) => {
+    currentView()?.flyTo({
+      center: [lon, lat],
+      zoom: Math.max(currentView()?.getZoom() ?? 0, 14),
+    });
+  };
+
   // Ação explícita ("Enquadrar todos"): caixa de TODOS os nós com posição
   // confirmada, com padding que respeita a sidebar aberta.
   const fitAllNodes = () => {
@@ -1171,7 +1179,13 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
 
   return (
     <MapContext.Provider
-      value={{ setMapRef, initializeMap, fitAllNodes, centerOnNode }}
+      value={{
+        setMapRef,
+        initializeMap,
+        fitAllNodes,
+        centerOnNode,
+        centerOnPoint,
+      }}
     >
       {props.children}
     </MapContext.Provider>

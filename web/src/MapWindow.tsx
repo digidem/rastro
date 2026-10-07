@@ -1,5 +1,5 @@
 import type { Component } from "solid-js";
-import { Show, createSignal, onMount } from "solid-js";
+import { Show, createEffect, createSignal, onMount } from "solid-js";
 import { Button } from "./components/ui/button.jsx";
 import { Header, Root, Title } from "./components/ui/card.jsx";
 import { Text } from "./components/ui/text.jsx";
@@ -7,6 +7,7 @@ import { MapControls } from "./components/viewer/MapControls.jsx";
 import { NodeFilters } from "./components/viewer/NodeFilters.jsx";
 import { NodeInspector } from "./components/viewer/NodeInspector.jsx";
 import { NodeList } from "./components/viewer/NodeList.jsx";
+import { NodeLog } from "./components/viewer/NodeLog.jsx";
 import { useMap } from "./hooks/useMap.jsx";
 import { useStore } from "./hooks/useStore.jsx";
 import { useViewerNodes } from "./hooks/useViewerNodes.js";
@@ -17,6 +18,8 @@ export const MapWindow: Component = () => {
   const { api, startPolling, clearSessionData } = useData();
   const { setMapRef, initializeMap } = useMap();
   const [erroSair, setErroSair] = createSignal("");
+  // Registros do nó selecionado: substituem inspetor + lista enquanto abertos.
+  const [logAberto, setLogAberto] = createSignal(false);
   // Sidebar começa fechada no celular e aberta em telas >= md.
   const [sidebarAberta, setSidebarAberta] = createSignal(
     typeof window !== "undefined" && window.innerWidth >= 768,
@@ -31,6 +34,13 @@ export const MapWindow: Component = () => {
     filteredCount,
     inactiveCount,
   } = useViewerNodes();
+
+  // Sem nó selecionado não há registro para mostrar.
+  createEffect(() => {
+    if (selectedNode() === undefined) {
+      setLogAberto(false);
+    }
+  });
 
   onMount(() => {
     initializeMap();
@@ -114,24 +124,41 @@ export const MapWindow: Component = () => {
                 <NodeFilters />
               </div>
 
-              <Show when={selectedNode()}>
+              <Show
+                when={logAberto() && selectedNode()}
+                fallback={
+                  <>
+                    <Show when={selectedNode()}>
+                      {(node) => (
+                        <div class="shrink-0 max-h-[45vh] overflow-y-auto border-b border-slate-700/80">
+                          <NodeInspector
+                            node={node}
+                            nowMs={nowMs}
+                            onOpenLog={() => setLogAberto(true)}
+                          />
+                        </div>
+                      )}
+                    </Show>
+
+                    {/* NodeList preenche TODO o espaço vertical restante */}
+                    <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+                      <NodeList
+                        nodes={filteredNodes}
+                        totalCount={totalCount}
+                        filteredCount={filteredCount}
+                        inactiveCount={inactiveCount}
+                        nowMs={nowMs}
+                      />
+                    </div>
+                  </>
+                }
+              >
                 {(node) => (
-                  <div class="shrink-0 max-h-[45vh] overflow-y-auto border-b border-slate-700/80">
-                    <NodeInspector node={node} nowMs={nowMs} />
+                  <div class="flex-1 min-h-0 overflow-hidden">
+                    <NodeLog node={node} onBack={() => setLogAberto(false)} />
                   </div>
                 )}
               </Show>
-
-              {/* NodeList preenche TODO o espaço vertical restante */}
-              <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-                <NodeList
-                  nodes={filteredNodes}
-                  totalCount={totalCount}
-                  filteredCount={filteredCount}
-                  inactiveCount={inactiveCount}
-                  nowMs={nowMs}
-                />
-              </div>
 
               <Show when={erroSair() !== ""}>
                 <div class="px-3 py-1.5 bg-red-950/80 border-t border-red-800 text-xs text-red-300 shrink-0">
