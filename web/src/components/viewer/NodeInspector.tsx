@@ -28,11 +28,11 @@ const ROTULO_CATEGORIA = new Map<NodeKind, string>([
 ]);
 
 const COR_BARRA = new Map<BatteryLevel, string>([
-  ["none", "bg-slate-600"],
-  ["out-of-scale", "bg-amber-500"],
-  ["critical", "bg-red-500"],
-  ["low", "bg-amber-400"],
-  ["ok", "bg-emerald-400"],
+  ["none", "battery-progress--none"],
+  ["out-of-scale", "battery-progress--out-of-scale"],
+  ["critical", "battery-progress--critical"],
+  ["low", "battery-progress--low"],
+  ["ok", "battery-progress--ok"],
 ]);
 
 const COR_TEXTO = new Map<BatteryLevel, string>([
@@ -162,12 +162,12 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
                     {textoBateria()}
                   </span>
                   <Show when={node().battery !== null}>
-                    <div class="w-7 h-1.5 rounded-full bg-slate-800 overflow-hidden shrink-0">
-                      <div
-                        class={`h-full rounded-full ${COR_BARRA.get(nivel()) ?? ""}`}
-                        style={{ width: `${percentual()}%` }}
-                      />
-                    </div>
+                    <progress
+                      class={`battery-progress ${COR_BARRA.get(nivel()) ?? ""}`}
+                      max="100"
+                      value={percentual()}
+                      aria-label="Bateria"
+                    />
                   </Show>
                 </div>
 
