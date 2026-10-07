@@ -20,6 +20,9 @@
 | 14 | Web App: Trilhas contínuas e suaves para nós de barco deselecionados | ✅ Concluída (2026-10-06) | Trilhas coletivas suaves de barcos quando deselecionado; ao selecionar um nó, esconde todos os outros caminhos | 🔴 Alta |
 | 15 | Web App: Botão de camadas com Satélite como mapa padrão | ✅ Concluída (2026-10-06) | Seletor de camada no mapa (Satélite como default, OSM e PMTiles vetorial local) com persistência em localStorage | 🔴 Alta |
 | 16 | Web App: Navegação responsiva mobile em 2 colunas com 2 linhas e ícones | ✅ Concluída (2026-10-06) | Controles mobile em 2 colunas (extremas esquerda e direita) com 2 linhas de botões (apenas ícones), menus acessíveis e auto-fechamento | 🔴 Alta |
+| 17 | Web App: Clique fora no mapa desseleciona nós e fecha popups | 📝 Planejado | Ao clicar em área livre do mapa (canvas fora de qualquer pin/símbolo), definir `selected = null` e remover popup aberto | 🔴 Alta |
+| 18 | Web App: Revisão da detecção de barcos e inferência de nós não-embarcações (`movel`, `teto`, `cartao`) | 📝 Planejado | Corrigir falsos barcos (ex.: `univaja-atalaia-movel-2`); inferir `kind` (handheld/fixed) e hardware de acordo com convenção da frota | 🔴 Alta |
+| 19 | Web App: Algoritmo de barco parado/ancorado (Dwell & Anchor Detection) contra trilhas falsas | 📝 Planejado | Algoritmo ST-DAH (Spatio-Temporal Dwell Accumulator with Hysteresis) para suprimir novelos de jitter e estabilizar rumo do barco | 🔴 Alta |
 
 > **Arquivos ainda não monitorados** (verificados via `git status`): `docs/rastro_logo.svg`, `rastro_flow.png`, `rastro_flow_readme.png`, `.agents/`.
 
@@ -297,7 +300,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 
 ---
 
-## Tarefas 10 a 16: Melhorias do Visualizador Web (Frontend SolidJS)
+## Tarefas 10 a 19: Melhorias do Visualizador Web (Frontend SolidJS)
 
 ### Tarefa 10: Fixtures e Ambiente Local com Dados Reais do Servidor — ✅ Concluída em 2026-10-06
 - [x] Proxy de desenvolvimento configurado em `web/vite.config.ts` encaminhando `/api` para o backend (suporte tanto a contêiner local `:8080` quanto a proxy HTTPS de produção com SSL flexível).
@@ -341,4 +344,48 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [x] Menu dropdown de camadas posicionado abaixo do botão com suporte a fechamento ao clicar fora (click-outside) e tecla `Escape`.
 - [x] Semântica ARIA completa (`role="menu"`, `role="menuitemradio"`, `aria-checked`, `aria-expanded`, `aria-haspopup`).
 - [x] Em telas desktop (`>= md`), mantém barra horizontal superior unificada com labels completos.
+
+### Tarefa 17: Clique Fora no Mapa Desseleciona Nós e Fecha Popups — 📝 Planejado
+- [ ] No `web/src/InitializeMap.tsx`, adicionar listener no canvas do mapa (`map.on("click", (e) => ...)`):
+  - Verificar se o evento de clique atingiu algum pin (`nodes-circle`, `nodes-boat` ou outros elementos interativos).
+  - Se clicou em área livre (água, floresta ou basemap sem nós sob o cursor):
+    - Executar `LocalState.select(null)`.
+    - Fechar e remover qualquer popup MapLibre ativo (`popup?.remove(); popup = undefined;`).
+  - Ao desselecionar, restaurar automaticamente a exibição de trilhas coletivas sutis de barcos (`boat-tracks-line`) sem interferência.
+
+### Tarefa 18: Revisão da Detecção de Barcos e Inferência de Nós Não-Embarcações — 📝 Planejado
+- [ ] **Contexto & Diagnóstico:** Nós que não são embarcações, como `univaja-atalaia-movel-2` (e rádios de mão `movel`, rádios base `teto`, rastreadores `cartao`), não devem ser classificados como barco nem exibir ícone de embarcação.
+- [ ] **Inferência de Categoria (`kind`) no Frontend (`web/src/lib/nodes.ts`):**
+  - Implementar regras de inferência hierárquicas a partir do nome do dispositivo quando `kind` não vier explicitamente do backend:
+    - Nomes com `barco`: `kind: "boat"`
+    - Nomes com `movel`: `kind: "handheld"` (nunca barco)
+    - Nomes com `teto`, `fixo` ou `base`: `kind: "fixed_station"` (nunca barco)
+    - Nomes com `cartao` ou `t1000`: `kind: "handheld"` (nunca barco)
+  - Regra de exclusão estrita: se o nome contiver palavras-chave de rádio portátil (`movel`, `handheld`, `cartao`) ou estação fixa (`teto`, `base`), **rejeitar terminantemente `isBoatNode`**, mesmo se houver ambiguidade no nome.
+- [ ] **Inferência de Hardware (`hwModel`) e SVGs (`web/src/lib/nodes.ts`):**
+  - Estender `inferHardwareFromName(nome)` para mapear as convenções da frota:
+    - `movel` → `HELTEC_V4` (ou `TBEAM` para nós admin como `admin-movel`)
+    - `teto` → `HELTEC_V4`
+    - `cartao` → `TRACKER_T1000_E`
+  - Garantir que `hardwareModelLabel` e `nodeSidebarSvgUrl` exibam o badge e SVG corretos (ex.: `heltec_v4.svg` ou `tracker-t1000-e.svg`), evitando fallback desnecessário para `unknown.svg` ou ícone de barco incorreto.
+- [ ] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
+  - Quando múltiplos nós estiverem nas mesmas coordenadas exatas (ex.: bancada de testes em Atalaia do Norte), garantir que cliques e z-index permitam selecionar nós individuais e que nós não-embarcações não fiquem mascarados pelo ícone de barco.
+
+### Tarefa 19: Algoritmo de Barco Parado/Ancorado (Dwell & Anchor Detection) contra Trilhas Falsas — 📝 Planejado
+- [ ] **Contexto:** Nos rios amazônicos, barcos atracados ou ancorados sofrem dispersão de GPS (5–30 m por multipath sob a mata) somada ao raio de giro no fundeio (15–50 m de amarra na correnteza). Isso gera "novelos de linhas" (*hairball*) sobrepostas na trilha, infla artificialmente o odômetro e faz o rumo (`bearingDaTrilha`) girar 360° loucamente a cada fix.
+- [ ] **Especificação Matemática do Algoritmo ST-DAH (*Spatio-Temporal Dwell Accumulator with Hysteresis*):**
+  - **Métrica de distância:** Projeção equirretangular local ($\Delta x, \Delta y, d = \sqrt{\Delta x^2 + \Delta y^2}$), $10\times$ mais rápida que Haversine e precisa para latitudes equatoriais ($\le 7^\circ\text{ S}$).
+  - **Parâmetros operacionais calibrados para rios amazônicos:**
+    - Raio de fundeio ($R_{\text{dwell}}$): **50 metros** (cobre amarra + espalhamento GPS).
+    - Janela temporal mínima ($T_{\text{dwell\_min}}$): **15 minutos** (ou $\ge 3$ fixes consecutivos no raio).
+    - Velocidade de corte ($v_{\text{stop\_thresh}}$): **$2.5\text{ km/h}$** (~$1.3\text{ nós}$).
+    - Velocidade de retomada de navegação ($v_{\text{nav\_min}}$): **$4.0\text{ km/h}$** (~$2.2\text{ nós}$).
+    - Histerese de saída ($K_{\text{breakout}}$): **2 fixes consecutivos** fora do raio $R_{\text{dwell}}$ (ou 1 fix com $d > 100\text{ m}$ e $v > v_{\text{nav\_min}}$), prevenindo que spikes isolados de erro quebrem a detecção de parada.
+- [ ] **Ações de Implementação:**
+  - Criar `web/src/lib/dwell.ts` com a função pura `simplifyTrackDwells(trackPoints, options)`.
+  - **Supressão de trilhas falsas:** Em períodos com estado `PARKED`, omitir todas as linhas internas do GeoJSON, ligando a trilha diretamente do ponto de chegada ao centróide $C_k$, e do centróide ao ponto de partida.
+  - **Estabilização de rumo (`web/src/lib/bearing.ts`):** Quando o barco estiver no estado de parada, congelar o azimute no último rumo válido de aproximação ou definir como nulo, evitando giros espúrios do ícone SVG da embarcação.
+  - **Representação visual no MapLibre (`InitializeMap.tsx`):**
+    - Renderizar marcador tático de ancoragem (`dwell-point`) no centróide da parada com tooltip/popup contendo horário de chegada e tempo total parado (ex.: *"Ancorado há 4h 15m"*).
+    - Adicionar badge de status nos cards da sidebar: `🟢 Navegando (X km/h)` vs `⚓ Ancorado / Parado (há Xh)`.
 
