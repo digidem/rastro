@@ -4,7 +4,7 @@ import { createStore, reconcile } from "solid-js/store";
 export type NodeKind = "boat" | "fixed_station" | "handheld" | "unknown";
 
 /** Modo do mapa base de fundo (default: satellite). */
-export type BasemapMode = "satellite" | "osm" | "local";
+export type BasemapMode = "google" | "satellite" | "osm" | "local";
 
 /** Filtro de categoria: "all" inclui os nós sem categoria conhecida. */
 export type KindFilter = "all" | NodeKind;
@@ -89,18 +89,23 @@ interface LocalState {
   hasAlertUnread: boolean;
   /** Exibir nós inativos com mais de 7 dias (default: false, nós > 7d ficam ocultos). */
   showInactive: boolean;
-  /** Camada do mapa base ativa: satellite (padrão), osm ou local. */
+  /** Camada do mapa base ativa: google (padrão), satellite (Esri), osm ou local. */
   basemapMode: BasemapMode;
 }
 
 const carregarBasemapPadrao = (): BasemapMode => {
   if (typeof window !== "undefined" && window.localStorage) {
     const salvo = window.localStorage.getItem("rastro_basemap");
-    if (salvo === "satellite" || salvo === "osm" || salvo === "local") {
+    if (
+      salvo === "google" ||
+      salvo === "satellite" ||
+      salvo === "osm" ||
+      salvo === "local"
+    ) {
       return salvo;
     }
   }
-  return "satellite";
+  return "google";
 };
 
 const [localState, setLocalState] = createStore<LocalState>({

@@ -102,6 +102,25 @@ export const MapControls: Component<MapControlsProps> = (props) => {
               <button
                 type="button"
                 role="menuitemradio"
+                aria-checked={localState.basemapMode === "google"}
+                class={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-left transition-colors ${
+                  localState.basemapMode === "google"
+                    ? "bg-slate-800 text-emerald-400 font-semibold"
+                    : "text-slate-200 hover:bg-slate-900"
+                }`}
+                onClick={() => selecionarModo("google")}
+              >
+                <span>Google Satélite (Padrão)</span>
+                <Show when={localState.basemapMode === "google"}>
+                  <CheckIcon
+                    class="h-3.5 w-3.5 text-emerald-400"
+                    aria-hidden="true"
+                  />
+                </Show>
+              </button>
+              <button
+                type="button"
+                role="menuitemradio"
                 aria-checked={localState.basemapMode === "satellite"}
                 class={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-left transition-colors ${
                   localState.basemapMode === "satellite"
@@ -110,7 +129,7 @@ export const MapControls: Component<MapControlsProps> = (props) => {
                 }`}
                 onClick={() => selecionarModo("satellite")}
               >
-                <span>Satélite (Padrão)</span>
+                <span>Satélite (Esri)</span>
                 <Show when={localState.basemapMode === "satellite"}>
                   <CheckIcon
                     class="h-3.5 w-3.5 text-emerald-400"
