@@ -23,6 +23,7 @@
 | 17 | Web App: Clique fora no mapa desseleciona nós e fecha popups | 📝 Planejado | Ao clicar em área livre do mapa (canvas fora de qualquer pin/símbolo), definir `selected = null` e remover popup aberto | 🔴 Alta |
 | 18 | Web App: Revisão da detecção de barcos e inferência de nós não-embarcações (`movel`, `teto`, `cartao`) | 📝 Planejado | Corrigir falsos barcos (ex.: `univaja-atalaia-movel-2`); inferir `kind` (handheld/fixed) e hardware de acordo com convenção da frota | 🔴 Alta |
 | 19 | Web App: Algoritmo de barco parado/ancorado (Dwell & Anchor Detection) contra trilhas falsas | 📝 Planejado | Algoritmo ST-DAH (Spatio-Temporal Dwell Accumulator with Hysteresis) para suprimir novelos de jitter e estabilizar rumo do barco | 🔴 Alta |
+| 20 | Web App: Logo animado como Loader e Favicon (`docs/rastro_logo.svg`) | 📝 Planejado | Usar `docs/rastro_logo.svg` com animação suave como loader e convertê-lo para favicon do visualizador (`/favicon.svg`) | 🟡 Média |
 
 > **Arquivos ainda não monitorados** (verificados via `git status`): `docs/rastro_logo.svg`, `rastro_flow.png`, `rastro_flow_readme.png`, `.agents/`.
 
@@ -300,7 +301,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 
 ---
 
-## Tarefas 10 a 19: Melhorias do Visualizador Web (Frontend SolidJS)
+## Tarefas 10 a 20: Melhorias do Visualizador Web (Frontend SolidJS)
 
 ### Tarefa 10: Fixtures e Ambiente Local com Dados Reais do Servidor — ✅ Concluída em 2026-10-06
 - [x] Proxy de desenvolvimento configurado em `web/vite.config.ts` encaminhando `/api` para o backend (suporte tanto a contêiner local `:8080` quanto a proxy HTTPS de produção com SSL flexível).
@@ -388,4 +389,14 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   - **Representação visual no MapLibre (`InitializeMap.tsx`):**
     - Renderizar marcador tático de ancoragem (`dwell-point`) no centróide da parada com tooltip/popup contendo horário de chegada e tempo total parado (ex.: *"Ancorado há 4h 15m"*).
     - Adicionar badge de status nos cards da sidebar: `🟢 Navegando (X km/h)` vs `⚓ Ancorado / Parado (há Xh)`.
+
+### Tarefa 20: Logo Animado como Loader e Favicon (`docs/rastro_logo.svg`) — 📝 Planejado
+- [ ] **Favicon do Visualizador:**
+  - Copiar e adaptar `docs/rastro_logo.svg` para `web/public/favicon.svg` (viewBox quadrado 1:1, otimizado para renderização nítida em abas de navegadores e preservando cores nos temas escuro e claro).
+  - Atualizar `web/index.html` para incluir `<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`.
+- [ ] **Componente de Loader Animado (`web/src/components/ui/LogoLoader.tsx`):**
+  - Criar componente SolidJS reutilizável baseado no SVG oficial do Rastro.
+  - Implementar animação CSS sutil e fluida (ex.: efeito de pulso de sinal no ponto/antena central `#eb742d` e ondas de radar suaves no contorno da malha).
+  - Substituir o texto cru `<Text class="text-gray-400">Carregando…</Text>` em `web/src/App.tsx` (estado `verificando` de autenticação) e nos estados de carregamento do visualizador por uma splash elegante com o logo animado.
+  - Suportar prop de dimensão (`size: "sm" | "md" | "lg"`) e texto de status opcional (ex.: *"Conectando à malha Rastro..."*).
 
