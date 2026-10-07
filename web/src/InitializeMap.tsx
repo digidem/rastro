@@ -593,6 +593,22 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           props,
         );
       });
+
+      // Clique em área livre (sem pin sob o cursor): desseleciona e fecha o popup.
+      map.on("click", (e) => {
+        const sobrePin =
+          map.queryRenderedFeatures(e.point, {
+            layers: ["nodes-circle", "nodes-boat"].filter((id) =>
+              map.getLayer(id),
+            ),
+          }).length > 0;
+        if (sobrePin) {
+          return;
+        }
+        popup?.remove();
+        popup = null;
+        LocalState.select(null);
+      });
     };
     map.on("style.load", aoCarregar);
     map.on("load", aoCarregar);

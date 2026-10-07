@@ -65,6 +65,9 @@ vi.mock("maplibre-gl", () => {
     });
     addLayer = vi.fn();
     getLayer = vi.fn(() => ({}));
+    // Pins sob o cursor no clique (vazio = área livre do mapa).
+    renderizados: unknown[] = [];
+    queryRenderedFeatures = vi.fn(() => this.renderizados);
     setLayoutProperty = vi.fn();
     once(ev: string, cb: (e: unknown) => void) {
       this.on(ev, cb);
@@ -278,6 +281,7 @@ describe("InitializeMap — popup", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     // Clique num nó (mesma shape que o handler espera do MapLibre).
+    mapa().renderizados = [{}];
     mapa().emit("click", {
       features: [
         {
@@ -364,9 +368,29 @@ describe("InitializeMap — basemap padrão OSM", () => {
     );
   });
 
-  it("style.load e load juntos inicializam uma vez só (um handler de clique)", () => {
+  it("style.load e load juntos inicializam uma vez só (pin + clique livre)", () => {
     const m = prepara(false);
-    expect(m.handlers.get("click")?.length).toBe(1);
+    expect(m.handlers.get("click")?.length).toBe(2);
+  });
+
+  it("clique em área livre desseleciona e fecha o popup", async () => {
+    const api = { track: vi.fn() } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    mapa().renderizados = [{}];
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: [-30.02, -4.22] },
+          properties: { nome: "Nó A" },
+        },
+      ],
+    });
+    const popup = popupAberto();
+    mapa().renderizados = [];
+    mapa().emit("click", { point: { x: 1, y: 1 } });
+    expect(popup.remove).toHaveBeenCalled();
+    expect(LocalState.localState.selected).toBeNull();
   });
 
   it("camada nodes-boat rotaciona os barcos com o rumo e alinha ao mapa", () => {
