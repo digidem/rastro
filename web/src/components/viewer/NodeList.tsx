@@ -1,6 +1,7 @@
 import type { Component } from "solid-js";
 import { For, Match, Show, Switch, createEffect } from "solid-js";
 import { useStore } from "../../hooks/useStore.jsx";
+import { duracaoLabel } from "../../lib/dwell.js";
 import {
   type BatteryLevel,
   batteryLabel,
@@ -224,6 +225,29 @@ export const NodeList: Component<NodeListProps> = (props) => {
                       >
                         {nodeAgeLabel(n, props.nowMs())}
                       </span>
+                      <Show when={localState.movimento[n.nodeNum]}>
+                        {(m) => (
+                          <span
+                            class={`rounded border px-1 text-[10px] font-semibold ${
+                              m().parado
+                                ? "border-sky-600/80 bg-sky-950/40 text-sky-300"
+                                : "border-emerald-600/80 bg-emerald-950/40 text-emerald-300"
+                            }`}
+                          >
+                            {m().parado
+                              ? `⚓ Ancorado / Parado${
+                                  m().desdeMs !== null
+                                    ? ` (há ${duracaoLabel(props.nowMs() - (m().desdeMs as number))})`
+                                    : ""
+                                }`
+                              : `🟢 Navegando${
+                                  m().velocidadeKmh !== null
+                                    ? ` (${Math.round(m().velocidadeKmh as number)} km/h)`
+                                    : ""
+                                }`}
+                          </span>
+                        )}
+                      </Show>
                       <Show when={isAgeWarning(n, props.nowMs())}>
                         <span
                           class="rounded border border-amber-600/80 bg-amber-950/40 px-1 text-[10px] text-amber-300 font-semibold"

@@ -33,7 +33,13 @@ vi.mock("maplibre-gl", () => {
     constructor(_opts: unknown) {
       this.opts = _opts;
       instancias.push(this);
-      for (const nome of ["nodes", "track", "track-points", "boat-tracks"]) {
+      for (const nome of [
+        "nodes",
+        "track",
+        "track-points",
+        "boat-tracks",
+        "dwell-points",
+      ]) {
         this.sources.set(nome, { setData: vi.fn() });
       }
     }
@@ -368,9 +374,9 @@ describe("InitializeMap — basemap padrão OSM", () => {
     );
   });
 
-  it("style.load e load juntos inicializam uma vez só (pin + clique livre)", () => {
+  it("style.load e load juntos inicializam uma vez só (pin + parada + clique livre)", () => {
     const m = prepara(false);
-    expect(m.handlers.get("click")?.length).toBe(2);
+    expect(m.handlers.get("click")?.length).toBe(3);
   });
 
   it("clique em área livre desseleciona e fecha o popup", async () => {
@@ -556,7 +562,11 @@ describe("InitializeMap — enquadramento automático", () => {
 
     // Adiciona um nó barco
     LocalState.setNodes([
-      { ...noEm(1, -70.0, -4.0), kind: "boat" as const, nome: "Barco Solimões" },
+      {
+        ...noEm(1, -70.0, -4.0),
+        kind: "boat" as const,
+        nome: "Barco Solimões",
+      },
     ]);
 
     // Sem seleção: boat-tracks visível

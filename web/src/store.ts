@@ -49,8 +49,17 @@ export interface NodeInfo {
  */
 export type AuthEstado = "verificando" | "login" | "ok";
 
+/** Estado de movimento derivado da trilha (ST-DAH); vive fora de `nodes` para sobreviver ao reconcile do polling. */
+export interface Movimento {
+  parado: boolean;
+  /** Início da parada em curso (ms); null se navegando. */
+  desdeMs: number | null;
+  velocidadeKmh: number | null;
+}
+
 interface LocalState {
   nodes: Record<number, NodeInfo>;
+  movimento: Record<number, Movimento>;
   selected: number | null;
   /** Busca textual: nome, nome curto, nodeId ou hex do nodeNum. */
   query: string;
@@ -96,6 +105,7 @@ const carregarBasemapPadrao = (): BasemapMode => {
 
 const [localState, setLocalState] = createStore<LocalState>({
   nodes: {},
+  movimento: {},
   selected: null,
   query: "",
   kindFilter: "all",
@@ -187,11 +197,15 @@ const setNodeBearing = (nodeNum: number, bearing: number) => {
   }
 };
 
+const setNodeMovimento = (nodeNum: number, m: Movimento) =>
+  setLocalState("movimento", nodeNum, m);
+
 export const LocalState = {
   localState,
   setNodes,
   select,
   setNodeBearing,
+  setNodeMovimento,
   setQuery,
   setKindFilter,
   setConditionFilter,
