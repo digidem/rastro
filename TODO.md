@@ -267,6 +267,14 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   4. Rig simulado (`deploy/sim/native-rig.sh`): todos os 8 checks verdes (PASS), incluindo isolamento de retain e ausência de vazamento entre 6 barcos simultâneos.
   5. Imagem 0.8.2 pronta para build e publicação (`scripts/rastro_release.sh 0.8.2 --push`).
   6. Deploy: `deploy-image rastro-broker communityfirst/rastro-broker:0.8.2` (retorno: 0.8.1). Observar o barco de Ituí por `raw_envelopes`.
+- [x] **Release 0.8.4 e Rollout em Produção (2026-10-07)**:
+  1. Correções do frontend: supressão de estilos inline bloqueados pela CSP do Caddy (`3806525`), adiamento da camada de barcos até registro do ícone SVG (`ba1c615`), seleção explícita de OSM no teste de navegador do simulador (`6b5322e`).
+  2. Suítes de testes unitários verdes: visualizador web (228 testes), gateway/ingest (300 testes) e API (63 testes).
+  3. Gate de simulação CapRover (`deploy/sim/run.sh`): 100% verde (`== F5 SIM: PASS`), incluindo auditoria TruffleHog e teste com navegador headless.
+  4. Imagens `0.8.4` publicadas no Docker Hub (`broker`, `ingest`, `chat`, `api`, `web`, `pgtools:0.8.4-pg17`).
+  5. Deploy realizado no CapRover (`scripts/rastro_caprover.py deploy-image --execute`) para todos os cinco apps de produção (`rastro-ingest`, `rastro-api`, `rastro-chat`, `rastro-broker`, `rastro`).
+  6. Validação em produção: `https://rastro.javari.guardianconnector.net` respondendo HTTP/2 200, `/api/healthz` OK (4.2ms) e sessões ativas no PostgreSQL `rastro`.
+  7. Template one-click atualizado para `defaultValue: '0.8.4'` e commits enviados para `origin/main`.
 - [ ] Verificar o broker em produção: sha256 de `/rastro/*` no contêiner contra `broker/` local (só leitura) e nomes (não valores) das variáveis do app.
 - [ ] `univaja-lora` sem remoto git (`fee73ba`, `b08dcf5` só locais). Docs/AGENTS/TUTORIAL do 30 caracteres estão na árvore, misturados com o rename EVU de outra sessão, não commitados. Rodar `fleet_sync.py --check` antes de commitar o `fleet_sync.py` modificado.
 - [x] Web: Todos os 189 testes unitários passando em 13 arquivos (Vitest). Suporte a dados reais via proxy HTTPS/local e auto-login em ambiente de desenvolvimento.
