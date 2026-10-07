@@ -27,6 +27,7 @@ import {
   nodesGeoJson,
 } from "./lib/nodes.js";
 import { espalharPinsSobrepostos } from "./lib/overlap.js";
+import { adicionarOverlays, fetchOverlays } from "./lib/overlays.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
 import { LocalState, type NodeKind } from "./store.js";
@@ -70,7 +71,10 @@ function limitesDosPontos(
   ];
 }
 
-// Basemap PADRÃO: Imagens de satélite (ArcGIS World Imagery).
+// Basemap PADRÃO: Google Maps satélite.
+const GOOGLE_TILES = "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}";
+
+// Alternativa: imagens de satélite (ArcGIS World Imagery).
 const SATELLITE_TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
@@ -130,10 +134,14 @@ function garantirBasemapLocal(map: maplibregl) {
 
 // Aplica a visibilidade do mapa base conforme o modo selecionado
 function aplicarModoBasemap(map: maplibregl, modo: string) {
+  const visGoogle = modo === "google" ? "visible" : "none";
   const visSat = modo === "satellite" ? "visible" : "none";
   const visOsm = modo === "osm" ? "visible" : "none";
   const visLocal = modo === "local" ? "visible" : "none";
 
+  if (map.getLayer("google-base")) {
+    map.setLayoutProperty("google-base", "visibility", visGoogle);
+  }
   if (map.getLayer("satellite-base")) {
     map.setLayoutProperty("satellite-base", "visibility", visSat);
   }
@@ -151,8 +159,8 @@ function aplicarModoBasemap(map: maplibregl, modo: string) {
           }
         }
       } else {
-        // Fallback para satélite se o arquivo PMTiles não existir localmente
-        LocalState.setBasemapMode("satellite");
+        // Fallback para Google se o arquivo PMTiles não existir localmente
+        LocalState.setBasemapMode("google");
       }
     });
     return;
@@ -197,11 +205,18 @@ const EMPTY_FC: FeatureCollectionLike = {
   features: [],
 };
 
-// Estilo inline com satélite padrão e suporte a OSM e PMTiles
+// Estilo inline com Google satélite padrão e suporte a OSM e PMTiles
 const estilo: StyleSpecification = {
   version: 8,
   glyphs: GLYPHS_URL,
   sources: {
+    google: {
+      type: "raster",
+      tiles: [GOOGLE_TILES],
+      tileSize: 256,
+      maxzoom: 20,
+      attribution: "© Google",
+    },
     satellite: {
       type: "raster",
       tiles: [SATELLITE_TILES],
@@ -229,10 +244,16 @@ const estilo: StyleSpecification = {
       paint: { "background-color": "#121b14" },
     },
     {
+      id: "google-base",
+      type: "raster",
+      source: "google",
+      layout: { visibility: "visible" },
+    },
+    {
       id: "satellite-base",
       type: "raster",
       source: "satellite",
-      layout: { visibility: "visible" },
+      layout: { visibility: "none" },
     },
     {
       id: "osm-base",
@@ -691,6 +712,10 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           registrarIconeBarco(map);
         }
       });
+      // Camadas GeoJSON extras (RASTRO_OVERLAYS_URL na API), sob pins e trilhas
+      fetchOverlays().then((camadas) =>
+        adicionarOverlays(map, camadas, "boat-tracks-line"),
+      );
       // Basemap próprio (offline): verifica se o arquivo existe e respeita o modo ativo
       existeBasemapLocal().then((existe) => {
         if (existe) {

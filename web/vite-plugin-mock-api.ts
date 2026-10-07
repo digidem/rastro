@@ -219,6 +219,54 @@ function handleAuthRoute(
     return true;
   }
 
+  if (pathname === "/api/overlays" && isGetOrHead) {
+    // Coordenadas fictícias (dado territorial real nunca vai para fixtures).
+    const ponto = (nome: string, lon: number, lat: number) => ({
+      type: "Feature",
+      properties: { ALDEIA: nome },
+      geometry: { type: "Point", coordinates: [lon, lat] },
+    });
+    sendJson(res, 200, {
+      layers: [
+        {
+          name: "aldeias_teste",
+          data: {
+            type: "FeatureCollection",
+            features: [
+              ponto("ALDEIA TESTE 1", -60.0, -3.0),
+              ponto("ALDEIA TESTE 2", -60.1, -3.1),
+            ],
+          },
+        },
+        {
+          name: "contorno_teste",
+          data: {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                properties: { NOME: "AREA TESTE" },
+                geometry: {
+                  type: "Polygon",
+                  coordinates: [
+                    [
+                      [-60.3, -3.3],
+                      [-59.8, -3.3],
+                      [-59.8, -2.8],
+                      [-60.3, -2.8],
+                      [-60.3, -3.3],
+                    ],
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    return true;
+  }
+
   if (pathname === "/api/auth/estado" && isGetOrHead) {
     sendJson(
       res,

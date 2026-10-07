@@ -49,6 +49,7 @@ except ImportError:  # pragma: no cover
 
 from rastro_api.api import chat, geojson, queries
 from rastro_api.api.osm import OsmTiles, TileIndisponivel
+from rastro_api.api.overlays import Overlays, OverlaysIndisponiveis
 
 LOGGER = logging.getLogger("rastro_api")
 
@@ -444,6 +445,20 @@ def create_app() -> FastAPI:
         # Cache-Control: no-store vem do middleware de /api (a área observada é
         # sensível); o cache útil é o da própria API (osm.OsmTiles).
         return Response(content=dados, media_type="image/png")
+
+    overlays = Overlays.from_env()  # None = desligado (RASTRO_OVERLAYS_URL vazio)
+
+    @router.get("/overlays")
+    def overlays_geojson() -> dict:
+        """Camadas GeoJSON extras (um item por arquivo da fonte configurada)."""
+        if overlays is None:
+            return {"layers": []}
+        try:
+            return {"layers": overlays.get()}
+        except OverlaysIndisponiveis:
+            raise HTTPException(
+                status_code=502, detail="camadas indisponíveis"
+            ) from None
 
     @router.get("/nodes/latest")
     def latest(request: Request) -> dict:
