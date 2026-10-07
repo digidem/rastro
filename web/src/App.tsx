@@ -3,6 +3,7 @@ import { Match, Show, Switch, createSignal, onMount } from "solid-js";
 import { InitializeMap } from "./InitializeMap.jsx";
 import { MapWindow } from "./MapWindow.jsx";
 import { ChatPanel } from "./components/ChatPanel.jsx";
+import { LogoLoader } from "./components/ui/LogoLoader.jsx";
 import { Button } from "./components/ui/button.jsx";
 import {
   Body,
@@ -205,7 +206,7 @@ const Conteudo: Component = () => {
       </Match>
       <Match when={LocalState.localState.auth === "verificando"}>
         <div class="flex h-full w-full items-center justify-center">
-          <Text class="text-gray-400">Carregando…</Text>
+          <LogoLoader size="lg" text="Conectando à malha Rastro…" />
         </div>
       </Match>
       <Match when={LocalState.localState.auth === "login"}>

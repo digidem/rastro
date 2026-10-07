@@ -72,3 +72,52 @@
 .maplibregl-popup-anchor-right .maplibregl-popup-tip {
   border-left-color: rgba(15, 23, 42, 0.95) !important;
 }
+
+/* Animações e acessibilidade para o LogoLoader */
+@keyframes rastro-beacon {
+  0%,
+  100% {
+    opacity: 0.8;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes rastro-radar {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.rastro-logo-node {
+  animation: rastro-beacon 2s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.rastro-logo-mesh-outer {
+  animation: rastro-radar 2.5s ease-in-out infinite;
+}
+
+.rastro-logo-mesh-inner {
+  animation: rastro-radar 3.5s ease-in-out infinite reverse;
+}
+
+.rastro-logo-mesh-base {
+  opacity: 0.95;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rastro-logo-node,
+  .rastro-logo-mesh-outer,
+  .rastro-logo-mesh-inner {
+    animation: none !important;
+  }
+}

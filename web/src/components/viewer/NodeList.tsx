@@ -15,6 +15,7 @@ import {
   nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
 import type { NodeInfo, NodeKind } from "../../store.js";
+import { LogoLoader } from "../ui/LogoLoader.jsx";
 import { Button } from "../ui/button.jsx";
 import { Text } from "../ui/text.jsx";
 
@@ -291,7 +292,9 @@ const Vazio: Component<VazioProps> = (props) => (
   <div class="flex flex-col items-start gap-2.5 p-4 text-xs">
     <Switch>
       <Match when={props.status === "idle" || props.status === "loading"}>
-        <Text class="text-slate-400 font-medium">Aguardando dados…</Text>
+        <div class="py-2">
+          <LogoLoader size="sm" text="Aguardando dados…" />
+        </div>
       </Match>
       <Match when={props.status === "error"}>
         <Text class="text-red-400 font-medium">

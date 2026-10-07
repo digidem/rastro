@@ -354,7 +354,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
     - Fechar e remover qualquer popup MapLibre ativo (`popup?.remove(); popup = undefined;`).
   - Ao desselecionar, restaurar automaticamente a exibição de trilhas coletivas sutis de barcos (`boat-tracks-line`) sem interferência.
 
-### Tarefa 18: Revisão da Detecção de Barcos e Inferência de Nós Não-Embarcações — 🟡 Parcial (3597427): falta desambiguar pins sobrepostos
+### Tarefa 18: Revisão da Detecção de Barcos e Inferência de Nós Não-Embarcações — ✅ Concluído (0336fa2)
 - [x] **Contexto & Diagnóstico:** Nós que não são embarcações, como `univaja-atalaia-movel-2` (e rádios de mão `movel`, rádios base `teto`, rastreadores `cartao`), não devem ser classificados como barco nem exibir ícone de embarcação.
 - [x] **Inferência de Categoria (`kind`) no Frontend (`web/src/lib/nodes.ts`):**
   - Implementar regras de inferência hierárquicas a partir do nome do dispositivo quando `kind` não vier explicitamente do backend:
@@ -369,20 +369,20 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
     - `teto` → `HELTEC_V4`
     - `cartao` → `TRACKER_T1000_E`
   - Garantir que `hardwareModelLabel` e `nodeSidebarSvgUrl` exibam o badge e SVG corretos (ex.: `heltec_v4.svg` ou `tracker-t1000-e.svg`), evitando fallback desnecessário para `unknown.svg` ou ícone de barco incorreto.
-- [ ] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
+- [x] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
   - Quando múltiplos nós estiverem nas mesmas coordenadas exatas (ex.: bancada de testes em Atalaia do Norte), garantir que cliques e z-index permitam selecionar nós individuais e que nós não-embarcações não fiquem mascarados pelo ícone de barco.
 
-### Tarefa 19: Algoritmo de Barco Parado/Ancorado (Dwell & Anchor Detection) contra Trilhas Falsas — 📝 Planejado
-- [ ] **Contexto:** Nos rios amazônicos, barcos atracados ou ancorados sofrem dispersão de GPS (5–30 m por multipath sob a mata) somada ao raio de giro no fundeio (15–50 m de amarra na correnteza). Isso gera "novelos de linhas" (*hairball*) sobrepostas na trilha, infla artificialmente o odômetro e faz o rumo (`bearingDaTrilha`) girar 360° loucamente a cada fix.
-- [ ] **Especificação Matemática do Algoritmo ST-DAH (*Spatio-Temporal Dwell Accumulator with Hysteresis*):**
+### Tarefa 19: Algoritmo de Barco Parado/Ancorado (Dwell & Anchor Detection) contra Trilhas Falsas — ✅ Concluído (e72a8ff, 6a58f9d)
+- [x] **Contexto:** Nos rios amazônicos, barcos atracados ou ancorados sofrem dispersão de GPS (5–30 m por multipath sob a mata) somada ao raio de giro no fundeio (15–50 m de amarra na correnteza). Isso gera "novelos de linhas" (*hairball*) sobrepostas na trilha, infla artificialmente o odômetro e faz o rumo (`bearingDaTrilha`) girar 360° loucamente a cada fix.
+- [x] **Especificação Matemática do Algoritmo ST-DAH (*Spatio-Temporal Dwell Accumulator with Hysteresis*):**
   - **Métrica de distância:** Projeção equirretangular local ($\Delta x, \Delta y, d = \sqrt{\Delta x^2 + \Delta y^2}$), $10\times$ mais rápida que Haversine e precisa para latitudes equatoriais ($\le 7^\circ\text{ S}$).
   - **Parâmetros operacionais calibrados para rios amazônicos:**
     - Raio de fundeio ($R_{\text{dwell}}$): **50 metros** (cobre amarra + espalhamento GPS).
-    - Janela temporal mínima ($T_{\text{dwell\_min}}$): **15 minutos** (ou $\ge 3$ fixes consecutivos no raio).
+    - Janela temporal mínima ($T_{\text{dwell\_min}}$): **15 minutos**.
     - Velocidade de corte ($v_{\text{stop\_thresh}}$): **$2.5\text{ km/h}$** (~$1.3\text{ nós}$).
     - Velocidade de retomada de navegação ($v_{\text{nav\_min}}$): **$4.0\text{ km/h}$** (~$2.2\text{ nós}$).
     - Histerese de saída ($K_{\text{breakout}}$): **2 fixes consecutivos** fora do raio $R_{\text{dwell}}$ (ou 1 fix com $d > 100\text{ m}$ e $v > v_{\text{nav\_min}}$), prevenindo que spikes isolados de erro quebrem a detecção de parada.
-- [ ] **Ações de Implementação:**
+- [x] **Ações de Implementação:**
   - Criar `web/src/lib/dwell.ts` com a função pura `simplifyTrackDwells(trackPoints, options)`.
   - **Supressão de trilhas falsas:** Em períodos com estado `PARKED`, omitir todas as linhas internas do GeoJSON, ligando a trilha diretamente do ponto de chegada ao centróide $C_k$, e do centróide ao ponto de partida.
   - **Estabilização de rumo (`web/src/lib/bearing.ts`):** Quando o barco estiver no estado de parada, congelar o azimute no último rumo válido de aproximação ou definir como nulo, evitando giros espúrios do ícone SVG da embarcação.
@@ -390,13 +390,14 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
     - Renderizar marcador tático de ancoragem (`dwell-point`) no centróide da parada com tooltip/popup contendo horário de chegada e tempo total parado (ex.: *"Ancorado há 4h 15m"*).
     - Adicionar badge de status nos cards da sidebar: `🟢 Navegando (X km/h)` vs `⚓ Ancorado / Parado (há Xh)`.
 
-### Tarefa 20: Logo Animado como Loader e Favicon (`docs/rastro_logo.svg`) — 📝 Planejado
-- [ ] **Favicon do Visualizador:**
-  - Copiar e adaptar `docs/rastro_logo.svg` para `web/public/favicon.svg` (viewBox quadrado 1:1, otimizado para renderização nítida em abas de navegadores e preservando cores nos temas escuro e claro).
+### Tarefa 20: Logo Animado como Loader e Favicon (`docs/rastro_logo.svg`) — ✅ Concluído
+- [x] **Favicon do Visualizador:**
+  - Copiar e adaptar `docs/rastro_logo.svg` para `web/public/favicon.svg` (viewBox quadrado 1:1, otimizado para renderização nítida em abas de navegadores e preservando cores nos temas escuro e claro com badge de fundo arredondado).
   - Atualizar `web/index.html` para incluir `<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`.
-- [ ] **Componente de Loader Animado (`web/src/components/ui/LogoLoader.tsx`):**
+- [x] **Componente de Loader Animado (`web/src/components/ui/LogoLoader.tsx`):**
   - Criar componente SolidJS reutilizável baseado no SVG oficial do Rastro.
-  - Implementar animação CSS sutil e fluida (ex.: efeito de pulso de sinal no ponto/antena central `#eb742d` e ondas de radar suaves no contorno da malha).
-  - Substituir o texto cru `<Text class="text-gray-400">Carregando…</Text>` em `web/src/App.tsx` (estado `verificando` de autenticação) e nos estados de carregamento do visualizador por uma splash elegante com o logo animado.
-  - Suportar prop de dimensão (`size: "sm" | "md" | "lg"`) e texto de status opcional (ex.: *"Conectando à malha Rastro..."*).
+  - Implementar animação CSS sutil e fluida com aceleração de GPU e suporte a `prefers-reduced-motion` (pulso de sinal no ponto/antena central `#eb742d` e ondas de radar suaves no contorno da malha).
+  - Substituir o texto cru `<Text class="text-gray-400">Carregando…</Text>` em `web/src/App.tsx` (estado `verificando` de autenticação) e nos estados vazios/carregamento do visualizador (`NodeList.tsx`) por uma splash elegante com o logo animado.
+  - Suportar prop de dimensão (`size: "sm" | "md" | "lg"` com aspect ratio preservado) e texto de status opcional (ex.: *"Conectando à malha Rastro..."*).
+
 
