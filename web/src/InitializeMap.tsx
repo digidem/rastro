@@ -19,6 +19,7 @@ import {
   nodeAgeLabel,
   nodesGeoJson,
 } from "./lib/nodes.js";
+import { espalharPinsSobrepostos } from "./lib/overlap.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
 import { LocalState, type NodeKind } from "./store.js";
@@ -277,6 +278,10 @@ const estilo: StyleSpecification = {
       id: "nodes-circle",
       type: "circle",
       source: "nodes",
+      // Barcos por baixo, demais categorias por cima (nunca mascarados).
+      layout: {
+        "circle-sort-key": ["case", ["==", ["get", "kind"], "boat"], 0, 1],
+      },
       paint: {
         "circle-radius": ["case", ["==", ["get", "kind"], "boat"], 13, 6],
         // A cor representa a CATEGORIA (nunca frescor/bateria).
@@ -522,6 +527,18 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   let interagiu = false; // o usuário mexeu no mapa: para de recentralizar sozinho
   let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
+  // Pins reais (antes do espalhamento); reaplicados quando o zoom muda.
+  let ultimosPins: Parameters<typeof espalharPinsSobrepostos>[0] | null = null;
+
+  const aplicarPins = (map: maplibregl) => {
+    const source = map.getSource("nodes") as GeoJSONSource | undefined;
+    if (source === undefined || ultimosPins === null) {
+      return;
+    }
+    const zoom = typeof map.getZoom === "function" ? map.getZoom() : 7;
+    // biome-ignore lint/suspicious/noExplicitAny: FeatureCollection compatível com MapLibre
+    source.setData(espalharPinsSobrepostos(ultimosPins, zoom) as any);
+  };
 
   const initializeMap = () => {
     const el = mapRef();
@@ -575,6 +592,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       };
       map.on("mouseenter", "nodes-circle", () => definirCursor("pointer"));
       map.on("mouseleave", "nodes-circle", () => definirCursor(""));
+      // Pins espalhados dependem do zoom (raio constante em pixels).
+      map.on("zoomend", () => aplicarPins(map));
 
       // Clique no pin: seleciona o nó (trilha + inspector) e abre o popup.
       map.on("click", "nodes-circle", (e) => {
@@ -685,8 +704,10 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     if (map === undefined || !carregado()) {
       return;
     }
-    const source = map.getSource("nodes") as GeoJSONSource | undefined;
-    source?.setData(nodesGeoJson(nos, currentNow));
+    ultimosPins = nodesGeoJson(nos, currentNow) as NonNullable<
+      typeof ultimosPins
+    >;
+    aplicarPins(map);
   });
 
   // Enquadra os nós da malha: na primeira carga e quando entra/sai um nó da malha —
