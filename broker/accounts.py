@@ -292,8 +292,6 @@ def generate_acl(accounts: dict) -> str:
         lines.append(f"user {user}")
         lines.append(f"topic write {root}/2/e/+/{user}")
         lines.append(f"topic write {root}/2/stat/{user}")
-        lines.append(f"topic read {root}/2/e/EVU/+")
-        lines.append(f"topic read {root}/2/e/PKI/+")
         for vgw_id in sorted(set(boat_to_vgws.get(boat, []))):
             lines.append(f"topic read {root}/2/e/EVU/{vgw_id}")
 

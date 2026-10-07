@@ -445,7 +445,7 @@ def main() -> int:
     except Exception as exc:
         check("6 barcos x 6 clientes nós simultâneos sem vazamento entre barcos", False, f"exceção: {exc}")
 
-    # 8. Retained messages not delivered to late subscribers
+    # 8. Retained messages under ACL isolation (retain habilitado para LWT do firmware; isolamento via ACL)
     try:
         cli_outbox = MqttTestClient(
             f"rig-outbox-retain-{time.time_ns()}",
@@ -457,48 +457,59 @@ def main() -> int:
         )
         cli_outbox.connect(timeout=5.0)
 
-        # Verifica se o broker anunciou RetainAvailable: 0 no CONNACK MQTT v5
-        retain_avail = getattr(cli_outbox.connack_props, "RetainAvailable", None)
+        vgw0_id = vgws[0]["gateway_id"]
+        vgw1_id = vgws[1]["gateway_id"]
+        topic_b1 = f"{root}/2/e/EVU/{vgw0_id}"
+        topic_b2 = f"{root}/2/e/EVU/{vgw1_id}"
+        msg_retida_b1 = f"msg_retida_barco1_{time.time_ns()}".encode("utf-8")
+        msg_retida_b2 = f"msg_retida_barco2_{time.time_ns()}".encode("utf-8")
 
-        retained_topic = f"{root}/2/e/EVU/{vgws[0]['gateway_id']}"
-        retained_payload = b"msg_com_flag_retain_tentada"
+        # Tenta publicar com retain=True para ambos os barcos
+        cli_outbox.publish(topic_b1, msg_retida_b1, qos=1, retain=True)
+        cli_outbox.publish(topic_b2, msg_retida_b2, qos=1, retain=True)
+        cli_outbox.close()
 
-        # Tenta publicar com retain=True
-        # No MQTT v5 com retain_available false, o broker rejeita a publicação com retain
-        # (desconectando com razão 0x9A Retain not supported conforme spec MQTT v5)
-        try:
-            cli_outbox.client.publish(retained_topic, retained_payload, qos=1, retain=True)
-            cli_outbox._disconnect_event.wait(timeout=2.0)
-        except Exception:
-            pass
-        finally:
-            cli_outbox.close()
-
-        # Agora conecta um novo assinante TARDIO (late subscriber)
-        cli_late_sub = MqttTestClient(
-            f"rig-late-sub-{time.time_ns()}",
+        # Assinante tardio do Barco 1 (assina com curinga EVU/+)
+        cli_late_b1 = MqttTestClient(
+            f"rig-late-b1-{time.time_ns()}",
             nodes[0]["user"],
             nodes[0]["password"],
             ca_certs=ca_path,
             host=args.host,
             port=args.port,
         )
-        cli_late_sub.connect(timeout=5.0)
-        cli_late_sub.subscribe(retained_topic, qos=1, timeout=5.0)
+        cli_late_b1.connect(timeout=5.0)
+        cli_late_b1.subscribe(f"{root}/2/e/EVU/+", qos=1, timeout=5.0)
 
-        # Espera para verificar se recebe alguma mensagem retida
-        time.sleep(1.5)
-        late_msgs = cli_late_sub.messages
-        cli_late_sub.close()
+        # Assinante tardio do Barco 2 (assina com curinga EVU/+)
+        cli_late_b2 = MqttTestClient(
+            f"rig-late-b2-{time.time_ns()}",
+            nodes[1]["user"],
+            nodes[1]["password"],
+            ca_certs=ca_path,
+            host=args.host,
+            port=args.port,
+        )
+        cli_late_b2.connect(timeout=5.0)
+        cli_late_b2.subscribe(f"{root}/2/e/EVU/+", qos=1, timeout=5.0)
 
-        no_retained_delivered = (len(late_msgs) == 0) and (retain_avail == 0 or cli_outbox.disconnected)
+        time.sleep(1.0)
+        msgs_b1 = [p for _, p in cli_late_b1.messages]
+        msgs_b2 = [p for _, p in cli_late_b2.messages]
+        cli_late_b1.close()
+        cli_late_b2.close()
+
+        b1_ok = (msg_retida_b1 in msgs_b1) and (msg_retida_b2 not in msgs_b1)
+        b2_ok = (msg_retida_b2 in msgs_b2) and (msg_retida_b1 not in msgs_b2)
+
         check(
-            "Mensagens retidas não são entregues a assinantes tardios (retain desligado)",
-            no_retained_delivered,
-            f"broker_RetainAvailable={retain_avail}, outbox_disconnected_on_retain={cli_outbox.disconnected}, msgs_entregues_ao_assinante_tardio={len(late_msgs)}"
+            "Mensagens retidas respeitam isolamento de ACL entre barcos",
+            b1_ok and b2_ok,
+            f"b1_recebeu_b1={msg_retida_b1 in msgs_b1}, b1_vazou_b2={msg_retida_b2 in msgs_b1}, "
+            f"b2_recebeu_b2={msg_retida_b2 in msgs_b2}, b2_vazou_b1={msg_retida_b1 in msgs_b2}"
         )
     except Exception as exc:
-        check("Mensagens retidas não são entregues a assinantes tardios (retain desligado)", False, f"exceção: {exc}")
+        check("Mensagens retidas respeitam isolamento de ACL entre barcos", False, f"exceção: {exc}")
 
     print("\n=== RESUMO DOS TESTES ===")
     if failed_checks:

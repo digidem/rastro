@@ -82,12 +82,19 @@ def test_generate_passwd_e_acl():
     assert "user !a0000001\n" in acl
     assert "topic write univaja/mesh/2/e/+/!a0000001\n" in acl
     assert "topic read univaja/mesh/2/e/EVU/!f0000001\n" in acl
-    assert "topic read univaja/mesh/2/e/EVU/!f0000002" not in acl.split("user !a0000001\n")[1].split("user !a0000002\n")[0]
+    node1_block = acl.split("user !a0000001\n")[1].split("user !a0000002\n")[0]
+    assert "topic read univaja/mesh/2/e/EVU/!f0000002" not in node1_block
+    assert "EVU/+" not in node1_block
+    assert "PKI/+" not in node1_block
 
     # Nó 2
     assert "user !a0000002\n" in acl
     assert "topic write univaja/mesh/2/e/+/!a0000002\n" in acl
     assert "topic read univaja/mesh/2/e/EVU/!f0000002\n" in acl
+    node2_block = acl.split("user !a0000002\n")[1]
+    assert "topic read univaja/mesh/2/e/EVU/!f0000001" not in node2_block
+    assert "EVU/+" not in node2_block
+    assert "PKI/+" not in node2_block
 
 
 def test_validacao_rejeita_barco_inexistente(tmp_path):

@@ -227,10 +227,16 @@ def test_build_accounts_from_env_e_geracao_arquivos():
     # Isolamento entre barcos
     node1_block = acl.split("user !a0000001\n")[1].split("user !a0000002\n")[0]
     assert "!fe3573f8" not in node1_block
+    assert "EVU/+" not in node1_block
+    assert "PKI/+" not in node1_block
 
     assert "user !a0000002\n" in acl
     assert "topic write univaja/mesh/2/e/+/!a0000002\n" in acl
     assert "topic read univaja/mesh/2/e/EVU/!fe3573f8\n" in acl
+    node2_block = acl.split("user !a0000002\n")[1]
+    assert "!e4068a7a" not in node2_block
+    assert "EVU/+" not in node2_block
+    assert "PKI/+" not in node2_block
 
 
 def test_build_accounts_sem_gateway_mantem_leitura_legada_no_ingest():
