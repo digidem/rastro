@@ -83,24 +83,45 @@ export function matchesQuery(node: NodeInfo, query: string): boolean {
  * - ou se o nome contiver "barco" (normalizado sem acentos, case-insensitive).
  */
 export function isBoatNode(node: NodeInfo): boolean {
+  const nome =
+    typeof node.nome === "string" ? normalizar(node.nome) : "";
+  // Exclusão estrita: rádios portáteis e estações fixas nunca são barco.
+  if (NAO_BARCO_RE.test(nome)) {
+    return false;
+  }
   if (node.kind === "boat") {
     return true;
   }
-  if (
-    typeof node.nome === "string" &&
-    normalizar(node.nome).includes("barco")
-  ) {
-    return true;
-  }
-  return false;
+  return nome.includes("barco");
 }
 
-/** Categoria efetiva: detecta "boat" pelo nome ou kind; senão usa kind ou "unknown". */
+const NAO_BARCO_RE = /movel|handheld|cartao|teto|base|fixo|t1000/;
+
+/** Infere kind pelo nome quando o backend não informa um explícito. */
+function inferKindFromName(nome?: string): NodeKind | null {
+  if (typeof nome !== "string") {
+    return null;
+  }
+  const n = normalizar(nome);
+  if (/teto|fixo|base/.test(n)) {
+    return "fixed_station";
+  }
+  if (/movel|handheld|cartao|t1000/.test(n)) {
+    return "handheld";
+  }
+  return null;
+}
+
+/** Categoria efetiva: barco pelo nome/kind; senão kind explícito, inferido do nome ou "unknown". */
 export function nodeKind(node: NodeInfo): NodeKind {
   if (isBoatNode(node)) {
     return "boat";
   }
-  return node.kind ?? "unknown";
+  if (node.kind === "boat") {
+    // kind=boat do backend contradito pelo nome (movel/teto/cartao…): infere.
+    return inferKindFromName(node.nome) ?? "unknown";
+  }
+  return node.kind ?? inferKindFromName(node.nome) ?? "unknown";
 }
 
 /** Fix estritamente mais velho que 12 h (timestamp inválido nunca é "antigo"). */
@@ -405,6 +426,12 @@ function inferHardwareFromName(nome?: string): string | null {
   }
   if (n.includes("t1000") || n.includes("cartao")) {
     return "TRACKER_T1000_E";
+  }
+  if (n.includes("admin") && n.includes("movel")) {
+    return "TBEAM";
+  }
+  if (n.includes("movel") || n.includes("teto")) {
+    return "HELTEC_V4";
   }
   return null;
 }

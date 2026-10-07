@@ -25,7 +25,7 @@ import type { NodeInfo } from "../../src/store.js";
 const no = (over: Partial<NodeInfo> = {}): NodeInfo => ({
   nodeNum: 0xabcd1234,
   nodeId: "!abcd1234",
-  nome: "Base A",
+  nome: "Nó A",
   posTime: "2026-09-29T12:00:00.000Z",
   battery: 87,
   lon: -70.3,
@@ -105,7 +105,7 @@ describe("nodeKind", () => {
   });
 
   it("sem metadado e sem 'barco' no nome, é 'unknown'", () => {
-    expect(nodeKind(no({ nome: "Base Curuçá" }))).toBe("unknown");
+    expect(nodeKind(no({ nome: "Base Curuçá" }))).toBe("fixed_station");
     expect(nodeKind(no({ nome: "Meshtastic 1234" }))).toBe("unknown");
   });
 });
@@ -331,7 +331,7 @@ describe("nodesGeoJson", () => {
     expect(fc.features[0].properties).toEqual({
       id: 0xabcd1234,
       nodeNum: 0xabcd1234,
-      nome: "Base A",
+      nome: "Nó A",
       shortName: "PT1",
       kind: "handheld",
       hwModel: "",
