@@ -322,6 +322,7 @@ def main():
         cdp = Cdp(pagina["webSocketDebuggerUrl"])
         cdp.call("Network.enable")
         cdp.call("Page.enable")
+        cdp.call("Page.addScriptToEvaluateOnNewDocument", source="localStorage.setItem('rastro_basemap', 'osm');")
 
         cdp.call("Page.navigate", url=base + "/")
         achou = cdp.espera(lambda: all(analisa(cdp)), segundos=15)
