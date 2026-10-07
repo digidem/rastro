@@ -301,7 +301,7 @@ describe("InitializeMap — popup", () => {
       ],
     });
     expect(popups).toHaveLength(1);
-    expect(popupAberto().html).not.toContain("/devices/heltec_v4.svg");
+    expect(popupAberto().html).toContain("/devices/heltec_v4.svg");
     expect(popupAberto().html).toContain("Base A");
     expect(popupAberto().html).toContain("Heltec V4");
 
@@ -397,6 +397,61 @@ describe("InitializeMap — basemap padrão OSM", () => {
     mapa().emit("click", { point: { x: 1, y: 1 } });
     expect(popup.remove).toHaveBeenCalled();
     expect(LocalState.localState.selected).toBeNull();
+  });
+
+  it("popup exibe SVG ampliado do dispositivo e infere o modelo quando hwModel estiver ausente", async () => {
+    const api = {
+      track: vi
+        .fn()
+        .mockReturnValue(
+          Promise.resolve({ line: null, lines: [], points: [] }),
+        ),
+    } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Nó barco sem hwModel explícito infere Heltec V4
+    LocalState.setNodes([
+      {
+        ...no(42),
+        nome: "univaja-itui-barco-1",
+        hwModel: null,
+      },
+    ]);
+
+    // Testa tanto ausência quanto string vazia nas properties da feature
+    mapa().renderizados = [{}];
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: [-30.02, -4.22] },
+          properties: {
+            nodeNum: 42,
+            nome: "univaja-itui-barco-1",
+            hwModel: "",
+          },
+        },
+      ],
+    });
+
+    const popup = popupAberto();
+    expect(popup.html).toContain("/devices/heltec_v4.svg");
+    expect(popup.html).toContain("Heltec V4");
+    expect(popup.html).not.toContain("Modelo não informado");
+  });
+
+  it("camada boat-tracks-line é tracejada indicando trilha coletiva", () => {
+    const m = prepara(false);
+    const estilo = (
+      m.opts as {
+        style: {
+          layers: Array<{ id: string; paint?: Record<string, unknown> }>;
+        };
+      }
+    ).style;
+    const boatTracks = estilo.layers.find((l) => l.id === "boat-tracks-line");
+    expect(boatTracks).toBeDefined();
+    expect(boatTracks?.paint?.["line-dasharray"]).toEqual([3, 2]);
   });
 
   it("camada nodes-boat rotaciona os barcos com o rumo e alinha ao mapa", () => {

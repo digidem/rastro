@@ -15,8 +15,10 @@ import {
 } from "./lib/dwell.js";
 import {
   batteryLabel,
+  deviceModelSvgUrl,
   hardwareModelLabel,
   hasConfirmedPosition,
+  inferHardwareFromName,
   isAgeWarning,
   isBoatNode,
   isNodeOlderThan7Days,
@@ -242,11 +244,12 @@ const estilo: StyleSpecification = {
       id: "boat-tracks-line",
       type: "line",
       source: "boat-tracks",
-      layout: { "line-join": "round", "line-cap": "round" },
+      layout: { "line-join": "miter", "line-cap": "butt" },
       paint: {
         "line-color": "#38bdf8",
         "line-width": 1.5,
         "line-opacity": 0.55,
+        "line-dasharray": [3, 2],
       },
     },
     {
@@ -454,12 +457,17 @@ const extrairInfoDoPin = (props: Record<string, unknown>): InfoPinPopup => {
 };
 
 const gerarHtmlPopup = (info: InfoPinPopup): string => {
-  const rotuloModelo = info.hwModel
-    ? (hardwareModelLabel({
-        nome: info.nome,
-        hwModel: info.hwModel,
-      } as { nome: string; hwModel?: string | null }) ?? info.hwModel)
-    : "Modelo não informado";
+  const rotuloModelo =
+    hardwareModelLabel({
+      nome: info.nome,
+      hwModel: info.hwModel || null,
+    } as { nome: string; hwModel?: string | null }) ??
+    (info.hwModel || "Modelo não informado");
+
+  const svgUrl = deviceModelSvgUrl(
+    info.hwModel || inferHardwareFromName(info.nome),
+  );
+
   const tagCurta = info.shortName
     ? `<span class="font-semibold text-slate-200">${esc(info.shortName)}</span><span class="text-slate-500">·</span>`
     : "";
@@ -484,18 +492,30 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
   `;
 
   return `
-    <div class="px-3 py-2 text-slate-100 min-w-[240px] max-w-[320px]">
-      <div class="font-bold text-white text-sm leading-snug truncate" title="${esc(info.nome)}">
-        ${esc(info.nome)}
+    <div class="p-1 text-slate-100 min-w-[260px] max-w-[340px]">
+      <div class="flex items-start gap-3">
+        <div class="h-12 w-12 shrink-0 rounded-lg bg-slate-900 border border-slate-700/80 p-1 flex items-center justify-center shadow-inner">
+          <img
+            src="${esc(svgUrl)}"
+            alt="${esc(rotuloModelo)}"
+            class="h-full w-full object-contain filter drop-shadow"
+            onerror="this.src='/devices/unknown.svg'"
+          />
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="font-bold text-white text-sm leading-snug truncate" title="${esc(info.nome)}">
+            ${esc(info.nome)}
+          </div>
+          <div class="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5">
+            ${tagCurta}
+            <span class="font-mono text-emerald-400 bg-slate-950 px-1 py-0.2 rounded border border-slate-800 text-[10px] font-medium">${esc(info.hex)}</span>
+          </div>
+          <div class="text-[11px] font-medium text-slate-300 mt-1 truncate">
+            ${esc(rotuloModelo)}
+          </div>
+        </div>
       </div>
-      <div class="flex items-center gap-1.5 text-xs text-slate-300 mt-0.5">
-        ${tagCurta}
-        <span class="font-mono text-emerald-400 bg-slate-950 px-1 py-0.2 rounded border border-slate-800 text-[10px] font-medium">${esc(info.hex)}</span>
-      </div>
-      <div class="text-[11px] font-medium text-slate-300 mt-1.5 truncate">
-        ${esc(rotuloModelo)}
-      </div>
-      <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-1">
+      <div class="flex items-center gap-1.5 text-[10px] text-slate-400 mt-2.5 pt-2 border-t border-slate-800">
         ${tagBateria}
         ${tagIdade}
         <span>fix: ${esc(dataFixa(info.posTime))}</span>
