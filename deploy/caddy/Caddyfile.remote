@@ -9,7 +9,7 @@
 	tls internal
 	# CSP estrita (sem inline/eval/terceiros); `blob:` exigido pelos workers do maplibre.
 	header {
-		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://mt1.google.com https://server.arcgisonline.com; font-src 'self'; worker-src 'self' blob:; child-src blob:; connect-src 'self' https://mt1.google.com https://server.arcgisonline.com; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
 		-Server
