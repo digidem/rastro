@@ -6,7 +6,7 @@
 |---|--------|--------|----------|------------|
 | 1 | Limpeza segura do banco legado `mqtt` | ✅ Concluída (2026-10-01) | `DROP DATABASE mqtt` executado; `rastro` intacto (7 nós / 143 posições). Script agora é inspetor read-only (DROP removido); 3 shadow DBs `prisma_migrate_shadow_db_*` dropados (2026-10-01, vazios). Papel `mqtt` REMOVIDO (2026-10-01, a pedido do dono; origem: protótipo `meshtastic-map` criado por ele, sem uso): REVOKE ALL das 8 tabelas de `warehouse.public` + ACL padrão do `cmiadmin` (só entradas do `mqtt`; demais ACLs idênticas, verificado por diff) e `DROP ROLE mqtt` | 🔴 Alta |
 | 2 | Conexão admin: `/superset_metastore` → `/postgres` | ✅ Concluída (2026-10-01) | `RASTRO_PG_ADMIN_URL` do app `rastro-setup` e `DB=` do `.env` agora apontam para `/postgres`; `superset_metastore` sem tabelas do Rastro. Considerar apagar `rastro-setup` (docs/OPERACAO-caprover.md §3) | 🔴 Alta |
-| 3 | Versionar diagramas `rastro_flow*.png` | ⏳ Aguardando | Requer aprovação do usuário para `git add` | 🟡 Baixa |
+| 3 | Versionar logo oficial e descartar diagramas PNG obsoletos | ✅ Concluída (2026-10-06) | `docs/rastro_logo.svg` comprimido com SVGO (-39.1%) e commitado; PNGs legados `rastro_flow*.png` descartados | 🟡 Baixa |
 | 4 | Ingest nativo Meshtastic (ServiceEnvelope) dos nós Nó Solar do Barco | 🟡 Imagens 0.7.0 implantadas (ingest/api/broker/web) + migração 02 aplicada em produção (2026-10-05); ingest nativo DESLIGADO (RASTRO_NATIVE_ENABLED não definido) | Pendências do dono: checklist em «Tarefa 4 — status» (porta 8883/firewall Azure, certificado real, contas reais, PSK EVU, migração 02 em produção) | 🔴 Alta |
 | 5 | Chat no mapa: escritório ⇄ tripulação via MQTT (EVU downlink) | 🟡 Imagens 0.7.0 implantadas; chat sem uso até criar o app `rastro-chat` (imagem rastro-ingest:0.7.0, comando `python -m rastro_gateway.chat`) e o broker com contas; testes de campo pendentes | Mesmas pendências da tarefa 4 + conta `outbox` + testes de campo com humanos | 🔴 Alta |
 | 6 | Ações remotas por nó no mapa: **reiniciar** e **desligar** | 📝 Planejado | Botão por nó no visualizador (requer autenticação admin). Regras: nós **solares/fixed = somente reiniciar** (desligar é irreversível por rádio — ninguém no local para apertar o botão); desligar oferecido só em nós com tripulação por perto (morto até religarem fisicamente); **nunca** factory-reset remoto; transporte = AdminMessage PKC pela malha (depende do caminho de comando da tarefa 4/5 — hoje inexistente; guardrails no repo `univaja-lora`, skill `remote-management` §3.3) | 🔴 Alta |
@@ -20,12 +20,12 @@
 | 14 | Web App: Trilhas contínuas e suaves para nós de barco deselecionados | ✅ Concluída (2026-10-06) | Trilhas coletivas suaves de barcos quando deselecionado; ao selecionar um nó, esconde todos os outros caminhos | 🔴 Alta |
 | 15 | Web App: Botão de camadas com Satélite como mapa padrão | ✅ Concluída (2026-10-06) | Seletor de camada no mapa (Satélite como default, OSM e PMTiles vetorial local) com persistência em localStorage | 🔴 Alta |
 | 16 | Web App: Navegação responsiva mobile em 2 colunas com 2 linhas e ícones | ✅ Concluída (2026-10-06) | Controles mobile em 2 colunas (extremas esquerda e direita) com 2 linhas de botões (apenas ícones), menus acessíveis e auto-fechamento | 🔴 Alta |
-| 17 | Web App: Clique fora no mapa desseleciona nós e fecha popups | 📝 Planejado | Ao clicar em área livre do mapa (canvas fora de qualquer pin/símbolo), definir `selected = null` e remover popup aberto | 🔴 Alta |
-| 18 | Web App: Revisão da detecção de barcos e inferência de nós não-embarcações (`movel`, `teto`, `cartao`) | 📝 Planejado | Corrigir falsos barcos (ex.: `univaja-atalaia-movel-2`); inferir `kind` (handheld/fixed) e hardware de acordo com convenção da frota | 🔴 Alta |
-| 19 | Web App: Algoritmo de barco parado/ancorado (Dwell & Anchor Detection) contra trilhas falsas | 📝 Planejado | Algoritmo ST-DAH (Spatio-Temporal Dwell Accumulator with Hysteresis) para suprimir novelos de jitter e estabilizar rumo do barco | 🔴 Alta |
-| 20 | Web App: Logo animado como Loader e Favicon (`docs/rastro_logo.svg`) | 📝 Planejado | Usar `docs/rastro_logo.svg` com animação suave como loader e convertê-lo para favicon do visualizador (`/favicon.svg`) | 🟡 Média |
+| 17 | Web App: Clique fora no mapa desseleciona nós e fecha popups | ✅ Concluída (2026-10-06) | Ao clicar em área livre do mapa, `LocalState.select(null)` e remoção de popups; trilhas coletivas restauradas | 🔴 Alta |
+| 18 | Web App: Revisão da detecção de barcos e inferência de nós não-embarcações (`movel`, `teto`, `cartao`) | ✅ Concluída (2026-10-06) | Rejeição estrita de barcos para rádios portáteis/fixos; inferência de hardware e desambiguação de pins sobrepostos no mapa | 🔴 Alta |
+| 19 | Web App: Algoritmo de barco parado/ancorado (Dwell & Anchor Detection) contra trilhas falsas | ✅ Concluída (2026-10-06) | Algoritmo ST-DAH implementado em `lib/dwell.ts` para suprimir hairballs e estabilizar azimute no mapa | 🔴 Alta |
+| 20 | Web App: Logo animado como Loader e Favicon (`docs/rastro_logo.svg`) | ✅ Concluída (2026-10-06) | Loader animado SolidJS (`LogoLoader.tsx`) com radar/pulso e `web/public/favicon.svg` com fundo transparente | 🟡 Média |
 
-> **Arquivos ainda não monitorados** (verificados via `git status`): `docs/rastro_logo.svg`, `rastro_flow.png`, `rastro_flow_readme.png`, `.agents/`.
+> **Arquivos ainda não monitorados** (verificados via `git status`): `.agents/`, `deploy/sim.nonexistent_placeholder`.
 
 ---
 
@@ -206,18 +206,11 @@ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
 
 ---
 
-## Tarefa 3: Versionamento dos Diagramas de Arquitetura — ⏳ Pendente (aguardando aprovação)
+## Tarefa 3: Versionamento do Logo Oficial e Descarte de Diagramas PNG — ✅ Concluída em 2026-10-06 (commit `2952d39`)
 
 ### Contexto
-Durante a sessão, foram gerados e ajustados com precisão dois diagramas da plataforma Rastro:
-- `rastro_flow.png`: Diagrama de fluxo arquitetural completo (Gateway Serial $\rightarrow$ Mosquitto WSS $\rightarrow$ Ingest PostgreSQL $\rightarrow$ FastAPI $\rightarrow$ SolidJS Viewer).
-- `rastro_flow_readme.png`: Versão dimensionada para exibição direta no `README.md`.
-
-Ambos os arquivos estão prontos e preservados na raiz do repositório, mas intencionalmente **não comitados** a pedido do usuário.
-
-### Instruções para o Próximo Agente
-- [ ] Perguntar ao usuário se deseja versionar os diagramas agora (`git add rastro_flow.png rastro_flow_readme.png`).
-- [ ] Caso aprovado, referenciar as imagens na documentação principal (`README.md` ou `docs/ARQUITETURA.md`) e efetuar o commit.
+- `docs/rastro_logo.svg`: Vetor oficial de identidade visual do Rastro, base para o favicon do visualizador e componente animado `LogoLoader.tsx`. Comprimido via SVGO (-39.1%, de 205.7 KiB para 125.3 KiB) preservando o `viewBox="0 0 450 500"` intacto e adicionado ao controle de versão.
+- `rastro_flow*.png`: Diagramas de fluxo preliminares que nunca foram versionados e tornaram-se obsoletos frente à arquitetura consolidada no `AGENTS.md`. Descartados do disco conforme orientação do projeto.
 
 ---
 
@@ -390,7 +383,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
     - Renderizar marcador tático de ancoragem (`dwell-point`) no centróide da parada com tooltip/popup contendo horário de chegada e tempo total parado (ex.: *"Ancorado há 4h 15m"*).
     - Adicionar badge de status nos cards da sidebar: `🟢 Navegando (X km/h)` vs `⚓ Ancorado / Parado (há Xh)`.
 
-### Tarefa 20: Logo Animado como Loader e Favicon (`docs/rastro_logo.svg`) — ✅ Concluído
+### Tarefa 20: Logo Animado como Loader e Favicon (`docs/rastro_logo.svg`) — ✅ Concluído (ab4c62c, 9386e66)
 - [x] **Favicon do Visualizador:**
   - Copiar e adaptar `docs/rastro_logo.svg` para `web/public/favicon.svg` (viewBox quadrado 1:1, otimizado para renderização nítida em abas de navegadores e preservando cores nos temas escuro e claro com badge de fundo arredondado).
   - Atualizar `web/index.html` para incluir `<link rel="icon" type="image/svg+xml" href="/favicon.svg" />`.
