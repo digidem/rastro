@@ -40,7 +40,8 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 | Tarefa | Comando |
 |---|---|
 | Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 132 testes) |
-| Servidor mock local (com dados de teste) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:mock` (acessível via LAN/VPN) |
+| Servidor dev com dados reais da API | `cd web && pnpm dev` (proxy para `VITE_API_TARGET`, definido em `web/.env.development`) |
+| Servidor dev com dados de teste (fixtures) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:test` (acessível via LAN/VPN; `dev:mock` é alias) |
 | Lint / Formatação do frontend | `cd web && pnpm biome check` |
 | Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (111 testes) |
 | Simulação de deploy CapRover | `deploy/sim/run.sh <template.yml>` |

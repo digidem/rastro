@@ -22,7 +22,7 @@ docker compose -f deploy/docker-compose.yml ps --format '{{.Service}} {{.Status}
 |---|---|---|
 | Gateway + ingest | `services/rastro_gateway` | `pip install -e . pytest && pytest -q` |
 | API | `services/rastro_api` | `pip install -e ".[dev]"`; precisa de um PostgreSQL de teste: `RASTRO_PG_HOST`, `RASTRO_PG_PORT`, `RASTRO_PG_USER`, `RASTRO_PG_PASSWORD` e `RASTRO_API_TOKEN` no ambiente; os testes criam e apagam o banco `rastro_api_test` |
-| Viewer dev (mock) | `web/` | `pnpm dev:mock` (fixtures locais da frota, sem PostgreSQL nem API) |
+| Viewer dev (teste) | `web/` | `pnpm dev:test` (fixtures locais da frota, sem PostgreSQL nem API) |
 | Viewer unitários | `web/` | `pnpm test` (Vitest) |
 | Viewer e2e | `web/` | `pnpm e2e` (Playwright) com `RASTRO_API_TOKEN` no ambiente |
 | Lint/format | `web/` | `pnpm biome check` |
