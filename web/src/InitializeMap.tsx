@@ -371,6 +371,9 @@ const estilo: StyleSpecification = {
       filter: ["==", ["get", "kind"], "boat"],
       layout: {
         "icon-image": "boat-icon",
+        // The sprite is loaded asynchronously; reveal this layer only after
+        // addImage succeeds so MapLibre never asks for an absent image.
+        visibility: "none",
         "icon-size": 0.5,
         "icon-anchor": "center",
         "icon-rotate": ["get", "bearing"],
@@ -613,23 +616,33 @@ const featuresDeParadas = (simp: TrilhaSimplificada | null) =>
     geometry: { type: "Point" as const, coordinates: d.centroide },
   }));
 
-const registrarIconeBarco = (map: maplibregl): void => {
-  if (
-    typeof window === "undefined" ||
-    typeof map.addImage !== "function" ||
-    map.hasImage?.("boat-icon")
-  ) {
-    return;
+const registrarIconeBarco = (
+  map: maplibregl,
+  aoCarregar: () => void,
+  aoFalhar: () => void,
+): (() => void) => {
+  if (typeof window === "undefined" || typeof map.addImage !== "function") {
+    aoFalhar();
+    return () => undefined;
+  }
+  if (map.hasImage?.("boat-icon")) {
+    aoCarregar();
+    return () => undefined;
   }
   const img = new Image();
+  let cancelado = false;
   img.crossOrigin = "anonymous";
   img.onload = () => {
+    if (cancelado) {
+      return;
+    }
     try {
       const canvas = document.createElement("canvas");
       canvas.width = 64;
       canvas.height = 64;
       const ctx = canvas.getContext("2d");
       if (!ctx) {
+        aoFalhar();
         return;
       }
       ctx.drawImage(img, 0, 0, 64, 64);
@@ -638,11 +651,22 @@ const registrarIconeBarco = (map: maplibregl): void => {
         map.addImage("boat-icon", imgData);
         map.triggerRepaint?.();
       }
+      aoCarregar();
     } catch {
-      // Ignora falha de renderização canvas
+      aoFalhar();
+    }
+  };
+  img.onerror = () => {
+    if (!cancelado) {
+      aoFalhar();
     }
   };
   img.src = "/devices/boat.svg";
+  return () => {
+    cancelado = true;
+    img.onload = null;
+    img.onerror = null;
+  };
 };
 
 export const InitializeMap: Component<InitializeMapProps> = (props) => {
@@ -657,6 +681,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   let interagiu = false; // o usuário mexeu no mapa: para de recentralizar sozinho
   let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
+  let cancelarCargaIcone: (() => void) | undefined;
   // Pins reais (antes do espalhamento); reaplicados quando o zoom muda.
   let ultimosPins: Parameters<typeof espalharPinsSobrepostos>[0] | null = null;
 
@@ -689,6 +714,49 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       attributionControl: { compact: false },
     });
     setCurrentView(map);
+    const layerDoBarcoExiste = () => Boolean(map.getLayer?.("nodes-boat"));
+    const exibirBarco = () => {
+      if (layerDoBarcoExiste()) {
+        map.setLayoutProperty("nodes-boat", "visibility", "visible");
+      }
+    };
+    const exibirMarcadorDeReserva = () => {
+      if (!map.getLayer?.("nodes-circle")) {
+        return;
+      }
+      map.setPaintProperty("nodes-circle", "circle-color", [
+        "match",
+        ["get", "kind"],
+        "boat",
+        "#E8DCC0",
+        "fixed_station",
+        "#f59e0b",
+        "handheld",
+        "#10b981",
+        "#94a3b8",
+      ]);
+      map.setPaintProperty("nodes-circle", "circle-stroke-color", [
+        "case",
+        ["==", ["get", "kind"], "boat"],
+        "#0F172A",
+        "#121b14",
+      ]);
+    };
+    const carregarIconeBarco = () => {
+      if (!layerDoBarcoExiste()) {
+        return;
+      }
+      map.setLayoutProperty("nodes-boat", "visibility", "none");
+      cancelarCargaIcone?.();
+      cancelarCargaIcone = registrarIconeBarco(
+        map,
+        exibirBarco,
+        exibirMarcadorDeReserva,
+      );
+    };
+    // A imagem customizada é removida ao trocar/recarregar o estilo. Registrar
+    // antes que o estilo renderize a camada evita o aviso de imagem ausente.
+    map.on("style.load", carregarIconeBarco);
     // Gesto do usuário (arrastar/zoom/toque) desliga o enquadramento automático.
     for (const ev of ["dragstart", "wheel", "touchstart", "dblclick"]) {
       map.on(ev, () => {
@@ -705,13 +773,6 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       }
       iniciado = true;
       setCarregado(true);
-      // Registra ícone de barco para nós fluviais
-      registrarIconeBarco(map);
-      map.on("styleimagemissing", (e) => {
-        if (e.id === "boat-icon") {
-          registrarIconeBarco(map);
-        }
-      });
       // Camadas GeoJSON extras (RASTRO_OVERLAYS_URL na API), sob pins e trilhas
       fetchOverlays().then((camadas) =>
         adicionarOverlays(map, camadas, "boat-tracks-line"),
@@ -855,6 +916,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   };
 
   onCleanup(() => {
+    cancelarCargaIcone?.();
     currentView()?.remove();
     setCurrentView(undefined);
     setCarregado(false);

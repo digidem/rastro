@@ -22,6 +22,7 @@ vi.mock("maplibre-gl", () => {
   class FakeMap {
     handlers = new Map<string, Array<(e: unknown) => void>>();
     sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
+    images = new Set<string>();
     flyTo = vi.fn();
     fitBounds = vi.fn();
     getZoom = vi.fn(() => 7);
@@ -75,6 +76,9 @@ vi.mock("maplibre-gl", () => {
     renderizados: unknown[] = [];
     queryRenderedFeatures = vi.fn(() => this.renderizados);
     setLayoutProperty = vi.fn();
+    setPaintProperty = vi.fn();
+    hasImage = vi.fn((nome: string) => this.images.has(nome));
+    addImage = vi.fn((nome: string) => this.images.add(nome));
     once(ev: string, cb: (e: unknown) => void) {
       this.on(ev, cb);
     }
@@ -325,6 +329,7 @@ describe("InitializeMap — popup", () => {
 
 describe("InitializeMap — basemap padrão OSM", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -352,6 +357,79 @@ describe("InitializeMap — basemap padrão OSM", () => {
     expect(osm.tiles[0]).toBe(
       `${window.location.origin}/api/osm/{z}/{x}/{y}.png`,
     );
+  });
+
+  it("mantém a camada de barcos oculta até o ícone SVG estar registrado", () => {
+    const m = prepara(false);
+    const estilo = (
+      m.opts as {
+        style: { layers: { id: string; layout?: Record<string, unknown> }[] };
+      }
+    ).style;
+    const camadaBarco = estilo.layers.find(
+      (camada) => camada.id === "nodes-boat",
+    );
+    expect(camadaBarco?.layout?.visibility).toBe("none");
+  });
+
+  it("exibe a camada de barcos só depois de registrar a imagem", () => {
+    const imagens: {
+      onload: (() => void) | null;
+      onerror: (() => void) | null;
+      crossOrigin: string;
+      src: string;
+    }[] = [];
+    vi.stubGlobal(
+      "Image",
+      class {
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        crossOrigin = "";
+        set src(_value: string) {
+          imagens.push(this);
+        }
+      },
+    );
+    const contexto = {
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(64 * 64 * 4) })),
+    };
+    const criarElementoOriginal = document.createElement.bind(document);
+    const criarElemento = vi
+      .spyOn(document, "createElement")
+      .mockImplementation((nome: string) => {
+        if (nome === "canvas") {
+          return {
+            width: 0,
+            height: 0,
+            getContext: () => contexto,
+          } as unknown as HTMLCanvasElement;
+        }
+        return criarElementoOriginal(nome);
+      });
+
+    const m = prepara(false);
+    expect(imagens).toHaveLength(1);
+    expect(m.setLayoutProperty).toHaveBeenCalledWith(
+      "nodes-boat",
+      "visibility",
+      "none",
+    );
+    expect(m.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nodes-boat",
+      "visibility",
+      "visible",
+    );
+
+    imagens[0].onload?.();
+
+    expect(m.addImage).toHaveBeenCalledWith("boat-icon", expect.anything());
+    expect(m.setLayoutProperty).toHaveBeenLastCalledWith(
+      "nodes-boat",
+      "visibility",
+      "visible",
+    );
+    expect(criarElemento).toHaveBeenCalledWith("canvas");
   });
 
   it("sem basemap próprio (HEAD falha) mantém o OSM e não adiciona pmtiles", async () => {
