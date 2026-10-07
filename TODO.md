@@ -19,8 +19,9 @@
 | 13 | Web App: Exibição do modelo de hardware e imagem SVG na lista de nós (apenas na sidebar) | ✅ Concluída (2026-10-06) | Mostrar nome/badge do hardware do nó e SVG exclusivo na sidebar (barco/hardware); mapa sem SVG de hardware | 🔴 Alta |
 | 14 | Web App: Trilhas contínuas e suaves para nós de barco deselecionados | ✅ Concluída (2026-10-06) | Trilhas coletivas suaves de barcos quando deselecionado; ao selecionar um nó, esconde todos os outros caminhos | 🔴 Alta |
 | 15 | Web App: Botão de camadas com Satélite como mapa padrão | ✅ Concluída (2026-10-06) | Seletor de camada no mapa (Satélite como default, OSM e PMTiles vetorial local) com persistência em localStorage | 🔴 Alta |
+| 16 | Web App: Navegação responsiva mobile em 2 colunas com 2 linhas e ícones | ✅ Concluída (2026-10-06) | Controles mobile em 2 colunas (extremas esquerda e direita) com 2 linhas de botões (apenas ícones), menus acessíveis e auto-fechamento | 🔴 Alta |
 
-> **Arquivos ainda não commitados** (verificados via `git status`): `AGENTS.md`, `TODO.md`, `scripts/rastro_cleanup_legacy_db.py`, `rastro_flow.png`, `rastro_flow_readme.png`.
+> **Arquivos ainda não monitorados** (verificados via `git status`): `docs/rastro_logo.svg`, `rastro_flow.png`, `rastro_flow_readme.png`, `.agents/`.
 
 ---
 
@@ -271,7 +272,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   Limitações: sem acesso ao contêiner do CapRover (não dá para exec/logs pela API); produção só muda com o go do dono.
 - [ ] Verificar o broker em produção: sha256 de `/rastro/*` no contêiner contra `broker/` local (só leitura) e nomes (não valores) das variáveis do app.
 - [ ] `univaja-lora` sem remoto git (`fee73ba`, `b08dcf5` só locais). Docs/AGENTS/TUTORIAL do 30 caracteres estão na árvore, misturados com o rename EVU de outra sessão, não commitados. Rodar `fleet_sync.py --check` antes de commitar o `fleet_sync.py` modificado.
-- [ ] Web: 1 teste do `pnpm test` falha na árvore atual (trabalho da outra sessão em fixtures/vite); não commitado.
+- [x] Web: Todos os 181 testes unitários passando em 12 arquivos (Vitest). Suporte a dados reais via proxy HTTPS/local e auto-login em ambiente de desenvolvimento.
 - [ ] **1º rádio real**: configurar um nó de barco (servidor `137.116.59.230:8883` ou `rastro-broker.javari.guardianconnector.net`, TLS, usuário = id do nó, senha = `python3 scripts/rastro_node_credentials.py --secret <RASTRO_NATIVE_SECRET do app rastro-broker> --node '!id'`, raiz `univaja/mesh`, canal EVU com uplink+downlink, Wi-Fi ligado). Depois conferir `raw_envelopes`/`gateway_status`/`positions` (sem imprimir coordenadas). Ainda NÃO testado com firmware real: envelopes do Heltec V4, fila de 16 mensagens, como o app Meshtastic mostra o remetente «Rastro».
 - [ ] Testes de campo (tarefa 5): escritório→tripulação e tripulação→escritório com humano; Starlink desligada/religada; 5–6 barcos ao mesmo tempo sem vazar mensagem entre rios; barco offline = mensagem expira (TTL).
 - [ ] Sexto barco (Atalaia): só `atx1` (teste) existe no inventário; quando houver `univaja-atalaia-barco-1`, rodar `python3 scripts/rastro_nodes_from_fleet.py --apply`. `cartao-2/3` (kind boat, sem nome da frota) ficaram de fora de propósito.
@@ -296,11 +297,11 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 
 ---
 
-## Tarefas 10 a 15: Melhorias do Visualizador Web (Frontend SolidJS)
+## Tarefas 10 a 16: Melhorias do Visualizador Web (Frontend SolidJS)
 
 ### Tarefa 10: Fixtures e Ambiente Local com Dados Reais do Servidor — ✅ Concluída em 2026-10-06
-- [x] Proxy de desenvolvimento configurado em `web/vite.config.ts` encaminhando `/api` para `http://127.0.0.1:8080` (API FastAPI real em contêiner).
-- [x] Configuração `web/.env.development` com `VITE_API_TOKEN` e `VITE_API_TARGET`.
+- [x] Proxy de desenvolvimento configurado em `web/vite.config.ts` encaminhando `/api` para o backend (suporte tanto a contêiner local `:8080` quanto a proxy HTTPS de produção com SSL flexível).
+- [x] Configuração `web/.env.development` com `VITE_API_TOKEN` e `VITE_API_TARGET` (com auto-login e injeção transparente de credenciais Bearer em dev).
 - [x] Atualização de `web/src/fixtures/nodesFixture.ts` para mimetizar dados reais:
   - Baterias conectadas a 5V/USB reportando 101% (ex.: `univaja-curuca-barco-1`, `univaja-itui-barco-1`).
   - Nós inativos com mais de 7 dias (ex.: `univaja-itui-barco-1` com 8 dias / visto em 2026-09-28 no banco real, `curuca-campo-1` com 9 dias, `jaquirana-campo-1` com 12 dias).
@@ -331,4 +332,13 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [x] Adicionar fonte de mapa satélite (ArcGIS World Imagery) e defini-la como basemap padrão do mapa.
 - [x] Criar botão/menu de camadas nos controles do mapa (`MapControls.tsx`) permitindo alternar entre Satélite, OpenStreetMap e Basemap Local (PMTiles offline).
 - [x] Salvar a preferência da camada no store / localStorage com proteção contra 404 em basemap local ausente.
+
+### Tarefa 16: Navegação Responsiva Mobile em 2 Colunas com 2 Linhas e Ícones — ✅ Concluída em 2026-10-06
+- [x] Em telas mobile (`< md`), controles de navegação dispostos em **duas colunas nas extremidades**:
+  - Coluna esquerda: Linha 1 = Camadas (ícone `StackSimpleIcon`), Linha 2 = Enquadrar todos (ícone `ArrowsOutIcon`).
+  - Coluna direita: Linha 1 = Nós da malha (ícone `ListIcon`), Linha 2 = Chat (ícone `ChatCircleTextIcon` com badge não lidas).
+- [x] Botões estritamente com ícones (sem labels de texto em mobile), tamanho 40x40px acessível para toque.
+- [x] Menu dropdown de camadas posicionado abaixo do botão com suporte a fechamento ao clicar fora (click-outside) e tecla `Escape`.
+- [x] Semântica ARIA completa (`role="menu"`, `role="menuitemradio"`, `aria-checked`, `aria-expanded`, `aria-haspopup`).
+- [x] Em telas desktop (`>= md`), mantém barra horizontal superior unificada com labels completos.
 
