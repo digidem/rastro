@@ -137,6 +137,27 @@ describe("simplifyTrackDwells", () => {
     expect(r.linhas[0][0][0]).toBeLessThan(r.linhas[0][3][0]);
   });
 
+  it("spike isolado no último fix da trilha mantém estado parado (em curso)", () => {
+    const pts = fundear(0, 15, 0);
+    // Adiciona 1 spike isolado na cauda (< kSaida e sem velocidade de partida franca)
+    pts.push(fix(30, 80, 0));
+    const r = simplifyTrackDwells(pts, { saidaImediataM: 500 });
+    expect(r.dwells).toHaveLength(1);
+    expect(r.parado).toBe(true);
+    expect(r.dwells[0].partidaMs).toBeNull();
+    expect(r.velocidadeKmh).toBe(0);
+  });
+
+  it("cluster não atravessa lacuna de tempo > gapMs", () => {
+    // 10 fixes no ponto A (18 min >= 15 min), depois 2 horas sem sinal, depois 10 fixes
+    const pts = [...fundear(0, 10, 0), ...fundear(150, 10, 0)];
+    const r = simplifyTrackDwells(pts, { gapMs: 60 * M });
+    expect(r.dwells).toHaveLength(2);
+    expect(r.dwells[0].partidaMs).not.toBeNull();
+    expect(r.dwells[1].chegadaMs).toBeGreaterThan(r.dwells[0].chegadaMs);
+    expect(r.parado).toBe(true);
+  });
+
   it("trilha vazia ou de 1 ponto", () => {
     expect(simplifyTrackDwells([]).linhas).toEqual([]);
     expect(simplifyTrackDwells([fix(0, 0, 0)]).parado).toBe(false);
