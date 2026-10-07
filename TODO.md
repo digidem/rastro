@@ -369,7 +369,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
     - `teto` → `HELTEC_V4`
     - `cartao` → `TRACKER_T1000_E`
   - Garantir que `hardwareModelLabel` e `nodeSidebarSvgUrl` exibam o badge e SVG corretos (ex.: `heltec_v4.svg` ou `tracker-t1000-e.svg`), evitando fallback desnecessário para `unknown.svg` ou ícone de barco incorreto.
-- [x] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
+- [ ] **Desambiguação de Sobreposição de Pins no Mapa (`InitializeMap.tsx`):**
   - Quando múltiplos nós estiverem nas mesmas coordenadas exatas (ex.: bancada de testes em Atalaia do Norte), garantir que cliques e z-index permitam selecionar nós individuais e que nós não-embarcações não fiquem mascarados pelo ícone de barco.
 
 ### Tarefa 19: Algoritmo de Barco Parado/Ancorado (Dwell & Anchor Detection) contra Trilhas Falsas — 📝 Planejado
