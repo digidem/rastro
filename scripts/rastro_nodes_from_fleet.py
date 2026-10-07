@@ -34,15 +34,21 @@ def nos_da_frota(caminho: Path) -> list[tuple[str, str]]:
     vistos: set[str] = set()
     for dev in dados.get("devices", []):
         ident = dev.get("identity") or {}
-        m = NOME.match(ident.get("long_name") or "")
+        lname = ident.get("long_name") or ""
         uid = ident.get("user_id") or ""
-        if (dev.get("deployment") or {}).get("kind") != "boat" or not m or not ID.match(uid):
+        if not ID.match(uid) or uid in vistos:
             continue
-        barco = f"{m.group(1)}-{m.group(2)}"
-        if uid in vistos:
-            continue
-        vistos.add(uid)
-        saida.append((uid, barco))
+        kind = (dev.get("deployment") or {}).get("kind")
+        if kind == "boat":
+            m = NOME.match(lname)
+            if not m:
+                continue
+            barco = f"{m.group(1)}-{m.group(2)}"
+            vistos.add(uid)
+            saida.append((uid, barco))
+        elif kind == "fixed_station" and lname == "univaja-atalaia-teto-1":
+            vistos.add(uid)
+            saida.append((uid, "cidade"))
     return sorted(saida, key=lambda p: p[1])
 
 
