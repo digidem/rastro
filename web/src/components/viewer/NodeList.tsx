@@ -165,7 +165,7 @@ export const NodeList: Component<NodeListProps> = (props) => {
                     />
                   </Show>
 
-                  {/* Ícone SVG (apenas sidebar: barco regional ou placa do rádio) */}
+                  {/* Ícone SVG (placa do rádio/hardware; ícone de barco é exclusivo do mapa) */}
                   <div class="h-9 w-9 shrink-0 rounded-md bg-slate-900 border border-slate-700/70 p-1 flex items-center justify-center">
                     <img
                       src={nodeSidebarSvgUrl(n)}

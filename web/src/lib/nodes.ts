@@ -83,8 +83,7 @@ export function matchesQuery(node: NodeInfo, query: string): boolean {
  * - ou se o nome contiver "barco" (normalizado sem acentos, case-insensitive).
  */
 export function isBoatNode(node: NodeInfo): boolean {
-  const nome =
-    typeof node.nome === "string" ? normalizar(node.nome) : "";
+  const nome = typeof node.nome === "string" ? normalizar(node.nome) : "";
   // Exclusão estrita: rádios portáteis e estações fixas nunca são barco.
   if (NAO_BARCO_RE.test(nome)) {
     return false;
@@ -410,11 +409,11 @@ export function deviceModelSvgUrl(hwModel: string | null | undefined): string {
   return "/devices/unknown.svg";
 }
 
-function inferHardwareFromName(nome?: string): string | null {
+export function inferHardwareFromName(nome?: string): string | null {
   if (!nome) {
     return null;
   }
-  const n = nome.toLowerCase();
+  const n = normalizar(nome);
   if (n.includes("heltec-v4") || n.includes("heltec_v4")) {
     return "HELTEC_V4";
   }
@@ -424,13 +423,35 @@ function inferHardwareFromName(nome?: string): string | null {
   if (n.includes("tbeam") || n.includes("t-beam")) {
     return "TBEAM";
   }
-  if (n.includes("t1000") || n.includes("cartao")) {
+  if (n.includes("t1000") || /(?:^|[-_\s])cartao(?:[-_\s\d]|$)/.test(n)) {
     return "TRACKER_T1000_E";
   }
-  if (n.includes("admin") && n.includes("movel")) {
-    return "TBEAM";
+  if (n.includes("wismesh") || n.includes("rak-tag") || n.includes("rak_tag")) {
+    return "WISMESH_TAG";
   }
-  if (n.includes("movel") || n.includes("teto")) {
+  if (
+    n.includes("rak4631") ||
+    n.includes("rak_4631") ||
+    /(?:^|[-_\s])rak(?:[-_\s\d]|$)/.test(n)
+  ) {
+    return "RAK4631";
+  }
+  if (
+    n.includes("t-echo") ||
+    n.includes("techo") ||
+    /(?:^|[-_\s])echo(?:[-_\s\d]|$)/.test(n)
+  ) {
+    return "ECHO";
+  }
+  // Convenções da frota Vale do Javari (barcos, bases em campo e rádios móveis utilizam Heltec V4 por padrão)
+  if (
+    n.includes("barco") ||
+    n.includes("campo") ||
+    n.includes("emb_") ||
+    n.includes("emb-") ||
+    n.includes("movel") ||
+    n.includes("teto")
+  ) {
     return "HELTEC_V4";
   }
   return null;
@@ -474,14 +495,11 @@ export function hardwareModelLabel(node: NodeInfo): string | null {
 }
 
 /**
- * SVG do nó exibido exclusivamente na sidebar (cards da lista e inspector), nunca no mapa.
- * Se for barco, usa o SVG da embarcação regional (/devices/boat.svg);
- * senão mapeia para a placa de hardware ou /devices/unknown.svg.
+ * SVG do rádio exibido na sidebar (cards da lista e inspector).
+ * O ícone de barco (/devices/boat.svg) é de uso exclusivo do mapa; a sidebar
+ * apresenta a placa de hardware (Heltec, T-Beam, T1000-E, RAK, etc.).
  */
 export function nodeSidebarSvgUrl(node: NodeInfo): string {
-  if (isBoatNode(node)) {
-    return "/devices/boat.svg";
-  }
   const inferred = node.hwModel || inferHardwareFromName(node.nome);
   return deviceModelSvgUrl(inferred);
 }

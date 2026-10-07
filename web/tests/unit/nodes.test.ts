@@ -119,13 +119,26 @@ describe("isBoatNode", () => {
 });
 
 describe("hardwareModelLabel e nodeSidebarSvgUrl", () => {
-  it("nodeSidebarSvgUrl retorna boat.svg para barcos e placa de hardware para outros nós", () => {
-    expect(nodeSidebarSvgUrl(no({ nome: "univaja-itui-barco-1", hwModel: "HELTEC_V4" }))).toBe(
-      "/devices/boat.svg",
-    );
-    expect(nodeSidebarSvgUrl(no({ nome: "escritorio-fixo-1", hwModel: "TBEAM" }))).toBe(
-      "/devices/tbeam.svg",
-    );
+  it("nodeSidebarSvgUrl retorna placa de hardware para todos os nós (ícone de barco restrito ao mapa)", () => {
+    // Barco com hwModel explícito exibe placa do hardware
+    expect(
+      nodeSidebarSvgUrl(
+        no({ nome: "univaja-itui-barco-1", hwModel: "HELTEC_V4" }),
+      ),
+    ).toBe("/devices/heltec_v4.svg");
+    // Barco com hwModel ausente infere placa da frota (Heltec V4)
+    expect(
+      nodeSidebarSvgUrl(no({ nome: "univaja-itui-barco-1", hwModel: null })),
+    ).toBe("/devices/heltec_v4.svg");
+    // Estação fixa com T-Beam
+    expect(
+      nodeSidebarSvgUrl(no({ nome: "escritorio-fixo-1", hwModel: "TBEAM" })),
+    ).toBe("/devices/tbeam.svg");
+    // Rastreador cartão Seeed T1000-E
+    expect(
+      nodeSidebarSvgUrl(no({ nome: "univaja-cartao-1", hwModel: null })),
+    ).toBe("/devices/tracker-t1000-e.svg");
+    // Desconhecido sem modelo nem pista no nome
     expect(nodeSidebarSvgUrl(no({ nome: "desconhecido", hwModel: null }))).toBe(
       "/devices/unknown.svg",
     );
@@ -133,10 +146,32 @@ describe("hardwareModelLabel e nodeSidebarSvgUrl", () => {
 
   it("hardwareModelLabel formata e infere modelos conhecidos", () => {
     expect(hardwareModelLabel(no({ hwModel: "HELTEC_V4" }))).toBe("Heltec V4");
-    expect(hardwareModelLabel(no({ hwModel: "TRACKER_T1000_E" }))).toBe("T1000-E");
-    expect(hardwareModelLabel(no({ hwModel: null, nome: "univaja-cartao-1" }))).toBe("T1000-E");
-    expect(hardwareModelLabel(no({ hwModel: null, nome: "heltec-v4-itq1" }))).toBe("Heltec V4");
-    expect(hardwareModelLabel(no({ hwModel: null, nome: "estacao-sem-modelo" }))).toBeNull();
+    expect(hardwareModelLabel(no({ hwModel: "TRACKER_T1000_E" }))).toBe(
+      "T1000-E",
+    );
+    expect(
+      hardwareModelLabel(no({ hwModel: null, nome: "univaja-cartao-1" })),
+    ).toBe("T1000-E");
+    expect(
+      hardwareModelLabel(no({ hwModel: null, nome: "heltec-v4-itq1" })),
+    ).toBe("Heltec V4");
+    expect(
+      hardwareModelLabel(
+        no({ hwModel: null, nome: "univaja-itaquai-barco-1" }),
+      ),
+    ).toBe("Heltec V4");
+    expect(
+      hardwareModelLabel(no({ hwModel: null, nome: "ITUI_CAMPO_01" })),
+    ).toBe("Heltec V4");
+    expect(hardwareModelLabel(no({ hwModel: null, nome: "EMB_01" }))).toBe(
+      "Heltec V4",
+    );
+    expect(
+      hardwareModelLabel(no({ hwModel: null, nome: "rak-retransmissor" })),
+    ).toBe("RAK4631");
+    expect(
+      hardwareModelLabel(no({ hwModel: null, nome: "estacao-sem-modelo" })),
+    ).toBeNull();
   });
 });
 

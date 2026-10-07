@@ -81,7 +81,7 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
               <div class="h-10 w-10 shrink-0 rounded-lg bg-slate-900 border border-slate-700/80 p-1 flex items-center justify-center shadow-inner">
                 <img
                   src={nodeSidebarSvgUrl(node())}
-                  alt={node().hwModel ?? "Dispositivo"}
+                  alt={hardwareModelLabel(node()) ?? "Dispositivo"}
                   class="h-full w-full object-contain filter drop-shadow"
                 />
               </div>

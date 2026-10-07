@@ -35,8 +35,19 @@ describe("detecção de barcos (Tarefa 18)", () => {
 
   it("infere hardware e SVG", () => {
     expect(hardwareModelLabel(n("atalaia-movel-2"))).toBe("Heltec V4");
-    expect(hardwareModelLabel(n("admin-movel"))).toBe("T-Beam");
+    expect(hardwareModelLabel(n("univaja-atalaia-admin-movel-1"))).toBe(
+      "Heltec V4",
+    );
+    expect(hardwareModelLabel(n("admin-movel"))).toBe("Heltec V4");
+    expect(hardwareModelLabel(n("univaja-barco-1"))).toBe("Heltec V4");
     expect(hardwareModelLabel(n("x-teto-1"))).toBe("Heltec V4");
+    expect(hardwareModelLabel(n("tbeam-att1"))).toBe("T-Beam");
+    expect(hardwareModelLabel(n("barco-rak-1"))).toBe("RAK4631");
+    // Nomes que contenham 'rak' ou 'echo' embutidos em palavras não são falsos positivos
+    expect(hardwareModelLabel(n("araka-estacao"))).toBeNull();
+    expect(nodeSidebarSvgUrl(n("univaja-barco-1"))).toBe(
+      "/devices/heltec_v4.svg",
+    );
     expect(nodeSidebarSvgUrl(n("x-cartao-1"))).toBe(
       "/devices/tracker-t1000-e.svg",
     );
