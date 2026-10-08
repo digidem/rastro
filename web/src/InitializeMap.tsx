@@ -915,6 +915,17 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     });
   };
 
+  // Botões "+" e "−": um nível de zoom por toque. Como gesto do usuário,
+  // desliga o enquadramento automático.
+  const ajustarZoom = (delta: number) => {
+    const map = currentView();
+    if (map === undefined) {
+      return;
+    }
+    interagiu = true;
+    map.easeTo({ zoom: map.getZoom() + delta, duration: 250 });
+  };
+
   onCleanup(() => {
     cancelarCargaIcone?.();
     currentView()?.remove();
@@ -1245,6 +1256,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         setMapRef,
         initializeMap,
         fitAllNodes,
+        zoomIn: () => ajustarZoom(1),
+        zoomOut: () => ajustarZoom(-1),
         centerOnNode,
         centerOnPoint,
       }}

@@ -5,6 +5,8 @@ import {
   ChatCircleTextIcon,
   CheckIcon,
   ListIcon,
+  MagnifyingGlassMinusIcon,
+  MagnifyingGlassPlusIcon,
   StackSimpleIcon,
 } from "solid-phosphor/regular";
 import { useMap } from "../../hooks/useMap.jsx";
@@ -16,10 +18,14 @@ export interface MapControlsProps {
   onToggleSidebar: () => void;
 }
 
-/** Ações explícitas do mapa: camadas, enquadrar todos, chat e abrir/fechar a sidebar em estilo pill dark. */
+/**
+ * Ações explícitas do mapa.
+ * Esquerda (topo): chat e nós da malha (com texto no desktop).
+ * Direita (coluna vertical): zoom +, zoom −, enquadrar todos e camadas (só ícones).
+ */
 export const MapControls: Component<MapControlsProps> = (props) => {
   const { localState, setChatOpen, resetFilters, setBasemapMode } = useStore();
-  const { fitAllNodes } = useMap();
+  const { fitAllNodes, zoomIn, zoomOut } = useMap();
   const [menuCamadasAberto, setMenuCamadasAberto] = createSignal(false);
   let menuRef: HTMLDivElement | undefined;
   let menuTriggerRef: HTMLButtonElement | undefined;
@@ -64,14 +70,122 @@ export const MapControls: Component<MapControlsProps> = (props) => {
     setMenuCamadasAberto(false);
   };
 
-  const btnBase =
-    "flex items-center justify-center h-10 w-10 min-h-[40px] min-w-[40px] p-0 md:h-[38px] md:min-h-[38px] md:w-auto md:px-3.5 md:gap-2 rounded-lg bg-slate-950/90 hover:bg-slate-800 text-slate-100 border border-slate-700/80 shadow-lg backdrop-blur-md text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400";
+  const btnVisual =
+    "rounded-lg bg-slate-950/90 hover:bg-slate-800 text-slate-100 border border-slate-700/80 shadow-lg backdrop-blur-md text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400";
+  // Botões só com ícone (zoom, enquadrar, camadas): quadrados em todas as larguras.
+  const btnIcone = `flex items-center justify-center h-10 w-10 min-h-[40px] min-w-[40px] p-0 md:h-[38px] md:w-[38px] md:min-h-[38px] md:min-w-[38px] ${btnVisual}`;
+  const btnBase = `flex items-center justify-center h-10 w-10 min-h-[40px] min-w-[40px] p-0 md:h-[38px] md:min-h-[38px] md:w-auto md:px-3.5 md:gap-2 ${btnVisual}`;
 
   return (
-    <div class="flex w-full items-start justify-between md:justify-start md:gap-2">
-      {/* Coluna da esquerda (Mobile: 2 linhas verticais na margem esquerda; Desktop: horizontal) */}
-      <div class="pointer-events-auto flex flex-col md:flex-row items-center gap-2">
-        {/* Linha 1: Botão de Camadas do Mapa Base */}
+    <div class="flex w-full items-start justify-between">
+      {/* Coluna da esquerda (topo): chat e nós da malha. Mobile: vertical; Desktop: horizontal */}
+      <div class="pointer-events-auto flex flex-col md:flex-row items-start gap-2">
+        {/* Chat da malha */}
+        <button
+          type="button"
+          aria-expanded={localState.chatOpen}
+          aria-label={
+            localState.unreadChatCount > 0
+              ? `Chat da malha, ${localState.unreadChatCount} não lidas`
+              : "Chat da malha"
+          }
+          class={`relative ${btnBase}`}
+          title={
+            localState.chatOpen ? "Fechar chat da malha" : "Abrir chat da malha"
+          }
+          onClick={() => setChatOpen(!localState.chatOpen)}
+        >
+          <ChatCircleTextIcon
+            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
+            aria-hidden="true"
+          />
+          <span class="hidden md:inline">Chat</span>
+          <Show when={localState.unreadChatCount > 0}>
+            <span
+              class={`inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold rounded-full leading-none absolute -top-1.5 -right-1.5 md:static md:top-auto md:right-auto ${
+                localState.hasAlertUnread
+                  ? "bg-rose-500 text-white animate-pulse motion-reduce:animate-none"
+                  : "bg-emerald-500 text-slate-950"
+              }`}
+            >
+              {localState.unreadChatCount > 99
+                ? "99+"
+                : localState.unreadChatCount}
+            </span>
+          </Show>
+        </button>
+
+        {/* Nós da malha / Sidebar */}
+        <button
+          type="button"
+          aria-expanded={props.sidebarOpen()}
+          aria-label="Nós da malha"
+          class={btnBase}
+          title={
+            props.sidebarOpen() ? "Ocultar painel" : "Mostrar nós da malha"
+          }
+          onClick={() => props.onToggleSidebar()}
+        >
+          <ListIcon
+            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
+            aria-hidden="true"
+          />
+          <span class="hidden md:inline">
+            {props.sidebarOpen() ? "Ocultar painel" : "Nós da malha"}
+          </span>
+        </button>
+      </div>
+
+      {/* Coluna da direita (vertical no canto superior direito, em todas as telas).
+          Com a sidebar aberta, o overlay em desktop termina antes dela (ver MapWindow). */}
+      <div
+        class={`pointer-events-auto flex flex-col items-end gap-2 ${
+          props.sidebarOpen() ? "hidden md:flex" : "flex"
+        }`}
+      >
+        {/* Zoom + */}
+        <button
+          type="button"
+          aria-label="Aproximar o mapa"
+          class={btnIcone}
+          title="Aproximar o mapa"
+          onClick={() => zoomIn()}
+        >
+          <MagnifyingGlassPlusIcon
+            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
+            aria-hidden="true"
+          />
+        </button>
+
+        {/* Zoom − */}
+        <button
+          type="button"
+          aria-label="Afastar o mapa"
+          class={btnIcone}
+          title="Afastar o mapa"
+          onClick={() => zoomOut()}
+        >
+          <MagnifyingGlassMinusIcon
+            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
+            aria-hidden="true"
+          />
+        </button>
+
+        {/* Enquadrar todos os nós (só ícone; logo abaixo do zoom) */}
+        <button
+          type="button"
+          aria-label="Enquadrar todos os nós com posição"
+          class={btnIcone}
+          title="Enquadrar todos os nós com posição"
+          onClick={() => enquadrarTodos()}
+        >
+          <ArrowsOutIcon
+            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
+            aria-hidden="true"
+          />
+        </button>
+
+        {/* Camadas do mapa base (só ícone; menu abre para a esquerda) */}
         <div class="relative">
           <button
             ref={menuTriggerRef}
@@ -80,7 +194,7 @@ export const MapControls: Component<MapControlsProps> = (props) => {
             aria-haspopup="menu"
             aria-controls="menu-camadas"
             aria-label="Camadas do mapa base"
-            class={btnBase}
+            class={btnIcone}
             title="Alternar camadas do mapa base"
             onClick={() => setMenuCamadasAberto((v) => !v)}
           >
@@ -88,7 +202,6 @@ export const MapControls: Component<MapControlsProps> = (props) => {
               class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
               aria-hidden="true"
             />
-            <span class="hidden md:inline">Camadas</span>
           </button>
 
           <Show when={menuCamadasAberto()}>
@@ -97,7 +210,7 @@ export const MapControls: Component<MapControlsProps> = (props) => {
               id="menu-camadas"
               role="menu"
               aria-label="Camadas do mapa"
-              class="absolute left-0 top-full mt-1.5 w-48 rounded-lg bg-slate-950/95 border border-slate-700/80 shadow-2xl backdrop-blur-md p-1 z-30 flex flex-col gap-0.5 text-xs"
+              class="absolute right-0 top-full mt-1.5 w-48 rounded-lg bg-slate-950/95 border border-slate-700/80 shadow-2xl backdrop-blur-md p-1 z-30 flex flex-col gap-0.5 text-xs"
             >
               <button
                 type="button"
@@ -178,83 +291,6 @@ export const MapControls: Component<MapControlsProps> = (props) => {
             </div>
           </Show>
         </div>
-
-        {/* Linha 2: Enquadrar todos os nós */}
-        <button
-          type="button"
-          aria-label="Enquadrar todos os nós com posição"
-          class={btnBase}
-          title="Enquadrar todos os nós com posição"
-          onClick={() => enquadrarTodos()}
-        >
-          <ArrowsOutIcon
-            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
-            aria-hidden="true"
-          />
-          <span class="hidden md:inline">Enquadrar todos</span>
-        </button>
-      </div>
-
-      {/* Coluna da direita (Mobile: 2 linhas verticais na margem direita; Desktop: continuação da horizontal) */}
-      <div
-        class={`pointer-events-auto flex flex-col md:flex-row items-center gap-2 ${
-          props.sidebarOpen() ? "hidden md:flex" : "flex"
-        }`}
-      >
-        {/* Chat (Desktop: 3º botão; Mobile: 2ª linha da coluna direita) */}
-        <button
-          type="button"
-          aria-expanded={localState.chatOpen}
-          aria-label={
-            localState.unreadChatCount > 0
-              ? `Chat da malha, ${localState.unreadChatCount} não lidas`
-              : "Chat da malha"
-          }
-          class={`relative order-2 md:order-1 ${btnBase}`}
-          title={
-            localState.chatOpen ? "Fechar chat da malha" : "Abrir chat da malha"
-          }
-          onClick={() => setChatOpen(!localState.chatOpen)}
-        >
-          <ChatCircleTextIcon
-            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
-            aria-hidden="true"
-          />
-          <span class="hidden md:inline">Chat</span>
-          <Show when={localState.unreadChatCount > 0}>
-            <span
-              class={`inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold rounded-full leading-none absolute -top-1.5 -right-1.5 md:static md:top-auto md:right-auto ${
-                localState.hasAlertUnread
-                  ? "bg-rose-500 text-white animate-pulse motion-reduce:animate-none"
-                  : "bg-emerald-500 text-slate-950"
-              }`}
-            >
-              {localState.unreadChatCount > 99
-                ? "99+"
-                : localState.unreadChatCount}
-            </span>
-          </Show>
-        </button>
-
-        {/* Nós da malha / Sidebar (Desktop: 4º botão; Mobile: 1ª linha da coluna direita) */}
-        <button
-          type="button"
-          aria-expanded={props.sidebarOpen()}
-          aria-label="Nós da malha"
-          class={`order-1 md:order-2 ${btnBase}`}
-          title={
-            props.sidebarOpen() ? "Ocultar painel" : "Mostrar nós da malha"
-          }
-          onClick={() => props.onToggleSidebar()}
-        >
-          <ListIcon
-            class="h-[18px] w-[18px] md:h-4 md:w-4 text-emerald-400 shrink-0"
-            aria-hidden="true"
-          />
-          <span class="hidden md:inline">
-            {props.sidebarOpen() ? "Ocultar painel" : "Nós da malha"}
-          </span>
-        </button>
       </div>
     </div>
   );

@@ -82,7 +82,12 @@ export const MapWindow: Component = () => {
 
       {/* Overlay: só os controles capturam ponteiro; o mapa continua arrastável. */}
       <div class="pointer-events-none relative z-10 h-full min-h-0">
-        <div class="pointer-events-none absolute inset-x-2 top-2 z-10">
+        {/* Com a sidebar aberta (desktop), os controles param antes dela: 368px da sidebar + 8px de folga. */}
+        <div
+          class={`pointer-events-none absolute inset-x-2 top-2 z-10 ${
+            sidebarAberta() ? "md:right-[368px]" : ""
+          }`}
+        >
           <MapControls
             sidebarOpen={() => sidebarAberta()}
             onToggleSidebar={() => setSidebarAberta((v) => !v)}
