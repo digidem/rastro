@@ -68,10 +68,41 @@ export const DataProvider: Component<{ children?: JSXElement }> = (props) => {
     }
   };
 
+  /** Alertas (GET /api/alerts): roda em paralelo ao latest; a geração/seq
+   * protegem igual; erro transitório mantém os alertas anteriores (badge
+   * não pisca); 401 encerra a sessão como no latest. */
+  const pollAlertas = async (minhaGen: number, mySeq: number) => {
+    try {
+      const alerts = await api.alerts();
+      if (
+        minhaGen !== LocalState.localState.pollingGeracao ||
+        mySeq !== pollReqSeq
+      ) {
+        return;
+      }
+      LocalState.setAlerts(alerts);
+    } catch (err) {
+      if (
+        minhaGen !== LocalState.localState.pollingGeracao ||
+        mySeq !== pollReqSeq
+      ) {
+        return;
+      }
+      if (err instanceof ErrTokenInvalid) {
+        clearSessionData();
+        LocalState.setAuth("login");
+      }
+      // outro erro: mantém os alertas anteriores até o próximo tick
+    }
+  };
+
   const poll = async () => {
     const minhaGen = LocalState.localState.pollingGeracao;
     const mySeq = ++pollReqSeq;
     LocalState.setLatestStatus("loading");
+    // Alertas viajam no MESMO tick do polling (15–30 s): badge some/entra
+    // junto com o refresh de nós, sem timer extra.
+    void pollAlertas(minhaGen, mySeq);
     try {
       const nodes = await api.latest();
       // Descarta se a geração avançou OU se uma requisição mais nova foi emitida

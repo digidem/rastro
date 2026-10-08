@@ -14,6 +14,11 @@ testável localmente (pytest + rig Docker). Dados de teste: PSK descartável e n
 - Retenção (R6) e acesso ao servidor (R9) são decisões abertas: NÃO implementar política de retenção. Só hooks:
   `RASTRO_RAW_RETENTION_DAYS` e `RASTRO_CHAT_RETENTION_DAYS` (inteiros, vazio = sem limite) lidos por uma função
   `purge_expired(db, now)` que existe, é testada, mas NÃO é agendada por nada.
+  > **Atualização (2026-10-08):** retenção simplificada conforme
+  > `docs/PLANO-ALERTAS-E-RETENCAO.md` — `purge_expired` e as variáveis
+  > `RASTRO_*_RETENTION_DAYS` foram REMOVIDAS do código; posições, mensagens e
+  > envelopes brutos são retidos indefinidamente. Só permanece
+  > `prune_packet_seen` (dedupe MQTT, 7 dias), não agendado.
 - Sem commit. Não tocar em arquivos fora da lista do seu pacote de trabalho (WP).
 
 ## 1. Protocolo (firmware 2.7.26)
@@ -88,6 +93,7 @@ canal `PKI` → `Opaque`. Cifra com chave errada produz protobuf inválido → `
 - `alert_state(key PK, node_num, kind, since, last_notified, cleared_at)`.
 - Grants: papéis `rastro_ingest` (INSERT/SELECT/UPDATE nas novas tabelas), `rastro_viewer` (SELECT em `chat_messages`, `chat_outbox`, `alert_state`, `virtual_gateways`; INSERT em `chat_outbox` via função/grant de coluna), um papel novo NÃO é criado. Conferir como `01-schema.sql` trata grants (provavelmente no entrypoint).
 - Métodos novos em `Db`: `store_native(decoded_list) -> counts` (idempotente, uma transação, mesma disciplina de ack que `store_batch`), `purge_expired(now)`, `claim_outbox(limit)`, `mark_outbox(id, status, packet_id=None, error=None)`.
+  (Registro histórico: `purge_expired` removido em 2026-10-08 — ver `docs/PLANO-ALERTAS-E-RETENCAO.md`.)
 
 ### WP-C — broker
 - Mantém listener TCP/TLS 8883 + WebSocket opcional. `retain_available true` (necessário para o *last will* retido do firmware em `<raiz>/2/stat/<id>`, que o nó pode escrever; o Rastro nunca publica com retain).

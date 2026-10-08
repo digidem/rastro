@@ -199,7 +199,7 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = viewer_role) THEN
         -- viewer: leitura das tabelas nativas + legado; INSERT limitado no outbox
-        EXECUTE format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.boat_devices TO %I', esquema, esquema, esquema, esquema, esquema, esquema, esquema, viewer_role);
+        EXECUTE format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.gateway_status, %I.boat_devices TO %I', esquema, esquema, esquema, esquema, esquema, esquema, esquema, esquema, viewer_role);
         EXECUTE format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.vw_ultima_posicao TO %I', esquema, esquema, esquema, esquema, viewer_role);
         EXECUTE format('GRANT INSERT (boat_id, text, created_by, expires_at) ON %I.chat_outbox TO %I', esquema, viewer_role);
         EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %I.chat_outbox_id_seq TO %I', esquema, viewer_role);

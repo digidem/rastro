@@ -826,55 +826,10 @@ class Db:
 
         return deltas
 
-    def purge_expired(self, now=None) -> dict[str, int]:
-        """Expurgo de registros antigos segundo variáveis de retenção.
-
-        Lê RASTRO_RAW_RETENTION_DAYS e RASTRO_CHAT_RETENTION_DAYS.
-        Sem as variáveis definidas ou vazias: no-op (não apaga nada).
-        """
-        raw_env = os.environ.get("RASTRO_RAW_RETENTION_DAYS", "").strip()
-        chat_env = os.environ.get("RASTRO_CHAT_RETENTION_DAYS", "").strip()
-        raw_days = int(raw_env) if raw_env.isdigit() else None
-        chat_days = int(chat_env) if chat_env.isdigit() else None
-
-        if raw_days is None and chat_days is None:
-            return {"raw": 0, "chat": 0}
-
-        deleted = {"raw": 0, "chat": 0}
-        with self._pool.connection() as conn:
-            with conn.cursor() as cur:
-                if raw_days is not None and raw_days > 0:
-                    cur.execute(
-                        """
-                        DELETE FROM raw_envelopes
-                        WHERE received_at < (
-                            CASE WHEN %s::timestamptz IS NULL THEN now() ELSE %s::timestamptz END
-                            - (%s || ' days')::interval
-                        )
-                        """,
-                        (now, now, raw_days),
-                    )
-                    deleted["raw"] = cur.rowcount
-
-                if chat_days is not None and chat_days > 0:
-                    cur.execute(
-                        """
-                        DELETE FROM chat_messages
-                        WHERE received_at < (
-                            CASE WHEN %s::timestamptz IS NULL THEN now() ELSE %s::timestamptz END
-                            - (%s || ' days')::interval
-                        )
-                        """,
-                        (now, now, chat_days),
-                    )
-                    deleted["chat"] = cur.rowcount
-
-        return deleted
-
     def prune_packet_seen(self, now=None) -> int:
         """Apaga ``packet_seen`` mais velho que a janela do dedupe (hook).
 
-        Companion do ``purge_expired`` (retenção): hook de manutenção explícito
+        Único expurgo restante do sistema: hook de manutenção explícito
         (retorna quantas linhas apagou), NÃO agendado por nada — a janela de
         7 dias já impede dedupe eterno no upsert (``WHERE first_seen <=
         now() - 7 days``); este método só recolhe o lixo antigo.
@@ -1060,26 +1015,15 @@ class Db:
                 )
                 return {row[0]: row[1] for row in cur.fetchall()}
 
-    def node_activity(self) -> dict[int, dict]:
-        """Por nó: ``first_seen/last_seen`` + tempos dos 2 fixes mais recentes.
-
-        Formato: ``{node_num: {first_seen, last_seen, fix_time, prev_time,
-        displacement_m}}`` — epochs float; ``displacement_m`` é o deslocamento
-        haversine entre o último fix e o anterior (base de ``posicao_parada``).
-        Nó sem fix → fix/prev/deslocamento None.
-        """
-        # Coordenadas NÃO são legíveis pelo papel ingest: a função SECURITY
-        # DEFINER devolve só tempos e o deslocamento (m) entre os 2 últimos fixes.
-        sql = "SELECT node_num, first_seen, last_seen, fix_time, prev_time, displacement_m FROM node_activity_summary()"
-        out: dict[int, dict] = {}
+    def node_power_readings(self) -> dict[int, dict]:
+        """``{node_num: {battery_level, voltage}}`` da leitura mais recente de ``node_power``."""
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
-                cols = [desc[0] for desc in cur.description]
-                for row in cur.fetchall():
-                    info = dict(zip(cols, row))
-                    out[int(info.pop("node_num"))] = info
-        return out
+                cur.execute("SELECT node_num, battery_level, voltage FROM node_power")
+                return {
+                    int(row[0]): {"battery_level": row[1], "voltage": row[2]}
+                    for row in cur.fetchall()
+                }
 
     def save_alert_events(
         self,
@@ -1129,3 +1073,27 @@ class Db:
                         ,
                         [(c["cleared_at"], c["cleared_at"], c["key"]) for c in cleared],
                     )
+
+    def retire_alert_kinds(self, kinds: list[str], now=None) -> int:
+        """Limpa alertas ativos de kinds removidos do motor (idempotente).
+
+        O motor novo só avalia ``gateway_mudo``/``bateria_critica``: sem este
+        retire, linhas antigas de kinds aposentados ficariam ativas para
+        sempre (``cleared_at`` NULL) e vazariam na API. Preserva a linha —
+        só preenche ``cleared_at`` (histórico intacto).
+        """
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE alert_state
+                    SET cleared_at = (
+                        CASE WHEN %s::double precision IS NULL THEN now()
+                             ELSE to_timestamp(%s::double precision) END
+                    )
+                    WHERE cleared_at IS NULL
+                      AND kind = ANY(%s)
+                    """,
+                    (now, now, kinds),
+                )
+                return cur.rowcount

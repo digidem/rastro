@@ -605,58 +605,6 @@ def test_gateway_status_uplink_counter(db, pg_session):
             assert cur.fetchone()[0] == 2
 
 
-def test_purge_expired_retention_env(db, pg_session, monkeypatch):
-    """purge_expired só apaga quando env de retenção definida, sendo no-op quando ausente."""
-    conn_str = f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} password={pg_session['password']} dbname={pg_session['dbname']}"
-    with psycopg.connect(conn_str, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET search_path = rastro, public")
-            # Insere registro bruto antigo (15 dias atrás)
-            cur.execute(
-                """
-                INSERT INTO raw_envelopes (received_at, topic, channel, raw)
-                VALUES (now() - interval '15 days', 'univaja/mesh/2/e/EVU/!gw1', 'EVU', %s)
-                """,
-                (b"old",),
-            )
-            # Insere chat antigo (15 dias atrás)
-            cur.execute(
-                """
-                INSERT INTO chat_messages (direction, from_num, packet_id, text, received_at)
-                VALUES ('in', 9001, 701, 'mensagem antiga', now() - interval '15 days')
-                """
-            )
-
-    # 1. Sem variáveis de retenção configuradas: no-op
-    monkeypatch.delenv("RASTRO_RAW_RETENTION_DAYS", raising=False)
-    monkeypatch.delenv("RASTRO_CHAT_RETENTION_DAYS", raising=False)
-    noop_res = db.purge_expired()
-    assert noop_res == {"raw": 0, "chat": 0}
-
-    with psycopg.connect(conn_str) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET search_path = rastro, public")
-            cur.execute("SELECT count(*) FROM raw_envelopes")
-            assert cur.fetchone()[0] == 1
-            cur.execute("SELECT count(*) FROM chat_messages")
-            assert cur.fetchone()[0] == 1
-
-    # 2. Com retenção configurada (ex: 7 dias)
-    monkeypatch.setenv("RASTRO_RAW_RETENTION_DAYS", "7")
-    monkeypatch.setenv("RASTRO_CHAT_RETENTION_DAYS", "7")
-    purged_res = db.purge_expired()
-    assert purged_res["raw"] == 1
-    assert purged_res["chat"] == 1
-
-    with psycopg.connect(conn_str) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET search_path = rastro, public")
-            cur.execute("SELECT count(*) FROM raw_envelopes")
-            assert cur.fetchone()[0] == 0
-            cur.execute("SELECT count(*) FROM chat_messages")
-            assert cur.fetchone()[0] == 0
-
-
 def test_claim_outbox_marks_expired_and_claims_exactly_once(db, pg_session):
     """claim_outbox marca expirados e devolve mensagens pendentes exatamente uma vez."""
     conn_str = f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} password={pg_session['password']} dbname={pg_session['dbname']}"
@@ -1025,8 +973,8 @@ def test_chat_arrival_time_now_not_gateway_rx_time(db, pg_session):
 # Privilégios reais do papel <db>_ingest / <db>_viewer (achado 4)
 # --------------------------------------------------------------------------
 
-def test_ingest_role_store_native_node_activity(db, db_ingest):
-    """Achado 4: tudo que store_native/node_activity/check_ready usam é concedido."""
+def test_ingest_role_store_native_node_power(db, db_ingest):
+    """Achado 4: tudo que store_native/node_power_readings/check_ready usam é concedido."""
     db_ingest.check_ready()  # sondagens de boot sob o papel de produção
 
     counts = db_ingest.store_native(
@@ -1065,17 +1013,13 @@ def test_ingest_role_store_native_node_activity(db, db_ingest):
     assert counts["chat"] == 1
     assert counts["raw"] == 4
 
-    atividade = db_ingest.node_activity()
-    info = atividade[6200]
-    # o ingest NÃO lê coordenadas: nem direto, nem via node_activity
-    assert "lat_i" not in info and "lon_i" not in info
-    assert info["displacement_m"] is None  # só 1 fix
+    energia = db_ingest.node_power_readings()
+    leitura = energia[6200]
+    assert leitura == {"battery_level": 76.0, "voltage": 4.0}
+    # o ingest NÃO lê coordenadas
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with db_ingest._pool.connection() as conn:
             conn.execute("SELECT lat_i FROM positions")
-    assert info["fix_time"] is not None
-    assert info["first_seen"] is not None
-    assert info["last_seen"] is not None
 
 
 def test_viewer_role_reads_and_inserts_outbox(db, pg_session):
@@ -1464,18 +1408,29 @@ def test_claim_outbox_concorrente(db, pg_session):
     assert ids_a | ids_b == ids_todas
 
 
-def test_node_activity_deslocamento_sem_expor_coordenadas(db, db_ingest):
-    """node_activity_summary: deslocamento haversine entre os 2 últimos fixes (~111 m por 0,001° de lat)."""
-    import time as _t
-
-    agora = int(_t.time())
-    db.store_native(
-        [
-            _env_posicao(6300, 701, agora - 7200, lat_i=-40000000, lon_i=-70000000),
-            _env_posicao(6300, 702, agora - 60, lat_i=-39990000, lon_i=-70000000),
-        ]
-    )
-    info = db_ingest.node_activity()[6300]
-    assert info["prev_time"] is not None and info["fix_time"] > info["prev_time"]
-    assert 105 < info["displacement_m"] < 117
-    assert "lat_i" not in info
+def test_retire_alert_kinds_limpa_so_aposentados(db, pg_session):
+    """retire_alert_kinds: cleared_at só nos kinds pedidos; idempotente."""
+    conn_str = f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} password={pg_session['password']} dbname={pg_session['dbname']}"
+    with psycopg.connect(conn_str, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SET search_path = rastro, public")
+            cur.execute(
+                "INSERT INTO alert_state (key, node_num, kind, since) VALUES"
+                " ('sem_fix:1', 1, 'sem_fix', now()),"
+                " ('gateway_mudo:2', 2, 'gateway_mudo', now()),"
+                " ('sem_fix:3', 3, 'sem_fix', now())"
+            )
+    assert db.retire_alert_kinds(["sem_fix"]) == 2
+    # idempotente: nada ativo restante → 0
+    assert db.retire_alert_kinds(["sem_fix"]) == 0
+    # now epoch float (caminho do ciclo real: time.time()) não explode no cast
+    cur2 = db.retire_alert_kinds(["gateway_mudo"], now=1_800_000_000.0)
+    assert cur2 == 1
+    with psycopg.connect(conn_str) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SET search_path = rastro, public")
+            cur.execute(
+                "SELECT kind, count(*) FROM alert_state"
+                " WHERE cleared_at IS NOT NULL GROUP BY kind"
+            )
+            assert dict(cur.fetchall()) == {"sem_fix": 2, "gateway_mudo": 1}

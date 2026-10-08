@@ -15,6 +15,21 @@ export type ConditionFilter = "all" | "no-position" | "stale";
 /** Estado da última rodada de /api/nodes/latest (distingue carga de vazio). */
 export type LatestStatus = "idle" | "loading" | "ready" | "error";
 
+/** Tipo de alerta de campo (GET /api/alerts). */
+export type NodeAlertType = "gateway_mudo" | "bateria_critica";
+
+/** Alerta ativo de um nó (GET /api/alerts), normalizado do snake_case cru. */
+export interface NodeAlert {
+  nodeNum: number | null;
+  alertId: string;
+  nodeId: string | null;
+  nodeNome: string | null;
+  alertType: NodeAlertType;
+  severity: string;
+  triggeredAt: string;
+  details: Record<string, unknown> | null;
+}
+
 /** Nó visto pela última rodada de /api/nodes/latest. */
 export interface NodeInfo {
   nodeNum: number;
@@ -59,6 +74,8 @@ export interface Movimento {
 
 interface LocalState {
   nodes: Record<number, NodeInfo>;
+  /** Alertas ativos por nodeNum (GET /api/alerts, polling do DataProvider). */
+  alerts: Record<number, NodeAlert[]>;
   movimento: Record<number, Movimento>;
   selected: number | null;
   /** Busca textual: nome, nome curto, nodeId ou hex do nodeNum. */
@@ -110,6 +127,7 @@ const carregarBasemapPadrao = (): BasemapMode => {
 
 const [localState, setLocalState] = createStore<LocalState>({
   nodes: {},
+  alerts: {},
   movimento: {},
   selected: null,
   query: "",
@@ -135,6 +153,18 @@ const setNodes = (list: NodeInfo[]) => {
     "nodes",
     reconcile(Object.fromEntries(list.map((n) => [n.nodeNum, n]))),
   );
+};
+
+/** Substitui o mapa de alertas por nodeNum (reconcile limpa os resolvidos). */
+const setAlerts = (list: NodeAlert[]) => {
+  const mapa: Record<number, NodeAlert[]> = {};
+  for (const a of list) {
+    if (a.nodeNum === null) {
+      continue;
+    }
+    (mapa[a.nodeNum] ??= []).push(a);
+  }
+  setLocalState("alerts", reconcile(mapa));
 };
 
 const select = (nodeNum: number | null) => setLocalState("selected", nodeNum);
@@ -194,6 +224,7 @@ const resetViewerState = () => {
   setLocalState("unreadChatCount", 0);
   setLocalState("hasAlertUnread", false);
   setLocalState("showInactive", false);
+  setLocalState("alerts", reconcile({}));
 };
 
 const setNodeBearing = (nodeNum: number, bearing: number) => {
@@ -208,6 +239,7 @@ const setNodeMovimento = (nodeNum: number, m: Movimento) =>
 export const LocalState = {
   localState,
   setNodes,
+  setAlerts,
   select,
   setNodeBearing,
   setNodeMovimento,

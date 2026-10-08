@@ -318,3 +318,32 @@ def node_events(
             merged.append({**row, "kind": kind})
     merged.sort(key=lambda r: (r["ts"], r["kind"], r["id"]), reverse=True)
     return merged[:limit], len(merged) > limit
+
+
+_SQL_ALERTS = """
+    SELECT a.key AS alert_id,
+           a.node_num,
+           a.kind AS alert_type,
+           COALESCE(n.friendly_name, n.node_id) AS node_name,
+           n.node_id,
+           a.since AS triggered_at,
+           COALESCE(gs.last_uplink, n.last_seen) AS last_seen,
+           np.battery_level,
+           np.voltage
+    FROM alert_state a
+    LEFT JOIN nodes n ON n.node_num = a.node_num
+    LEFT JOIN node_power np ON np.node_num = a.node_num
+    LEFT JOIN gateway_status gs ON gs.gateway_num = a.node_num
+    WHERE a.cleared_at IS NULL
+    ORDER BY a.since ASC, a.key ASC
+"""
+
+
+def alerts_ativos(conn: Any) -> list[dict]:
+    """Alertas ativos (``cleared_at IS NULL``) com nome amigável e energia.
+
+    Só leitura; ``rastro_viewer`` já tem SELECT em ``alert_state`` e
+    ``node_power`` (02-native.sql). Nome do nó: ``friendly_name`` com fallback
+    para ``node_id``; gateway ausente de ``nodes`` vira id ``!hex`` na rota.
+    """
+    return conn.execute(_SQL_ALERTS).fetchall()

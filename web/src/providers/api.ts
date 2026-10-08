@@ -1,5 +1,5 @@
 import { type Loc, credenciaisPermitidas } from "../lib/credenciais.js";
-import type { NodeInfo, NodeKind } from "../store.js";
+import type { NodeAlert, NodeInfo, NodeKind } from "../store.js";
 
 /** Token ausente/rejeitado (HTTP 401) — a UI deve pedir o token de novo. */
 export class ErrTokenInvalid extends Error {
@@ -77,6 +77,8 @@ export interface AuthEstado {
 
 export interface ApiClient {
   latest(): Promise<NodeInfo[]>;
+  /** Alertas ativos (GET /api/alerts); API sem a rota → []. */
+  alerts(): Promise<NodeAlert[]>;
   track(node: string): Promise<{
     line: LngLat[] | null;
     lines: LngLat[][];
@@ -206,6 +208,27 @@ const preencherMetadadosExtras = (
     node.timeFlag = str(p.time_flag);
     node.time_flag = str(p.time_flag);
   }
+};
+
+/** Alerta cru da API (snake_case); campos inválidos → null no parse. */
+const alertFromRaw = (o: Record<string, unknown>): NodeAlert | null => {
+  const tipo = str(o.alert_type);
+  if (tipo !== "gateway_mudo" && tipo !== "bateria_critica") {
+    return null;
+  }
+  return {
+    nodeNum: num(o.node_num),
+    alertId: str(o.alert_id) ?? "",
+    nodeId: str(o.node_id),
+    nodeNome: str(o.node_name),
+    alertType: tipo,
+    severity: str(o.severity) ?? "medium",
+    triggeredAt: str(o.triggered_at) ?? "",
+    details:
+      typeof o.details === "object" && o.details !== null
+        ? (o.details as Record<string, unknown>)
+        : null,
+  };
 };
 
 const nodeFromFeature = (f: ApiFeature): NodeInfo | null => {
@@ -343,6 +366,33 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
         }
       }
       return nodes;
+    },
+
+    async alerts() {
+      const res = await request("/api/alerts", opts.getToken?.());
+      if (res.status === 404) {
+        // API antiga sem a rota: zero alertas (badge some no próximo tick).
+        return [];
+      }
+      if (!res.ok) {
+        throw new Error(`/api/alerts: ${res.status}`);
+      }
+      const body = (await res.json().catch(() => null)) as unknown;
+      if (!Array.isArray(body)) {
+        // Corpo malformado num 200: falha (o polling mantém os alertas
+        // anteriores) em vez de [] que limparia badges válidos.
+        throw new Error("/api/alerts: corpo inesperado");
+      }
+      const out: NodeAlert[] = [];
+      for (const item of body) {
+        if (typeof item === "object" && item !== null) {
+          const a = alertFromRaw(item as Record<string, unknown>);
+          if (a !== null) {
+            out.push(a);
+          }
+        }
+      }
+      return out;
     },
 
     async track(node) {

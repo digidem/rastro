@@ -1,6 +1,11 @@
 import type { Component } from "solid-js";
 import { For, Match, Show, Switch, createEffect } from "solid-js";
 import { useStore } from "../../hooks/useStore.jsx";
+import {
+  sufixoLeitura,
+  tituloBateriaCritica,
+  tituloGatewayMudo,
+} from "../../lib/alertas.js";
 import { duracaoLabel } from "../../lib/dwell.js";
 import {
   type BatteryLevel,
@@ -14,7 +19,7 @@ import {
   nodeKind,
   nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
-import type { NodeInfo, NodeKind } from "../../store.js";
+import type { NodeAlertType, NodeInfo, NodeKind } from "../../store.js";
 import { LogoLoader } from "../ui/LogoLoader.jsx";
 import { Button } from "../ui/button.jsx";
 import { Text } from "../ui/text.jsx";
@@ -47,6 +52,10 @@ export interface NodeListProps {
 export const NodeList: Component<NodeListProps> = (props) => {
   const { localState, select, resetFilters, toggleShowInactive } = useStore();
   let listRef: HTMLDivElement | undefined;
+
+  // Alerta ativo do nó (gateway_mudo/bateria_critica): base dos badges.
+  const alertaDe = (nodeNum: number, tipo: NodeAlertType) =>
+    (localState.alerts[nodeNum] ?? []).find((a) => a.alertType === tipo);
 
   // Ao selecionar um nó, rola suavemente para ele na lista
   createEffect(() => {
@@ -268,6 +277,27 @@ export const NodeList: Component<NodeListProps> = (props) => {
                         >
                           Fix antigo
                         </span>
+                      </Show>
+                      <Show when={alertaDe(n.nodeNum, "gateway_mudo")}>
+                        {(alerta) => (
+                          <span
+                            class="rounded border border-sky-600/80 bg-sky-950/40 px-1 text-[10px] text-sky-300 font-semibold"
+                            title={tituloGatewayMudo(alerta(), props.nowMs())}
+                          >
+                            📡 Sem sinal (&gt;1h)
+                          </span>
+                        )}
+                      </Show>
+                      <Show when={alertaDe(n.nodeNum, "bateria_critica")}>
+                        {(alerta) => (
+                          <span
+                            class="rounded border border-red-600/80 bg-red-950/40 px-1 text-[10px] text-red-300 font-semibold"
+                            title={tituloBateriaCritica(alerta(), props.nowMs())}
+                          >
+                            🪫 Bateria crítica
+                            {sufixoLeitura(alerta(), props.nowMs())}
+                          </span>
+                        )}
                       </Show>
                     </div>
                   </div>

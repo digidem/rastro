@@ -18,7 +18,12 @@ import {
   nodeKind,
   nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
-import type { NodeInfo, NodeKind } from "../../store.js";
+import {
+  sufixoLeitura,
+  tituloBateriaCritica,
+  tituloGatewayMudo,
+} from "../../lib/alertas.js";
+import type { NodeAlertType, NodeInfo, NodeKind } from "../../store.js";
 
 const ROTULO_CATEGORIA = new Map<NodeKind, string>([
   ["boat", "Barco"],
@@ -58,8 +63,12 @@ export interface NodeInspectorProps {
 
 /** Detalhe do nó selecionado: compacto, ergonômico e de alto contraste. */
 export const NodeInspector: Component<NodeInspectorProps> = (props) => {
-  const { select } = useStore();
+  const { localState, select } = useStore();
   const { centerOnNode } = useMap();
+
+  // Alerta ativo do nó: base dos badges (mesma fonte do NodeList).
+  const alertaDe = (nodeNum: number, tipo: NodeAlertType) =>
+    (localState.alerts[nodeNum] ?? []).find((a) => a.alertType === tipo);
 
   return (
     <Show when={props.node()}>
@@ -119,6 +128,33 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
                 <XIcon class="h-4.5 w-4.5" aria-hidden="true" />
               </button>
             </div>
+
+            {/* Alertas de campo ativos (gateway_mudo / bateria_critica) */}
+            <Show when={alertaDe(node().nodeNum, "gateway_mudo") || alertaDe(node().nodeNum, "bateria_critica")}>
+              <div class="flex flex-wrap gap-1.5">
+                <Show when={alertaDe(node().nodeNum, "gateway_mudo")}>
+                  {(alerta) => (
+                    <span
+                      class="rounded border border-sky-600/80 bg-sky-950/40 px-1 text-[10px] text-sky-300 font-semibold"
+                      title={tituloGatewayMudo(alerta(), props.nowMs())}
+                    >
+                      📡 Sem sinal (&gt;1h)
+                    </span>
+                  )}
+                </Show>
+                <Show when={alertaDe(node().nodeNum, "bateria_critica")}>
+                  {(alerta) => (
+                    <span
+                      class="rounded border border-red-600/80 bg-red-950/40 px-1 text-[10px] text-red-300 font-semibold"
+                      title={tituloBateriaCritica(alerta(), props.nowMs())}
+                    >
+                      🪫 Bateria crítica
+                      {sufixoLeitura(alerta(), props.nowMs())}
+                    </span>
+                  )}
+                </Show>
+              </div>
+            </Show>
 
             {/* Grupo 2: Ação Primária */}
             <button

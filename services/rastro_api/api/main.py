@@ -461,6 +461,42 @@ def create_app() -> FastAPI:
                 status_code=502, detail="camadas indisponíveis"
             ) from None
 
+    @router.get("/alerts")
+    def alerts(request: Request) -> list[dict]:
+        """Alertas ativos (``cleared_at IS NULL``) para o visualizador.
+
+        Contrato do plano (docs/PLANO-ALERTAS-E-RETENCAO.md §2.3): array JSON
+        com alert_id/node_id/node_name/alert_type/severity/triggered_at/details.
+        ``alert_id`` é a chave ``kind:sujeito`` de ``alert_state``. Nenhuma
+        coordenada ou texto de mensagem sai daqui.
+        """
+        rows = _fetch(request, queries.alerts_ativos)
+        severidade = {"gateway_mudo": "critical", "bateria_critica": "high"}
+        saida: list[dict] = []
+        for r in rows:
+            node_num = r.get("node_num")
+            node_id = r.get("node_id") or (
+                "!%08x" % node_num if node_num is not None else None
+            )
+            details: dict = {}
+            if r.get("last_seen") is not None:
+                details["last_seen"] = geojson.iso_utc(r["last_seen"])
+            if r.get("battery_level") is not None:
+                details["battery_level"] = r["battery_level"]
+            if r.get("voltage") is not None:
+                details["voltage"] = r["voltage"]
+            saida.append({
+                "alert_id": r["alert_id"],
+                "node_num": node_num,
+                "node_id": node_id,
+                "node_name": r.get("node_name") or node_id,
+                "alert_type": r["alert_type"],
+                "severity": severidade.get(r["alert_type"], "medium"),
+                "triggered_at": geojson.iso_utc(r["triggered_at"]),
+                "details": details,
+            })
+        return saida
+
     @router.get("/nodes/latest")
     def latest(request: Request) -> dict:
         now = datetime.now(timezone.utc)

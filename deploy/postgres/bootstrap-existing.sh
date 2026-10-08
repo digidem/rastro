@@ -267,7 +267,7 @@ SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.raw_envelopes_id_seq, %I.chat_
 -- viewer: leitura
 SELECT format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.vw_ultima_posicao TO %I', :'db', :'db', :'db', :'db', :'viewer') \gexec
 \if :tem_native
-SELECT format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.boat_devices TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'viewer') \gexec
+SELECT format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.gateway_status, %I.boat_devices TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'viewer') \gexec
 SELECT format('GRANT INSERT (boat_id, text, created_by, expires_at) ON %I.chat_outbox TO %I', :'db', :'viewer') \gexec
 SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.chat_outbox_id_seq TO %I', :'db', :'viewer') \gexec
 \endif

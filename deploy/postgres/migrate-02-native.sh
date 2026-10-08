@@ -177,7 +177,7 @@ SELECT format('GRANT SELECT (node_num, node_id, friendly_name, fleet_id) ON %I.n
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
 
 -- viewer: leitura das tabelas nativas; INSERT limitado no outbox (+ sequência do IDENTITY)
-SELECT format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.boat_devices TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'viewer')
+SELECT format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.gateway_status, %I.boat_devices TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'viewer')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'viewer') \gexec
 
 SELECT format('GRANT INSERT (boat_id, text, created_by, expires_at) ON %I.chat_outbox TO %I', :'db', :'viewer')

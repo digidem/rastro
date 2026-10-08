@@ -2,7 +2,7 @@
 
 Somente AVALIA e registra estado. Entrega (push/e-mail) está fora de escopo.
 Nada aqui publica no broker e nada aqui lê payload de mensagem: as entradas
-são agregados do banco (último uplink por gateway, fixes por nó) e as saídas
+são agregados do banco (último uplink por gateway, energia por nó) e as saídas
 são eventos de subida/limpeza de estado — seguros para log (kinds + contagens).
 
 Máquina de estados (por chave ``kind:subject``):
@@ -12,75 +12,51 @@ Máquina de estados (por chave ``kind:subject``):
 
 Configuração (lida do ambiente a cada ciclo, como em ``envelope._casa_ajuda``):
 - ``RASTRO_GATEWAY_SILENT_SECS`` (3600)  — gateway_mudo
-- ``RASTRO_PARKED_METERS``        (30)   — posicao_parada (haversine)
-- ``RASTRO_PARKED_SECS``          (7200) — posicao_parada
-- ``RASTRO_NOFIX_SECS``           (3600) — sem_fix
-- ``RASTRO_MOBILE_ABSENT_SECS``   (7200) — movel_ausente
-- ``RASTRO_QUIET_START``/``RASTRO_QUIET_END`` (HH:MM, fuso ``RASTRO_TZ``):
-  suprimem APENAS o disparo (raise) de ``gateway_mudo``/``movel_ausente``;
-  janela cruzando meia-noite funciona (início > fim).
+- ``RASTRO_BATTERY_LOW_PCT``      (20)   — bateria_critica (%)
+- ``RASTRO_BATTERY_MIN_VOLTS``    (3.55) — bateria_critica (V)
 - ``RASTRO_FIXED_NODES`` — nós da classe "fixa" (números decimais ou ``!hex``,
   separados por vírgula). Todo nó fora da lista é da classe móvel (barcos se
   movem; o schema não tem coluna de classe — fica no ambiente).
 
 Semântica de cada kind (detection = condição ativa agora):
 - ``gateway_mudo``: gateway conhecido sem uplink há mais de gateway_silent_secs.
-- ``posicao_parada``: nó FIXO com último fix fresco (≤ parked_secs), dois fixes
-  consecutivos separados por ≥ parked_secs e deslocamento haversine entre eles
-  < parked_meters. Com um único fix não há deslocamento mensurável: não avalia.
-- ``sem_fix``: nó vivo (last_seen dentro de nofix_secs) que está há mais de
-  nofix_secs sem fix válido (gap = last_seen − fix_time; sem fix nenhum,
-  gap = agora − first_seen). Nó parado de enviar NÃO avalia (não está enviando).
-- ``movel_ausente``: nó MÓVEL sem atividade (nodes.last_seen) há mais de
-  mobile_absent_secs.
+- ``bateria_critica``: nó FIXO (repetidor/base solar) com ``battery_level < 20``
+  ou ``voltage < 3.55 V`` na leitura mais recente de ``node_power``. Nó sem
+  leitura não avalia; nós móveis nunca avaliam (bateria trocada em campo,
+  não é condição operacional).
 """
+
 from __future__ import annotations
 
 import logging
-import math
 import os
-from datetime import datetime
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-# Limiares (segundos / metros) e janela de silêncio noturno.
+# Limiares (segundos / % / volts) lidos do ambiente a cada ciclo.
 ENV_GATEWAY_SILENT_SECS = "RASTRO_GATEWAY_SILENT_SECS"
-ENV_PARKED_METERS = "RASTRO_PARKED_METERS"
-ENV_PARKED_SECS = "RASTRO_PARKED_SECS"
-ENV_NOFIX_SECS = "RASTRO_NOFIX_SECS"
-ENV_MOBILE_ABSENT_SECS = "RASTRO_MOBILE_ABSENT_SECS"
-ENV_QUIET_START = "RASTRO_QUIET_START"
-ENV_QUIET_END = "RASTRO_QUIET_END"
-ENV_TZ = "RASTRO_TZ"
+ENV_BATTERY_LOW_PCT = "RASTRO_BATTERY_LOW_PCT"
+ENV_BATTERY_MIN_VOLTS = "RASTRO_BATTERY_MIN_VOLTS"
 ENV_FIXED_NODES = "RASTRO_FIXED_NODES"
 ENV_ALERTS_ENABLED = "RASTRO_ALERTS_ENABLED"
 ENV_INTERVALO_SECS = "RASTRO_ALERT_INTERVAL_SECS"
 
 GATEWAY_SILENT_PADRAO_SECS = 3600.0
-PARKED_PADRAO_METERS = 30.0
-PARKED_PADRAO_SECS = 7200.0
-NOFIX_PADRAO_SECS = 3600.0
-MOBILE_ABSENT_PADRAO_SECS = 7200.0
-TZ_PADRAO = "UTC"
+BATERIA_CRITICA_PCT_PADRAO = 20.0
+BATERIA_CRITICA_VOLTS_PADRAO = 3.55
 INTERVALO_PADRAO_SECS = 60.0
 
 KIND_GATEWAY_MUDO = "gateway_mudo"
-KIND_POSICAO_PARADA = "posicao_parada"
-KIND_SEM_FIX = "sem_fix"
-KIND_MOVEL_AUSENTE = "movel_ausente"
+KIND_BATERIA_CRITICA = "bateria_critica"
 
-# Kinds suprimidos pela janela de silêncio (apenas o disparo, não a limpeza).
-_KINDS_COM_SILENCIO = (
-    KIND_GATEWAY_MUDO,
-    KIND_MOVEL_AUSENTE,
-)
+# Kinds aposentados (plano 2026-10-08): o motor não os avalia mais; o ciclo
+# limpa linhas ativas antigas via ``Db.retire_alert_kinds`` (idempotente).
+KINDS_APOSENTADOS = ("sem_fix", "posicao_parada", "movel_ausente")
+KIND_BATERIA_CRITICA = "bateria_critica"
 
 TIPO_FIXO = "fixed"
 TIPO_MOVEL = "mobile"
-
-_RAIO_TERRA_M = 6_371_000.0
-_ESCALA_1E7 = 10_000_000.0
 
 
 @dataclass(frozen=True)
@@ -96,22 +72,8 @@ class AlertEvent:
 @dataclass(frozen=True)
 class _Config:
     gateway_silent_secs: float
-    parked_meters: float
-    parked_secs: float
-    nofix_secs: float
-    mobile_absent_secs: float
-
-
-def haversine_m(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
-    """Distância haversine em metros entre dois pontos em graus decimais."""
-    phi1, phi2 = math.radians(lat1_deg), math.radians(lat2_deg)
-    dphi = phi2 - phi1
-    dlambda = math.radians(lon2_deg - lon1_deg)
-    a = (
-        math.sin(dphi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    )
-    return 2 * _RAIO_TERRA_M * math.asin(math.sqrt(a))
+    battery_low_pct: float
+    battery_min_volts: float
 
 
 def _float_env(env: dict, nome: str, padrao: float) -> float:
@@ -129,55 +91,14 @@ def _float_env(env: dict, nome: str, padrao: float) -> float:
 def _config(env: dict | None = None) -> _Config:
     env = os.environ if env is None else env
     return _Config(
-        gateway_silent_secs=_float_env(env, ENV_GATEWAY_SILENT_SECS, GATEWAY_SILENT_PADRAO_SECS),
-        parked_meters=_float_env(env, ENV_PARKED_METERS, PARKED_PADRAO_METERS),
-        parked_secs=_float_env(env, ENV_PARKED_SECS, PARKED_PADRAO_SECS),
-        nofix_secs=_float_env(env, ENV_NOFIX_SECS, NOFIX_PADRAO_SECS),
-        mobile_absent_secs=_float_env(env, ENV_MOBILE_ABSENT_SECS, MOBILE_ABSENT_PADRAO_SECS),
+        gateway_silent_secs=_float_env(
+            env, ENV_GATEWAY_SILENT_SECS, GATEWAY_SILENT_PADRAO_SECS
+        ),
+        battery_low_pct=_float_env(env, ENV_BATTERY_LOW_PCT, BATERIA_CRITICA_PCT_PADRAO),
+        battery_min_volts=_float_env(
+            env, ENV_BATTERY_MIN_VOLTS, BATERIA_CRITICA_VOLTS_PADRAO
+        ),
     )
-
-
-def _minutos_hhmm(valor: str) -> int | None:
-    """``HH:MM`` → minutos do dia; None se inválido (não levanta)."""
-    partes = valor.strip().split(":")
-    if len(partes) != 2:
-        return None
-    try:
-        hora, minuto = int(partes[0]), int(partes[1])
-    except ValueError:
-        return None
-    if not (0 <= hora <= 23 and 0 <= minuto <= 59):
-        return None
-    return hora * 60 + minuto
-
-
-def _janela_silencio(now: float, env: dict | None = None) -> bool:
-    """True se ``now`` cai na janela de silêncio noturno (RASTRO_TZ).
-
-    Início == fim desliga a janela (senão seria silêncio 24 h). Início > fim =
-    janela cruzando a meia-noite. Fuso/config inválidos desligam a janela.
-    """
-    env = os.environ if env is None else env
-    inicio_bruto = (env.get(ENV_QUIET_START) or "").strip()
-    fim_bruto = (env.get(ENV_QUIET_END) or "").strip()
-    if not inicio_bruto or not fim_bruto:
-        return False
-    inicio = _minutos_hhmm(inicio_bruto)
-    fim = _minutos_hhmm(fim_bruto)
-    if inicio is None or fim is None or inicio == fim:
-        return False
-    tz_nome = (env.get(ENV_TZ) or TZ_PADRAO).strip()
-    try:
-        from zoneinfo import ZoneInfo
-
-        local = datetime.fromtimestamp(now, tz=ZoneInfo(tz_nome))
-    except Exception:  # noqa: BLE001 — fuso inválido: janela desligada, nunca levantar
-        log.warning("AVISO: %s inválido (%r) — janela de silêncio desligada", ENV_TZ, tz_nome)
-        return False
-    minuto = local.hour * 60 + local.minute
-    if inicio < fim:
-        return inicio <= minuto < fim
-    return minuto >= inicio or minuto < fim  # janela cruza a meia-noite
 
 
 def node_kinds_padrao(env: dict | None = None) -> dict[int, str]:
@@ -207,78 +128,48 @@ def evaluate(
     now: float,
     state_rows: list,
     last_uplink_by_gateway: dict,
-    last_fix_by_node: dict,
+    node_power_by_node: dict,
     node_kinds: dict,
 ) -> list[AlertEvent]:
-    """Avalia as 4 condições e devolve eventos de raise/clear (função pura).
+    """Avalia as 2 condições e devolve eventos de raise/clear (função pura).
 
     ``state_rows``: linhas de ``alert_state`` como dicts com
     ``key/node_num/kind/since/cleared_at`` (epochs float ou None).
     ``last_uplink_by_gateway``: {gateway_num: epoch_do_último_uplink}.
-    ``last_fix_by_node``: {node_num: dict} com ``first_seen/last_seen/fix_time/
-    lat_i/lon_i/prev_time/prev_lat_i/prev_lon_i`` (None = sem dado daquele tipo).
+    ``node_power_by_node``: {node_num: dict} com ``battery_level``/``voltage``
+    (None = sem leitura daquele campo; ausente do dict = sem telemetria).
     ``node_kinds``: {node_num: 'fixed' | 'mobile'}; ausente = móvel.
     """
     cfg = _config()
     ativos = {row["key"]: row for row in state_rows if row.get("cleared_at") is None}
-    silencio = _janela_silencio(now)
     deteccoes: dict[str, tuple[str, int | None, bool]] = {}
 
     for gw, ultimo in sorted(last_uplink_by_gateway.items()):
         mudo = (now - ultimo) > cfg.gateway_silent_secs
         deteccoes[_chave(KIND_GATEWAY_MUDO, gw)] = (KIND_GATEWAY_MUDO, gw, mudo)
 
-    for num, info in sorted((last_fix_by_node or {}).items()):
+    for num, leitura in sorted((node_power_by_node or {}).items()):
         fixo = (node_kinds or {}).get(num, TIPO_MOVEL) == TIPO_FIXO
-        last_seen = info.get("last_seen") if info else None
-        fix_time = info.get("fix_time") if info else None
-        first_seen = info.get("first_seen") if info else None
-
-        # posicao_parada: só classe fixa, com dois fixes e último fresco.
-        parada = False
-        if (
-            fixo
-            and info
-            and fix_time is not None
-            and info.get("prev_time") is not None
-            and (now - fix_time) <= cfg.parked_secs
-            and (fix_time - info["prev_time"]) >= cfg.parked_secs
-        ):
-            deslocamento = info.get("displacement_m")
-            if deslocamento is None and info.get("lat_i") is not None:
-                deslocamento = haversine_m(
-                    info["prev_lat_i"] / _ESCALA_1E7,
-                    info["prev_lon_i"] / _ESCALA_1E7,
-                    info["lat_i"] / _ESCALA_1E7,
-                    info["lon_i"] / _ESCALA_1E7,
-                )
-            parada = deslocamento is not None and deslocamento < cfg.parked_meters
-        deteccoes[_chave(KIND_POSICAO_PARADA, num)] = (KIND_POSICAO_PARADA, num, parada)
-
-        # sem_fix: vivo (enviando) e sem fix válido há demais.
-        sem = False
-        if vivo := bool(last_seen is not None and (now - last_seen) <= cfg.nofix_secs):
-            if fix_time is None:
-                sem = first_seen is not None and (now - first_seen) > cfg.nofix_secs
-            else:
-                sem = (last_seen - fix_time) > cfg.nofix_secs
-        deteccoes[_chave(KIND_SEM_FIX, num)] = (KIND_SEM_FIX, num, sem)
-
-        # movel_ausente: só classe móvel, sem atividade há demais.
-        ausente = (
-            not fixo
-            and last_seen is not None
-            and (now - last_seen) > cfg.mobile_absent_secs
+        # bateria_critica: só classe fixa (repetidor/base solar). "OU" entre os
+        # dois limiares: cada um dispara sozinho; None nunca dispara sozinho.
+        critica = False
+        if fixo and leitura:
+            bateria = leitura.get("battery_level")
+            volts = leitura.get("voltage")
+            critica = (bateria is not None and bateria < cfg.battery_low_pct) or (
+                volts is not None and volts < cfg.battery_min_volts
+            )
+        deteccoes[_chave(KIND_BATERIA_CRITICA, num)] = (
+            KIND_BATERIA_CRITICA,
+            num,
+            critica,
         )
-        deteccoes[_chave(KIND_MOVEL_AUSENTE, num)] = (KIND_MOVEL_AUSENTE, num, ausente)
 
     eventos: list[AlertEvent] = []
     for key in sorted(deteccoes):
         kind, sujeito, detectado = deteccoes[key]
         ativo = ativos.get(key)
         if detectado and ativo is None:
-            if kind in _KINDS_COM_SILENCIO and silencio:
-                continue  # quiet hours: só suprime o disparo, estado continua limpo
             eventos.append(AlertEvent(action="raise", kind=kind, key=key, node_num=sujeito))
         elif not detectado and ativo is not None:
             eventos.append(AlertEvent(action="clear", kind=kind, key=key, node_num=sujeito))
@@ -292,11 +183,13 @@ def run_alert_cycle(db, now: float) -> dict:
     temporizador com ``RASTRO_ALERTS_ENABLED=1``. Retorna contagens (kinds não
     entram no log aqui — quem loga é o chamador, se quiser, com kinds only).
     """
+    # Aposentados primeiro: linha antiga ativa recebe cleared_at uma vez.
+    aposentados = db.retire_alert_kinds(list(KINDS_APOSENTADOS), now)
     eventos = evaluate(
         now,
         db.alert_state_rows(),
         db.gateway_uplink_times(),
-        db.node_activity(),
+        db.node_power_readings(),
         node_kinds_padrao(),
     )
     raised = [
@@ -307,4 +200,4 @@ def run_alert_cycle(db, now: float) -> dict:
     cleared = [{"key": e.key, "cleared_at": now} for e in eventos if e.action == "clear"]
     if raised or cleared:
         db.save_alert_events(raised, cleared, now)
-    return {"raised": len(raised), "cleared": len(cleared)}
+    return {"raised": len(raised), "cleared": len(cleared), "aposentados": aposentados}

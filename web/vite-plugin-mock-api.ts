@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
+import { getAlerts } from "./src/fixtures/alertsFixture.js";
 import {
   type MockEventKind,
   getLatestGeoJson,
@@ -634,6 +635,11 @@ function handleNodeRoute(
 
   if (pathname === "/api/nodes/latest" && isGetOrHead) {
     sendJson(res, 200, getLatestGeoJson());
+    return true;
+  }
+
+  if (pathname === "/api/alerts" && isGetOrHead) {
+    sendJson(res, 200, getAlerts());
     return true;
   }
 
