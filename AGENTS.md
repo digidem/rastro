@@ -39,7 +39,7 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 
 | Tarefa | Comando |
 |---|---|
-| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 286 testes) |
+| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 425 testes) |
 | Servidor dev com dados reais da API | `cd web && pnpm dev` (proxy para `VITE_API_TARGET`, definido em `web/.env.development`) |
 | Servidor dev com dados de teste (fixtures) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:test` (acessível via LAN/VPN; `dev:mock` é alias) |
 | Lint / Formatação do frontend | `cd web && pnpm biome check` |
@@ -88,6 +88,12 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - `GET /api/nodes/:id/track` sem `from`/`to` devolve só as últimas 24 h, e no máximo 2000 fixes por chamada (os MAIS NOVOS: `ORDER BY pos_time DESC LIMIT`). Barco parado o dia inteiro ficava sem trilha nenhuma.
    - A web busca o período escolhido no botão do mapa (24 h a 14 dias, padrão 14) em fatias de um dia UTC (`web/src/lib/trilhaJanela.ts`); fatia que bate no teto é dividida em metades disjuntas (`from`/`to` são inclusivos) até 1 min. Dias fechados ficam em cache (15 min + jitter); o dia corrente é sempre buscado; logout limpa o cache e invalida as respostas em voo, inclusive as das trilhas coletivas.
    - Custo medido em dados reais (2026-10-09): 3066 fixes de 3,5 dias simplificam em ~51 ms; 10 mil fixes parados com jitter real, ~200 ms. Jitter sintético aleatório superestima em ~15×: meça desempenho com trilha real antes de mudar a arquitetura.
+11. **Régua (medir distâncias):**
+   - Distância por haversine (`web/src/lib/regua.ts`), nunca `distanciaM` de `dwell.ts`: aquela é equirretangular local, boa para paradas, ruim para centenas de km.
+   - Vértice é livre (`lon/lat`) ou ancorado num nó (`nodeNum`); o ancorado é resolvido a cada render a partir de `localState.nodes`, então segue o polling. Arrastar um vértice ancorado o desancora.
+   - Com a régua ligada, os handlers de clique de pin/parada/área livre em `InitializeMap.tsx` retornam cedo; os cliques são da régua (`instalarInteracoesRegua` em `web/src/lib/reguaMapa.ts`). Encaixe em nó numa caixa de ±10 px (toque).
+   - Chegada estimada só com vértice 0 num nó não parado e velocidade ≥ 2 km/h (lição 9: multipath gera velocidade falsa). `movimento` só existe para nós cuja trilha já foi analisada.
+   - `navigator.clipboard` exige contexto seguro: em `http://` pela LAN/ZeroTier o "Copiar" mostra "Não foi possível copiar".
 
 ---
 
