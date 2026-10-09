@@ -101,6 +101,10 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - Tamanho medido em bytes UTF-8 (acento = 2 bytes); meta 150–180, teto 200. Log só com o tamanho, nunca o texto nem coordenadas.
    - Posição exata vai ao Open-Meteo por decisão do dono (2026-10-09).
    - Limitação: se o `rastro-chat` estiver fora do ar, as mensagens acumulam e saem juntas quando ele volta.
+   - Em produção, `RASTRO_CLIMA_BARCOS` guarda um ponto reserva por barco = mediana por eixo dos fixes dos últimos 14 dias do próprio barco (calculado em 2026-10-09; os valores só existem na env do CapRover, nunca no repositório). Jaquirana não tinha fix em 14 dias e ficou sem reserva (pulada até reportar).
+   - `RASTRO_CLIMA_BARCOS` vazia = lista padrão SEM reservas (os barcos sem fix recente são pulados). Ao regravar, nunca passe valor vazio.
+   - psycopg recusa mudar `conn.read_only` com transação aberta (qualquer SELECT abre uma): a escrita em `chat_outbox` usa conexão nova do pool, e a busca HTTP não segura conexão.
+   - Teste com Postgres real: `postgres:16` descartável + `01-schema.sql` e `02-native.sql` + papel `rastro_viewer`, pool com `default_transaction_read_only=on`. O relógio falso (`agora`) tem de bater com o do banco: `created_at` vem do `now()` do Postgres e é comparado com `desde` (meia-noite local calculada no app); com datas diferentes a deduplicação parece quebrada sem estar.
 
 ---
 
