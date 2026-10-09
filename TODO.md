@@ -40,7 +40,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
     - Sobra o rádio: outros rádios com a chave EVU recebem a mensagem no próprio aparelho. Só confirmável em campo com 2+ barcos.
     - **Observado pelo dono (2026-10-09):** ao escolher "cidade" no dropdown "Enviar para", o barco também recebe a mensagem. Confirma o caminho do rádio: broadcast no canal compartilhado.
     - Decisão pendente do dono (não mudar rádio/ACL sem plano, AGENTS.md §5): pausar envios ao barco, manter com aviso, ou desenhar endereçamento privado por barco (exige PKI; fora da v1 pelo TODO).
-- [ ] H4 Mensagens do chat: histórico eterno (decidido 2026-10-08, igual às posições). Só falta decidir o procedimento de exclusão sob pedido (LGPD), se houver pedido.
+- [x] H4 Mensagens do chat: histórico eterno (decidido 2026-10-08). Botão de exclusão de mensagens: não necessário (decidido 2026-10-09). Procedimento LGPD só se houver pedido.
 - [x] H5 Canal de alerta: decidido 2026-10-09 — só os selos no mapa (📡/🪫), sem push nem e-mail. M3 descartado.
 - [x] H6 Regras de reiniciar/desligar aprovadas 2026-10-09: nós solares/fixos só reiniciam; desligar só com tripulação por perto; nunca factory reset remoto. Construção (M2) continua bloqueada pelo caminho de comando pela malha (tarefa 4/5).
 - [ ] H7 Confirmar limiares de bateria por classe.
@@ -48,7 +48,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [ ] H9 `RASTRO_NATIVE_SECRET` guardado em cofre.
 - [ ] H11/H12 Aprovar commits e pushes: `rastro` (`7ef9e81` à frente de `origin/main`), `univaja-lora` (sem upstream, docs misturadas com rename FLEET→EVU), `caprover-one-click-apps`, `.agents/`; apagar `deploy/sim.nonexistent_placeholder`.
 - [x] H1 App iOS: não planejado (decidido 2026-10-09). Certificado TLS confiável para iOS fica fora do escopo por ora.
-- [ ] H14 Atalaia: adicionar `univaja-atalaia-barco-1` ao inventário quando houver rádio.
+- [ ] H14 Atalaia: adicionar `univaja-atalaia-barco-1` ao inventário quando houver rádio. Decidido 2026-10-09: rádio ainda não está pronto; manter fora do mapa.
 - [ ] H16 **Vazamento do chat (adiado pelo dono em 2026-10-09):** mensagem enviada a qualquer destino (inclusive "cidade") é broadcast no canal EVU e chega a todos os barcos no alcance. Decidir depois: pausar envios aos barcos, manter com aviso na UI, ou planejar endereçamento privado por barco (exige chave por dispositivo; fora da v1). Detalhes: seção «Tarefa 4/5» → achado de 2026-10-09.
 
 **Máquina**
@@ -347,7 +347,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [x] Logs de chat e PSK: `chat/outbox.py` e `chat/__main__.py` registram só tipo de exceção e IDs; PSK com `repr=False`, nunca logada (verificado 2026-10-08).
 - [x] Logs de erro agora registram só o tipo da exceção: `native/service.py` (sem `log.exception`, sem traceback) e `ingest/db.py` (sem os 120 caracteres da mensagem do banco). Gateway: 301 testes passam (2026-10-08). Implantado em produção em 2026-10-09 como `rastro-ingest:0.8.8` (deploy aprovado pelo dono; `deploy-image` enfileirado, conferir se o mapa segue atualizando).
 - [x] Retenção do texto do chat: não há (histórico eterno, decidido 2026-10-08).
-- [ ] **Humano:** só se houver pedido de exclusão (LGPD): definir quem aprova e como apagar mensagens e posições.
+- [x] **Humano:** botão de exclusão de mensagens: não necessário (decidido 2026-10-09).
 - [ ] Modelo de dados: texto, NodeInfo, id do pacote, gateway vs remetente, observado vs recebido, outbox do chat, gateways virtuais (6 barcos + cidade), vínculo dispositivo→barco com validade, **estado de energia/bateria por Nó Solar** para os alertas de energia.
 - [x] Alertas de energia: `bateria_critica` ativo para nós fixos. Limiares são padrões no código (`native/alerts.py`: 20 % e 3,55 V), configuráveis por env; não estão setados em produção.
 - [ ] **Humano:** confirmar limiares por classe. Alerta preditivo "antes do apagão" descartado (especulativo).
