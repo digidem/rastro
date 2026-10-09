@@ -39,12 +39,12 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 
 | Tarefa | Comando |
 |---|---|
-| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 132 testes) |
+| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 286 testes) |
 | Servidor dev com dados reais da API | `cd web && pnpm dev` (proxy para `VITE_API_TARGET`, definido em `web/.env.development`) |
 | Servidor dev com dados de teste (fixtures) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:test` (acessível via LAN/VPN; `dev:mock` é alias) |
 | Lint / Formatação do frontend | `cd web && pnpm biome check` |
 | Typecheck do frontend | `cd web && pnpm typecheck` — não concluiu em 400 s no ambiente de desenvolvimento de 2026-10-08 (memória limitada); não use como gate sem verificar |
-| Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (111 testes) |
+| Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (314 testes) |
 | Simulação de deploy CapRover | `deploy/sim/run.sh <template.yml>` |
 | Script de limpeza de banco legado | `python3 scripts/rastro_cleanup_legacy_db.py --dry-run` |
 
@@ -61,7 +61,7 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - Em `web/src/InitializeMap.tsx`, o `fitBounds` observa unicamente a lista de nós com fix confirmado (`posicionados = todos.filter(hasConfirmedPosition)`), evitando saltos indesejados de zoom enquanto o usuário navega.
 3. **Cálculo de Rumo Geodésico para Embarcações:**
    - Rastreadores veiculares ou de mão frequentemente não enviam o campo de bússola/rumo no fix do GPS.
-   - O rumo é computado dinamicamente em `web/src/lib/bearing.ts` via azimute do segmento mais recente com direção definida da trilha histórica do nó, orientando a silhueta SVG do barco no mapa.
+   - O rumo é computado dinamicamente em `web/src/lib/bearing.ts` (`bearingComParada`) via azimute do último segmento da linha simplificada, orientando a silhueta SVG do barco no mapa. Parado, congela no último rumo de aproximação (sem girar a cada fix de GPS).
 4. **Vite em Rede Local / VPN:**
    - Para permitir acesso de testes em dispositivos móveis na mesma Wi-Fi ou via ZeroTier, o servidor mock deve rodar com `VITE_HOST=0.0.0.0`.
 5. **Sensibilidade de Dados Territoriais:**
@@ -77,6 +77,13 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 8. **Simulação de WebSockets e TLS com Nginx / CapRover:**
    - Ao reproduzir a terminação TLS e o proxy de WebSockets para o broker Mosquitto em testes locais (`deploy/sim`), o Nginx requer cabeçalhos explícitos `Upgrade` e `Connection`, além de `proxy_ssl_server_name on` para repasse de SNI.
    - Testes automatizados headless exigem injeção da autoridade certificadora (CA) simulada para evitar rejeições de certificado autoassinado.
+9. **Parada de barco sob multipath (GPS):**
+   - Medido numa parada real de 15 h (521 fixes, sob dossel): p50 ≈ 23 m, p90 74–110 m da mediana; 23% dos fixes ficam além de 50 m, em sequências de 2 a 6; o ruído é branco (distância entre fixes consecutivos ≈ entre pares aleatórios). Um salto de 100 m em 30 s parece 12 km/h.
+   - Regras de parada em `web/src/lib/dwell.ts`: centro = mediana por eixo (não média); entrada com 80% da janela dentro de 100 m e deriva ≤ 75 m entre início e fim; saída só com 5 dos últimos 6 fixes além de 150 m, cobrindo ≥ 2 min; paradas vizinhas (≤ 100 m e ≤ 5 min) são mescladas.
+   - Spike: teste A–B–C em `web/src/lib/gpsSpike.ts` (resíduo > 100 m, excesso > 150 m, A–C ≤ 100 m, vizinhos ≤ 120 s; com HDOP > 5, resíduo 60 m). Spike fica fora da parada e da linha.
+   - Velocidade sozinha nunca é sinal de saída nem de spike: o multipath gera velocidade falsa; partida real aparece como deriva e segue em frente.
+   - Linha em movimento: suavizada ±60 s (`web/src/lib/suavizar.ts`); odômetro soma a linha antes do Douglas–Peucker (30 m); o DP sempre mantém os centros de parada.
+   - Mapa: parada = um marcador no centro + círculo translúcido de dispersão (p90). Fixes crus só no botão "Fixes brutos" do inspector, esmaecidos e sem linha.
 
 ---
 

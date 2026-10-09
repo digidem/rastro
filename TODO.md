@@ -412,4 +412,10 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   - Substituir o texto cru `<Text class="text-gray-400">Carregando…</Text>` em `web/src/App.tsx` (estado `verificando` de autenticação) e nos estados vazios/carregamento do visualizador (`NodeList.tsx`) por uma splash elegante com o logo animado.
   - Suportar prop de dimensão (`size: "sm" | "md" | "lg"` com aspect ratio preservado) e texto de status opcional (ex.: *"Conectando à malha Rastro..."*).
 
+## Parada de barco sob multipath (plano `TASK.md`, 2026-10-09)
+
+- [ ] Provisionamento `../univaja-lora`: ajustar `position.position_flags` para incluir DOP (PDOP/HDOP), SATINVIEW, SPEED e HEADING, para os rádios enviarem esses campos (hoje `sats_in_view` é sempre 0). É mudança de configuração de rádio: seguir o processo de contrato congelado (AGENTS.md §5) e testar antes com um rádio de bancada.
+- [ ] Deploy: aplicar `deploy/postgres/migrate-03-qualidade.sh` (backup automático). A API lê as colunas novas via `to_jsonb` e o ingest detecta colunas por conexão; a ordem é livre, mas reiniciar `rastro-ingest` depois de migrar para ele passar a gravar as colunas.
+- [ ] Recalibrar os limites de parada (`web/src/lib/dwell.ts`) quando HDOP/PDOP chegarem dos rádios.
+- [ ] Bug pré-existente: `carregarBasemapPadrao` em `web/src/store.ts` lê `localStorage` sem try/catch; se o storage lançar exceção, o módulo do store não carrega.
 
