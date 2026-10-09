@@ -14,6 +14,13 @@
  */
 
 import { marcarSpikes } from "./gpsSpike.js";
+import {
+  type ItemLinha,
+  douglasPeucker,
+  mediana,
+  segmentar,
+  suavizarLocal,
+} from "./suavizar.js";
 
 export type LngLat = [number, number];
 
@@ -149,13 +156,6 @@ function ordenarFixesValidos(pontos: readonly FixDwell[]): Entrada[] {
         ? a.t - b.t
         : a.orig - b.orig,
     );
-}
-
-/** Mediana de uma lista não vazia (média dos dois centrais se par). */
-function mediana(valores: readonly number[]): number {
-  const s = [...valores].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 /**
@@ -441,15 +441,9 @@ function paraDwell(L: Limpa, p: Parada, temposSpike: readonly number[]): Dwell {
   };
 }
 
-interface Item {
-  pos: LngLat;
-  ini: number; // ms (NaN se desconhecido)
-  fim: number;
-}
-
 /** Vértices da linha: fix a fix fora de paradas; cada parada vira um único vértice (centro). */
-function montarItens(L: Limpa, paradas: readonly Parada[]): Item[] {
-  const itens: Item[] = [];
+function montarItens(L: Limpa, paradas: readonly Parada[]): ItemLinha[] {
+  const itens: ItemLinha[] = [];
   let k = 0;
   let p = 0;
   while (k < L.ts.length) {
@@ -459,43 +453,42 @@ function montarItens(L: Limpa, paradas: readonly Parada[]): Item[] {
         pos: parada.centro,
         ini: L.ts[k],
         fim: ultimoMsDe(L, parada),
+        ancora: true,
       });
       k = parada.fimL;
       p++;
     } else {
-      itens.push({ pos: L.pos[k], ini: L.ts[k], fim: L.ts[k] });
+      itens.push({ pos: L.pos[k], ini: L.ts[k], fim: L.ts[k], ancora: false });
       k++;
     }
   }
   return itens;
 }
 
-function construirLinhasEoDometro(
-  itens: readonly Item[],
+/** Soma das distâncias entre vértices consecutivos de cada segmento, m. */
+function somarDistancias(segmentos: readonly ItemLinha[][]): number {
+  let total = 0;
+  for (const seg of segmentos) {
+    for (let k = 1; k < seg.length; k++) {
+      total += distanciaM(seg[k - 1].pos, seg[k].pos);
+    }
+  }
+  return total;
+}
+
+/**
+ * Odômetro sobre a linha suavizada ANTES do Douglas–Peucker;
+ * `linhas` vem DEPOIS (segmentos com menos de 2 vértices somem).
+ */
+function montarLinhaOdometro(
+  suavizados: readonly ItemLinha[],
   gapMs: number,
 ): { linhas: LngLat[][]; distanciaM: number } {
-  const linhas: LngLat[][] = [];
-  let atual: LngLat[] = [];
-  let anterior: Item | null = null;
-  let distancia = 0;
-
-  for (const it of itens) {
-    if (anterior !== null && gapMs > 0 && it.ini - anterior.fim > gapMs) {
-      if (atual.length >= 2) {
-        linhas.push(atual);
-      }
-      atual = [];
-    }
-    if (anterior !== null && atual.length > 0) {
-      distancia += distanciaM(anterior.pos, it.pos);
-    }
-    atual.push(it.pos);
-    anterior = it;
-  }
-  if (atual.length >= 2) {
-    linhas.push(atual);
-  }
-  return { linhas, distanciaM: distancia };
+  const segmentos = segmentar(suavizados, gapMs);
+  const linhas = segmentos
+    .map((seg) => douglasPeucker(seg).map((it) => it.pos))
+    .filter((linha) => linha.length >= 2);
+  return { linhas, distanciaM: somarDistancias(segmentos) };
 }
 
 function calcularVelocidade(
@@ -551,7 +544,8 @@ export function simplifyTrackDwells(
   const paradas = mesclarParadas(L, detectarParadas(L, o), o);
   const temposSpike = entradas.filter((_, k) => spikes[k]).map((e) => e.t);
   const itens = montarItens(L, paradas);
-  const { linhas, distanciaM } = construirLinhasEoDometro(itens, o.gapMs);
+  const suavizados = suavizarLocal(itens, undefined, undefined, o.gapMs);
+  const { linhas, distanciaM } = montarLinhaOdometro(suavizados, o.gapMs);
   const ultima: Parada | undefined = paradas[paradas.length - 1];
   const parado = ultima?.emCurso === true;
 
@@ -559,7 +553,7 @@ export function simplifyTrackDwells(
     linhas,
     dwells: paradas.map((p) => paraDwell(L, p, temposSpike)),
     parado,
-    aproximacao: parado ? itens.map((it) => it.pos) : null,
+    aproximacao: parado ? suavizados.map((it) => it.pos) : null,
     velocidadeKmh: calcularVelocidade(entradas, parado),
     distanciaM,
     papel: montarPapel(pontos.length, entradas, spikes, L, paradas),

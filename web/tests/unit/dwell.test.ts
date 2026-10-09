@@ -43,7 +43,8 @@ describe("simplifyTrackDwells", () => {
     expect(r.dwells).toEqual([]);
     expect(r.parado).toBe(false);
     expect(r.linhas).toHaveLength(1);
-    expect(r.linhas[0]).toHaveLength(10);
+    // reta com ruído: Douglas–Peucker (30 m) mantém só os extremos
+    expect(r.linhas[0]).toHaveLength(2);
     expect(r.velocidadeKmh).toBeCloseTo(18, 0);
   });
 
@@ -58,9 +59,9 @@ describe("simplifyTrackDwells", () => {
     const d = r.dwells[0];
     expect(d.duracaoMs).toBeGreaterThanOrEqual(15 * M);
     expect(d.partidaMs).not.toBeNull();
-    // 5 antes + centro da parada + 5 depois (sem vértice de chegada)
+    // início + centro da parada + fim: DP tira os colineares; sem vértice de chegada
     expect(r.linhas).toHaveLength(1);
-    expect(r.linhas[0]).toHaveLength(5 + 1 + 5);
+    expect(r.linhas[0]).toHaveLength(3);
     expect(r.parado).toBe(false);
     expect(r.aproximacao).toBeNull();
     // odômetro não infla com o jitter: ~ trajeto de 3600+ m, não dezenas de km
@@ -143,8 +144,9 @@ describe("simplifyTrackDwells", () => {
     const bag = [...navegar(0, 4)].reverse();
     bag.push({ pos: [Number.NaN, 0], posTime: null });
     const r = simplifyTrackDwells(bag);
-    expect(r.linhas[0]).toHaveLength(4);
-    expect(r.linhas[0][0][0]).toBeLessThan(r.linhas[0][3][0]);
+    // reta: DP mantém os extremos, já ordenados por horário
+    expect(r.linhas[0]).toHaveLength(2);
+    expect(r.linhas[0][0][0]).toBeLessThan(r.linhas[0][1][0]);
   });
 
   it("fix de cauda dentro do raio mantém a parada em curso", () => {
