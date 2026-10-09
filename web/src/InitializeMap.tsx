@@ -689,7 +689,8 @@ const featuresDeDispersao = (simp: TrilhaSimplificada | null) =>
     properties: { chegadaMs: d.chegadaMs },
     geometry: {
       type: "Polygon" as const,
-      coordinates: [circuloGeo(d.centroide, d.dispersaoP90M)],
+      // piso de 5 m: dispersão 0 (fixes idênticos) geraria polígono degenerado
+      coordinates: [circuloGeo(d.centroide, Math.max(d.dispersaoP90M, 5))],
     },
   }));
 
@@ -1215,7 +1216,11 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     // Troca de seleção: a análise anterior sai já. Refetch do mesmo nó (polling)
     // mantém a análise e o toggle até a resposta nova chegar.
     if (noDaTrilha !== sel) {
+      // a trilha, os fixes e o círculo do nó anterior saem do mapa já
       esquecerTrilha();
+      lineSrc.setData(EMPTY_FC);
+      pointsSrc.setData(EMPTY_FC);
+      limparParadas(map);
     }
     const target = node.nodeId || String(node.nodeNum);
     api

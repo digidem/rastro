@@ -395,6 +395,19 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
   });
 });
 
+describe("velocidade", () => {
+  it("spike no penúltimo fix não gera velocidade falsa", () => {
+    // 5 km/h com fix a cada 30 s (42 m por fix), 6 min: curto demais para parada.
+    // O penúltimo fix salta 500 m e volta: spike A–B–C (A–C = 84 m).
+    const pts = Array.from({ length: 13 }, (_, k) => fix(k / 2, 42 * k, 0));
+    const p = pts[11];
+    pts[11] = { ...p, pos: [p.pos[0], p.pos[1] + 500 / GRAU_M] };
+    const s = simplifyTrackDwells(pts);
+    expect(s.papel[11]).toBe("spike");
+    expect(s.velocidadeKmh as number).toBeLessThan(10);
+  });
+});
+
 describe("utilitários", () => {
   it("distanciaM ≈ 111 km por grau de latitude", () => {
     expect(distanciaM([0, 0], [0, 1])).toBeGreaterThan(111_000);

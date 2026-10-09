@@ -50,6 +50,9 @@ echo "OK: backup prévio gravado em $ARQUIVO"
 
 # Aplica a migração (ALTER como dono do schema, se o papel existir)
 psql_em -v db="$DB" -v owner="$OWNER" <<'SQL'
+-- ALTER pega ACCESS EXCLUSIVE: não fica na fila atrás de query longa travando
+-- ingest e API. Estourou? Rode de novo (idempotente).
+SET lock_timeout = '5s';
 SELECT format('SET ROLE %I', :'owner')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'owner') \gexec
 

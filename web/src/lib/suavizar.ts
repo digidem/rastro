@@ -129,7 +129,10 @@ function podeEntrar(
   return (
     !it.ancora &&
     Math.abs(it.ini - t0) <= janelaMs &&
-    !quebraEntre(itens[vizinho], it, gapMs)
+    // ordem temporal: j pode estar antes (janela para trás) ou depois do vizinho
+    !(j < vizinho
+      ? quebraEntre(it, itens[vizinho], gapMs)
+      : quebraEntre(itens[vizinho], it, gapMs))
   );
 }
 

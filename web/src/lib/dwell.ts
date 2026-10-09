@@ -493,21 +493,18 @@ function montarLinhaOdometro(
   return { linhas, distanciaM: somarDistancias(segmentos) };
 }
 
-function calcularVelocidade(
-  entradas: readonly Entrada[],
-  parado: boolean,
-): number | null {
+/** Velocidade entre os dois últimos fixes sem spike (spike gera velocidade falsa). */
+function calcularVelocidade(L: Limpa, parado: boolean): number | null {
   if (parado) {
     return 0;
   }
-  if (entradas.length < 2) {
+  const n = L.ts.length;
+  if (n < 2) {
     return null;
   }
-  const a = entradas[entradas.length - 2];
-  const b = entradas[entradas.length - 1];
-  const dt = (b.t - a.t) / 3_600_000;
+  const dt = (L.ts[n - 1] - L.ts[n - 2]) / 3_600_000;
   return Number.isFinite(dt) && dt > 0
-    ? distanciaM(b.p.pos, a.p.pos) / 1000 / dt
+    ? distanciaM(L.pos[n - 1], L.pos[n - 2]) / 1000 / dt
     : null;
 }
 
@@ -556,7 +553,7 @@ export function simplifyTrackDwells(
     dwells: paradas.map((p) => paraDwell(L, p, temposSpike)),
     parado,
     aproximacao: parado ? suavizados.map((it) => it.pos) : null,
-    velocidadeKmh: calcularVelocidade(entradas, parado),
+    velocidadeKmh: calcularVelocidade(L, parado),
     distanciaM,
     papel: montarPapel(pontos.length, entradas, spikes, L, paradas),
   };
