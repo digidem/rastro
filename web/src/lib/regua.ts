@@ -1,3 +1,4 @@
+import type { PontoRegua } from "../store.js";
 import { calcularBearing } from "./bearing.js";
 
 /** Par [lon, lat] em graus, como no restante do visualizador. */
@@ -119,4 +120,46 @@ export function textoCompartilhar(
   linhas.push(`Total: ${rotuloDistancia(total)}`);
 
   return linhas.join("\n");
+}
+
+/** Vértice da régua já com coordenadas (nós lidos ao vivo do store). */
+export interface VerticeResolvido {
+  pos: LngLat;
+  nome: string | null;
+  nodeNum: number | null;
+  /** Índice no array `pontos` original (o arrasto precisa dele). */
+  indice: number;
+}
+
+/**
+ * Resolve vértices em coordenadas. Vértice de nó lê `nodes`; nó ausente ou com
+ * lon/lat não finitos é descartado.
+ */
+export function resolverPontosRegua(
+  pontos: readonly PontoRegua[],
+  nodes: Readonly<Record<number, { lon: number; lat: number; nome: string }>>,
+): VerticeResolvido[] {
+  const resolvidos: VerticeResolvido[] = [];
+  pontos.forEach((ponto, indice) => {
+    if (ponto.tipo === "livre") {
+      resolvidos.push({
+        pos: [ponto.lon, ponto.lat],
+        nome: null,
+        nodeNum: null,
+        indice,
+      });
+      return;
+    }
+    const no = nodes[ponto.nodeNum];
+    if (!(no && Number.isFinite(no.lon) && Number.isFinite(no.lat))) {
+      return;
+    }
+    resolvidos.push({
+      pos: [no.lon, no.lat],
+      nome: no.nome,
+      nodeNum: ponto.nodeNum,
+      indice,
+    });
+  });
+  return resolvidos;
 }

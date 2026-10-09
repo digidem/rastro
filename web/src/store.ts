@@ -63,6 +63,27 @@ export interface NodeInfo {
   time_flag?: string | null;
 }
 
+/** Vértice da régua: ponto livre ou ancorado num nó (segue o nó ao vivo). */
+export type PontoRegua =
+  | { tipo: "livre"; lon: number; lat: number }
+  | { tipo: "no"; nodeNum: number };
+
+/** Medição de distância no mapa. Não persiste: sair ou recarregar apaga. */
+export interface EstadoRegua {
+  /** Régua ligada: cliques no mapa viram vértices. */
+  ativa: boolean;
+  /** Caminho fechado (duplo clique ou "Concluir"); o próximo clique começa outro. */
+  concluida: boolean;
+  /** Vértices em ordem; com menos de 2 não há distância. */
+  pontos: PontoRegua[];
+}
+
+const REGUA_INICIAL: EstadoRegua = {
+  ativa: false,
+  concluida: false,
+  pontos: [],
+};
+
 /**
  * Estado da sessão no viewer. Os campos de filtro/seleção vivem aqui para que
  * lista, inspector e mapa derivem tudo dos mesmos dados (fonte única).
@@ -121,6 +142,8 @@ interface LocalState {
   trilhaCarregada: boolean;
   /** Quantas horas de trilha buscar e desenhar (seletor do mapa). */
   janelaTrilhaH: JanelaTrilhaH;
+  /** Régua de medição (não persiste; ver EstadoRegua). */
+  regua: EstadoRegua;
 }
 
 const carregarFixesBrutosPadrao = (): boolean => {
@@ -180,6 +203,7 @@ const [localState, setLocalState] = createStore<LocalState>({
   mostrarFixesBrutos: carregarFixesBrutosPadrao(),
   trilhaCarregada: false,
   janelaTrilhaH: carregarJanelaTrilhaPadrao(),
+  regua: { ...REGUA_INICIAL, pontos: [] },
 });
 
 // Substitui a lista inteira (reconcile remove nós que sumiram do latest).
@@ -267,6 +291,7 @@ const resetViewerState = () => {
   setLocalState("alerts", reconcile({}));
   setLocalState("movimento", reconcile({})); // estado de parada da sessão velha não vaza
   setLocalState("trilhaCarregada", false);
+  desativarRegua();
 };
 
 const setMostrarFixesBrutos = (mostrar: boolean) => {
@@ -298,6 +323,74 @@ const setNodeBearing = (nodeNum: number, bearing: number | null) => {
 const setNodeMovimento = (nodeNum: number, m: Movimento) =>
   setLocalState("movimento", nodeNum, m);
 
+/** Liga a régua; com `nodeNum`, o vértice 0 nasce ancorado nesse nó. */
+const ativarRegua = (nodeNum?: number) =>
+  setLocalState("regua", {
+    ativa: true,
+    concluida: false,
+    pontos: nodeNum !== undefined ? [{ tipo: "no", nodeNum }] : [],
+  });
+
+/** Desliga a régua e apaga a medição. */
+const desativarRegua = () =>
+  setLocalState("regua", { ...REGUA_INICIAL, pontos: [] });
+
+/** Mesmo vértice que o último: o duplo clique emite dois cliques iguais. */
+const mesmoPonto = (a: PontoRegua, b: PontoRegua): boolean => {
+  if (a.tipo === "no" && b.tipo === "no") {
+    return a.nodeNum === b.nodeNum;
+  }
+  if (a.tipo === "livre" && b.tipo === "livre") {
+    return a.lon === b.lon && a.lat === b.lat;
+  }
+  return false;
+};
+
+/** Acrescenta um vértice; depois de concluída, começa um caminho novo. */
+const adicionarPontoRegua = (p: PontoRegua) => {
+  if (!localState.regua.ativa) {
+    return;
+  }
+  if (localState.regua.concluida) {
+    setLocalState("regua", { concluida: false, pontos: [p] });
+    return;
+  }
+  const ultimo = localState.regua.pontos[localState.regua.pontos.length - 1];
+  if (ultimo && mesmoPonto(ultimo, p)) {
+    return;
+  }
+  setLocalState("regua", "pontos", (pts) => [...pts, p]);
+};
+
+/** Arrastar um vértice o transforma em ponto livre (desancora nós). */
+const moverPontoRegua = (i: number, lon: number, lat: number) => {
+  if (i < 0 || i >= localState.regua.pontos.length) {
+    return;
+  }
+  // Troca o array inteiro: objeto novo sobre objeto antigo seria mesclado
+  // pelo Solid e manteria `nodeNum` de um vértice de nó.
+  setLocalState("regua", "pontos", (pts) =>
+    pts.map((p, j): PontoRegua => (j === i ? { tipo: "livre", lon, lat } : p)),
+  );
+};
+
+/** Remove o último vértice e reabre o caminho. */
+const desfazerPontoRegua = () => {
+  setLocalState("regua", "pontos", (pts) => pts.slice(0, -1));
+  setLocalState("regua", "concluida", false);
+};
+
+/** Fecha o caminho; só com ao menos dois vértices. */
+const concluirRegua = () => {
+  if (localState.regua.pontos.length >= 2) {
+    setLocalState("regua", "concluida", true);
+  }
+};
+
+/** Apaga os vértices; a régua segue ligada. */
+const limparRegua = () =>
+  setLocalState("regua", { pontos: [], concluida: false });
+
 export const LocalState = {
   localState,
   setNodes,
@@ -326,4 +419,11 @@ export const LocalState = {
   setHasAlertUnread,
   resetFilters,
   resetViewerState,
+  ativarRegua,
+  desativarRegua,
+  adicionarPontoRegua,
+  moverPontoRegua,
+  desfazerPontoRegua,
+  concluirRegua,
+  limparRegua,
 };
