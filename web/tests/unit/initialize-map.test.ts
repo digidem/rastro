@@ -40,6 +40,8 @@ vi.mock("maplibre-gl", () => {
     remove = vi.fn();
     canvas = { style: { cursor: "" } };
     getCanvas = vi.fn(() => this.canvas);
+    // Régua (reguaMapa.ts): dragPan é usado na instalação e off na limpeza.
+    dragPan = { enable: vi.fn(), disable: vi.fn() };
 
     opts: unknown;
     constructor(_opts: unknown) {
@@ -73,6 +75,15 @@ vi.mock("maplibre-gl", () => {
       for (const cb of this.handlers.get(ev) ?? []) {
         cb(e);
       }
+    }
+
+    off(ev: string, _camadaOuCb: unknown, cb?: (e: unknown) => void) {
+      const handler = cb ?? _camadaOuCb;
+      const lista = this.handlers.get(ev) ?? [];
+      this.handlers.set(
+        ev,
+        lista.filter((h) => h !== handler),
+      );
     }
 
     getSource(nome: string) {
@@ -605,7 +616,23 @@ describe("InitializeMap — basemap padrão OSM", () => {
 
   it("style.load e load juntos inicializam uma vez só (pin + parada + clique livre)", () => {
     const m = prepara(false);
-    expect(m.handlers.get("click")?.length).toBe(3);
+    // 4 cliques: pin do nó, parada, área livre e o clique da régua (instalado uma vez)
+    expect(m.handlers.get("click")?.length).toBe(4);
+  });
+
+  it("com a régua ligada, clique em área livre não desseleciona o nó", async () => {
+    const api = { track: vi.fn() } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.select(7);
+    LocalState.ativarRegua();
+    mapa().renderizados = [];
+    mapa().emit("click", {
+      point: { x: 1, y: 1 },
+      lngLat: { lng: -70, lat: -5 },
+    });
+    expect(LocalState.localState.selected).toBe(7);
+    LocalState.desativarRegua();
   });
 
   it("clique em área livre desseleciona e fecha o popup", async () => {

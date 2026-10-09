@@ -32,7 +32,12 @@ import {
 import { espalharPinsSobrepostos } from "./lib/overlap.js";
 import { adicionarOverlays, fetchOverlays } from "./lib/overlays.js";
 import { resolverPontosRegua } from "./lib/regua.js";
-import { atualizarRegua, garantirCamadasRegua } from "./lib/reguaMapa.js";
+import {
+  atualizarRegua,
+  definirCursorRegua,
+  garantirCamadasRegua,
+  instalarInteracoesRegua,
+} from "./lib/reguaMapa.js";
 import { buscarTrilhaJanela } from "./lib/trilhaJanela.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
@@ -842,6 +847,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     undefined,
   );
   const [carregado, setCarregado] = createSignal(false);
+  // Remove os handlers da régua (instalados uma vez em aoCarregar)
+  let pararInteracoesRegua: (() => void) | undefined;
   let trackReq = 0; // descarta resposta de trilha de seleção anterior
   let boatTrackReq = 0; // descarta resposta de trilhas coletivas anterior
   // Última análise por nó: poll sem fix novo não re-simplifica a trilha inteira.
@@ -1044,12 +1051,29 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         }
       };
       map.on("mouseenter", "nodes-circle", () => definirCursor("pointer"));
-      map.on("mouseleave", "nodes-circle", () => definirCursor(""));
+      map.on("mouseleave", "nodes-circle", () =>
+        definirCursor(LocalState.localState.regua.ativa ? "crosshair" : ""),
+      );
       // Pins espalhados dependem do zoom (raio constante em pixels).
       map.on("zoomend", () => aplicarPins(map));
 
+      // Régua: cliques viram vértices e arrastes movem vértices (ver reguaMapa.ts)
+      pararInteracoesRegua = instalarInteracoesRegua(map, {
+        ativa: () => LocalState.localState.regua.ativa,
+        camadasNos: ["nodes-circle", "nodes-boat"],
+        nodeNumDe: nodeNumDoPin,
+        adicionar: LocalState.adicionarPontoRegua,
+        mover: LocalState.moverPontoRegua,
+        concluir: LocalState.concluirRegua,
+        sair: LocalState.desativarRegua,
+      });
+
       // Clique no pin: seleciona o nó (trilha + inspector) e abre o popup.
       map.on("click", "nodes-circle", (e) => {
+        // Com a régua ligada, o clique é do vértice (handler da régua)
+        if (LocalState.localState.regua.ativa) {
+          return;
+        }
         const f = e.features?.[0];
         if (f?.geometry.type !== "Point") {
           return;
@@ -1068,6 +1092,9 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
 
       // Clique no marcador de parada: popup com chegada e tempo parado.
       map.on("click", "dwell-points-circle", (e) => {
+        if (LocalState.localState.regua.ativa) {
+          return;
+        }
         const f = e.features?.[0];
         if (f?.geometry.type !== "Point") {
           return;
@@ -1085,6 +1112,10 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
 
       // Clique em área livre (sem pin sob o cursor): desseleciona e fecha o popup.
       map.on("click", (e) => {
+        // Régua ligada: não desseleciona nem fecha popup
+        if (LocalState.localState.regua.ativa) {
+          return;
+        }
         const sobrePin =
           map.queryRenderedFeatures(e.point, {
             layers: [
@@ -1171,6 +1202,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
 
   onCleanup(() => {
     cancelarCargaIcone?.();
+    pararInteracoesRegua?.();
     currentView()?.remove();
     setCurrentView(undefined);
     setCarregado(false);
@@ -1432,6 +1464,16 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         LocalState.localState.nodes,
       ),
     );
+  });
+
+  // Régua: cursor de crosshair enquanto a medição estiver ligada
+  createEffect(() => {
+    const ativa = LocalState.localState.regua.ativa;
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    definirCursorRegua(map, ativa);
   });
 
   // Mapa base: reage a mudanças em localState.basemapMode

@@ -1,8 +1,13 @@
 import type {
   GeoJSONSource,
   LayerSpecification,
+  MapLayerMouseEvent,
+  MapLayerTouchEvent,
+  MapMouseEvent,
+  MapTouchEvent,
   Map as maplibregl,
 } from "maplibre-gl";
+import type { PontoRegua } from "../store.js";
 import {
   type LngLat,
   type VerticeResolvido,
@@ -181,4 +186,180 @@ export function atualizarRegua(
     return;
   }
   fonte.setData(geojsonRegua(pts) as never);
+}
+
+/** Meia-largura (px) da caixa de encaixe em torno do clique: amigável ao toque. */
+const RAIO_ENCAIXE_PX = 10;
+
+export interface DepsInteracoesRegua {
+  ativa: () => boolean;
+  /** Camadas de pin a consultar no encaixe (filtradas por map.getLayer na hora). */
+  camadasNos: string[];
+  /** Reusar nodeNumDoPin de InitializeMap. */
+  nodeNumDe: (props: Record<string, unknown>) => number | null;
+  adicionar: (p: PontoRegua) => void;
+  mover: (i: number, lon: number, lat: number) => void;
+  concluir: () => void;
+  sair: () => void;
+}
+
+/** Cursor de crosshair com a régua ligada; "" para o padrão. */
+export function definirCursorRegua(map: maplibregl, ativa: boolean): void {
+  if (typeof map.getCanvas === "function") {
+    map.getCanvas().style.cursor = ativa ? "crosshair" : "";
+  }
+}
+
+/** Instala os handlers da régua. Devolve uma função que remove todos. */
+export function instalarInteracoesRegua(
+  map: maplibregl,
+  deps: DepsInteracoesRegua,
+): () => void {
+  // Índice do vértice em arraste; null = nenhum arraste em curso.
+  let arrastando: number | null = null;
+  // O arraste moveu o vértice: não deve virar um vértice novo no clique seguinte.
+  let arrastou = false;
+  let ignorarProximoClique = false;
+
+  const nodeNumSob = (x: number, y: number): number | null => {
+    const camadas = deps.camadasNos.filter((id) => map.getLayer(id));
+    if (camadas.length === 0) {
+      return null;
+    }
+    const feicoes = map.queryRenderedFeatures(
+      [
+        [x - RAIO_ENCAIXE_PX, y - RAIO_ENCAIXE_PX],
+        [x + RAIO_ENCAIXE_PX, y + RAIO_ENCAIXE_PX],
+      ],
+      { layers: camadas },
+    );
+    for (const f of feicoes) {
+      const nodeNum = deps.nodeNumDe(
+        (f.properties ?? {}) as Record<string, unknown>,
+      );
+      if (nodeNum !== null) {
+        return nodeNum;
+      }
+    }
+    return null;
+  };
+
+  const aoClicar = (e: MapMouseEvent) => {
+    if (!deps.ativa()) {
+      return;
+    }
+    if (ignorarProximoClique) {
+      ignorarProximoClique = false;
+      return;
+    }
+    const nodeNum = nodeNumSob(e.point.x, e.point.y);
+    if (nodeNum !== null) {
+      deps.adicionar({ tipo: "no", nodeNum });
+      return;
+    }
+    deps.adicionar({ tipo: "livre", lon: e.lngLat.lng, lat: e.lngLat.lat });
+  };
+
+  // Duplo clique fecha o caminho e não dá zoom. Os dois cliques anteriores
+  // repetem o mesmo ponto, que o store já descarta.
+  const aoDuploClique = (e: MapMouseEvent) => {
+    if (!deps.ativa()) {
+      return;
+    }
+    e.preventDefault();
+    deps.concluir();
+  };
+
+  const aoPressionarVertice = (e: MapLayerMouseEvent | MapLayerTouchEvent) => {
+    if (!deps.ativa()) {
+      return;
+    }
+    const indice = e.features?.[0]?.properties?.indice;
+    if (typeof indice !== "number") {
+      return;
+    }
+    e.preventDefault();
+    arrastando = indice;
+    arrastou = false;
+    map.dragPan.disable();
+  };
+
+  const aoMover = (e: MapMouseEvent | MapTouchEvent) => {
+    if (arrastando === null || !deps.ativa()) {
+      return;
+    }
+    arrastou = true;
+    deps.mover(arrastando, e.lngLat.lng, e.lngLat.lat);
+  };
+
+  // Sem checar ativa(): precisa devolver o dragPan mesmo se a régua for desligada no meio.
+  const aoSoltar = () => {
+    if (arrastando === null) {
+      return;
+    }
+    arrastando = null;
+    map.dragPan.enable();
+    if (arrastou) {
+      ignorarProximoClique = true;
+    }
+    arrastou = false;
+  };
+
+  // Um gesto novo cancela o "ignorar clique" pendente de um arraste sem clique
+  // (o MapLibre não emite click depois de arrastar além da tolerância).
+  const aoIniciarGesto = () => {
+    ignorarProximoClique = false;
+  };
+
+  const aoEntrarVertice = () => {
+    if (deps.ativa() && typeof map.getCanvas === "function") {
+      map.getCanvas().style.cursor = "move";
+    }
+  };
+
+  const aoSairVertice = () => {
+    if (deps.ativa()) {
+      definirCursorRegua(map, true);
+    }
+  };
+
+  const aoTeclar = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && deps.ativa()) {
+      deps.sair();
+    }
+  };
+
+  map.on("click", aoClicar);
+  map.on("dblclick", aoDuploClique);
+  map.on("mousedown", CAMADA_REGUA_VERTICES, aoPressionarVertice);
+  map.on("touchstart", CAMADA_REGUA_VERTICES, aoPressionarVertice);
+  map.on("mousedown", aoIniciarGesto);
+  map.on("touchstart", aoIniciarGesto);
+  map.on("mousemove", aoMover);
+  map.on("touchmove", aoMover);
+  map.on("mouseup", aoSoltar);
+  map.on("touchend", aoSoltar);
+  map.on("mouseenter", CAMADA_REGUA_VERTICES, aoEntrarVertice);
+  map.on("mouseleave", CAMADA_REGUA_VERTICES, aoSairVertice);
+  document.addEventListener("keydown", aoTeclar);
+
+  return () => {
+    map.off("click", aoClicar);
+    map.off("dblclick", aoDuploClique);
+    map.off("mousedown", CAMADA_REGUA_VERTICES, aoPressionarVertice);
+    map.off("touchstart", CAMADA_REGUA_VERTICES, aoPressionarVertice);
+    map.off("mousedown", aoIniciarGesto);
+    map.off("touchstart", aoIniciarGesto);
+    map.off("mousemove", aoMover);
+    map.off("touchmove", aoMover);
+    map.off("mouseup", aoSoltar);
+    map.off("touchend", aoSoltar);
+    map.off("mouseenter", CAMADA_REGUA_VERTICES, aoEntrarVertice);
+    map.off("mouseleave", CAMADA_REGUA_VERTICES, aoSairVertice);
+    document.removeEventListener("keydown", aoTeclar);
+    if (arrastando !== null) {
+      map.dragPan.enable();
+      arrastando = null;
+    }
+  };
 }
