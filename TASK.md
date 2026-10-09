@@ -195,10 +195,17 @@ durante até 15 s de rede).
   Dentro da transação, nesta ordem:
   1. `SELECT pg_advisory_xact_lock(hashtext('rastro-clima'))`
   2. já existe linha `clima` deste barco com `created_at >= desde` → devolve `None`;
-  3. `SELECT max(created_at) FROM chat_outbox WHERE created_by = 'clima'`; se
-     `now() - max < intervalo_s` segundos → devolve `None` (espaçamento PERSISTENTE:
-     vale entre reinícios e entre duas instâncias da API; use `now()` do Postgres na
-     comparação, ex.: `SELECT max(created_at) > now() - make_interval(secs => %s)`);
+  3. espaçamento PERSISTENTE (vale entre reinícios e entre duas instâncias da API):
+     ```sql
+     SELECT coalesce(max(created_at) > clock_timestamp() - make_interval(secs => %s), false) AS cedo
+     FROM chat_outbox
+     WHERE created_by = 'clima'
+     ```
+     (parâmetro: `intervalo_s`); `cedo` True → devolve `None`. Use `clock_timestamp()`
+     (hora real depois do lock), não `now()` (hora do início da transação).
+     Limitação aceita: `created_at` da linha nova vem do default `now()` (o papel viewer
+     não pode escrever essa coluna), então o espaçamento pode encurtar no máximo pelo
+     tempo de espera no lock (milissegundos).
   4. `INSERT ... (boat_id, text, created_by, expires_at) VALUES (%s, %s, 'clima', %s) RETURNING id`
      → devolve o id.
 
@@ -214,7 +221,8 @@ durante até 15 s de rede).
   `agora_utc = agora()`, `local = agora_utc.astimezone(tz)`, `hoje = local.date()`,
   `base = local.replace(hour=cfg.hora, minute=cfg.minuto, second=0, microsecond=0)`,
   `desde = local.replace(hour=0, minute=0, second=0, microsecond=0)` (aware; o psycopg
-  converte). Percorre os barcos na ordem; processa **no máximo um** por chamada:
+  converte). Percorre os barcos na ordem; processa **no máximo um** por chamada.
+  No início de CADA barco: `self.parar.is_set()` → retorna 0.
   1. `slot = base + timedelta(seconds=i * cfg.intervalo_s)`;
      `expira = slot + timedelta(hours=cfg.ttl_h)`. Pula se `local < slot` ou
      `local >= expira` (o consumidor expira na igualdade).
@@ -231,7 +239,8 @@ durante até 15 s de rede).
      (pode conter URL com coordenadas). Nos dois casos
      `self._tentar_depois[boat_id] = agora_utc + 5 min` e segue para o próximo barco.
   6. Depois do HTTP: se `self.parar.is_set()` → retorna 0 sem escrever. Recalcule
-     `agora()`; se agora `>= expira` → retorna 0.
+     `agora()` e o `local`; se `local.date() != hoje` (a busca atravessou a meia-noite)
+     ou `local >= expira` → retorna 0 sem escrever.
   7. Conexão NOVA de escrita: `id = enfileirar_clima(conn, boat_id, texto, expira, desde, cfg.intervalo_s)`.
      `None` → retorna 0 (outra instância enviou, ou espaçamento ainda não venceu: a
      próxima chamada tenta de novo). Senão
@@ -254,8 +263,14 @@ durante até 15 s de rede).
   `desde` = meia-noite local (05:00 UTC); `enfileirar_clima` → `None` retorna 0 sem erro;
   duas `AgendaClima` sobre o mesmo pool falso cujo `enfileirar_clima` simula o lock
   (estado compartilhado) → nunca duas inserções com menos de `intervalo_s`.
-  Testes das três consultas com conexão falsa: SQL e parâmetros, e a ordem lock →
-  checagem do barco → checagem do espaçamento → INSERT.
+  `buscar` que avança o relógio de 23:59:50 para 00:00:10 → nada escrito; `parar`
+  setado → a chamada seguinte não chama `buscar` para nenhum barco.
+  Testes das três consultas chamando a função REAL de `queries.py` com uma conexão falsa
+  roteirizada (devolve linhas por SQL): ordem lock → checagem do barco → checagem do
+  espaçamento → INSERT; barco já enviado hoje → `None` sem INSERT; `cedo` True →
+  `None` sem INSERT; `cedo` False (inclui tabela vazia) → id; `read_only` restaurado
+  também quando o `execute` levanta exceção. A conexão falsa zera o estado de
+  "transação aberta" ao sair de `transaction()`.
 
 ### Limitação aceita (não implementar)
 
@@ -268,13 +283,16 @@ Fica registrado na lição do AGENTS.md (T5).
 Arquivos: `services/rastro_api/api/main.py`, `services/rastro_api/tests/test_clima_main.py`,
 `AGENTS.md`, `docs/native-ingest-design.md`.
 
-- No `lifespan` de `main.py`: depois de abrir o pool, `cfg = clima_config.carregar(os.environ)`;
-  se `cfg.ativo`, cria `agenda = AgendaClima(pool, cfg)` e `thread = agenda.iniciar()`;
-  log `"previsão do tempo: ligada (%d barcos, %s, UTC%+d)"` (barcos, `cfg.rotulo_hora`,
-  offset) ou `"previsão do tempo: desligada"`.
-  No `finally`, ANTES de `pool.close()`: `agenda.parar.set()` e `thread.join(timeout=20)`
-  (maior que o timeout HTTP de 15 s); se a thread ainda estiver viva, `log.warning`.
-  Todo o encerramento dentro de `try/finally` para `pool.close()` sempre rodar.
+- No `lifespan` de `main.py`: antes do `try:` que já existe, `agenda = None` e
+  `thread = None`. DENTRO desse `try:` (antes do `yield`):
+  `cfg = clima_config.carregar(os.environ)`; se `cfg.ativo`, `agenda = AgendaClima(pool, cfg)`
+  e `thread = agenda.iniciar()`; log `"previsão do tempo: ligada (%d barcos, %s, UTC%+d)"`
+  (barcos, `cfg.rotulo_hora`, offset) ou `"previsão do tempo: desligada"`. Assim uma falha
+  ao ligar a agenda ainda fecha o pool.
+  No `finally`, ANTES de `pool.close()`: se `agenda`, `agenda.parar.set()`; se `thread`,
+  `thread.join(timeout=20)` (espera limitada; não é garantia de término, pois o timeout
+  HTTP é por operação); se a thread ainda estiver viva, `log.warning`. `pool.close()`
+  sempre roda (envolva o encerramento da agenda em `try/finally`).
 - Teste: com `RASTRO_CLIMA_ENABLED` ausente a agenda não é criada (monkeypatch de
   `AgendaClima` para detectar); com `"1"` é criada, `iniciar` chamado, e no shutdown
   `parar` é setado antes de `pool.close()` (monkeypatch do `ConnectionPool` para
