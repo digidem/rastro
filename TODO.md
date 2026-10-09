@@ -36,7 +36,9 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
   - **Achado 2026-10-09 (um barco em teste):** dono relatou que mensagens "vazam para todos" independentemente do barco selecionado.
     - Código do painel: a lista filtra por barco (`ChatPanel.tsx` `mensagensFiltradas`) — exibição parece correta.
     - Causa provável de transmissão: mensagens de saída são enviadas com `to=0xFFFFFFFF` (broadcast) no canal EVU (`chat/outbox.py`). Todo rádio com a chave EVU na faixa recebe, independentemente do gateway virtual. O gateway virtual só escolhe o nó de uplink/downlink; não isola o rádio.
-    - Não confirmado em campo. Decisão pendente do dono (não mudar rádio/ACL sem plano, AGENTS.md §5).
+    - Ingest já descarta eco: `ingest/db.py` (passo 6) ignora pacotes cujo remetente é gateway virtual, então a mensagem de saída, quando re-uplinkada por outro barco, não aparece no painel como mensagem do barco.
+    - Sobra o rádio: outros rádios com a chave EVU recebem a mensagem no próprio aparelho. Só confirmável em campo com 2+ barcos.
+    - Pendente: dono dizer onde viu o vazamento (painel do escritório ou rádio do barco). Decisão de design (não mudar rádio/ACL sem plano, AGENTS.md §5).
 - [ ] H4 Mensagens do chat: histórico eterno (decidido 2026-10-08, igual às posições). Só falta decidir o procedimento de exclusão sob pedido (LGPD), se houver pedido.
 - [x] H5 Canal de alerta: decidido 2026-10-09 — só os selos no mapa (📡/🪫), sem push nem e-mail. M3 descartado.
 - [x] H6 Regras de reiniciar/desligar aprovadas 2026-10-09: nós solares/fixos só reiniciam; desligar só com tripulação por perto; nunca factory reset remoto. Construção (M2) continua bloqueada pelo caminho de comando pela malha (tarefa 4/5).
