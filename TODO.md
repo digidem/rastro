@@ -49,6 +49,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [ ] H11/H12 Aprovar commits e pushes: `rastro` (`7ef9e81` à frente de `origin/main`), `univaja-lora` (sem upstream, docs misturadas com rename FLEET→EVU), `caprover-one-click-apps`, `.agents/`; apagar `deploy/sim.nonexistent_placeholder`.
 - [ ] H1 Caminho TLS para o app iOS (baixa prioridade; só se o app vier).
 - [ ] H14 Atalaia: adicionar `univaja-atalaia-barco-1` ao inventário quando houver rádio.
+- [ ] H16 **Vazamento do chat (adiado pelo dono em 2026-10-09):** mensagem enviada a qualquer destino (inclusive "cidade") é broadcast no canal EVU e chega a todos os barcos no alcance. Decidir depois: pausar envios aos barcos, manter com aviso na UI, ou planejar endereçamento privado por barco (exige chave por dispositivo; fora da v1). Detalhes: seção «Tarefa 4/5» → achado de 2026-10-09.
 
 **Máquina**
 - [x] M8 Imagem pública `communityfirst/rastro-broker:0.8.4` (produção, confirmada via `rastro_caprover.py status`): `mosquitto.conf.tmpl`, `aclfile.tmpl`, `entrypoint.sh`, `accounts.py`, `derive.py` são idênticos a `broker/` (verificado 2026-10-08 com `docker create` + `docker cp`, sem executar o contêiner).
