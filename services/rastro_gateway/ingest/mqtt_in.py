@@ -275,8 +275,9 @@ class Ingester:
                 client.ack(msg.mid, msg.qos)
                 return
             self._enqueue(msg.mid, msg.qos, record)
-        except Exception:
-            log.exception("FALHA: erro processando mensagem do tópico %s", msg.topic)
+        except Exception as exc:
+            # Só o tipo: traceback/mensagem podem conter coordenadas ou texto.
+            log.error("FALHA: erro processando mensagem do tópico %s (%s)", msg.topic, type(exc).__name__)
             try:
                 client.ack(msg.mid, msg.qos)  # não travar a fila por bug nosso
             except Exception:
@@ -318,13 +319,14 @@ class Ingester:
                 novas, dup, veneno = self._db.store_batch(
                     [rec for _, _, rec in batch], self._names, self._fleet_ids
                 )
-            except Exception:
+            except Exception as exc:
                 # Erro OPERACIONAL (banco fora): sem ack, sem descarte — requeue
                 # preservando a ordem relativa (mensagens chegadas durante o flush
-                # vão DEPOIS das antigas).
-                log.exception(
-                    "FALHA: lote não commitado — aguardando redelivery (%d msgs)",
+                # vão DEPOIS das antigas). Só o tipo é logado.
+                log.error(
+                    "FALHA: lote não commitado — aguardando redelivery (%d msgs, %s)",
                     len(batch),
+                    type(exc).__name__,
                 )
                 with self._lock:
                     self._batch = batch + self._batch

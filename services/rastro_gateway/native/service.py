@@ -155,8 +155,9 @@ class NativeIngest:
             )
             dec.extra = {"raw": bytes(msg.payload), "topic": msg.topic}
             self._enqueue(msg.mid, msg.qos, dec)
-        except Exception:
-            log.exception("FALHA: erro processando mensagem nativa do tópico %s", msg.topic)
+        except Exception as exc:
+            # Só o tipo: a mensagem/traceback pode conter texto de chat ou payload.
+            log.error("FALHA: erro processando mensagem nativa do tópico %s (%s)", msg.topic, type(exc).__name__)
             try:
                 client.ack(msg.mid, msg.qos)  # não travar a fila por bug nosso
             except Exception:
@@ -189,12 +190,13 @@ class NativeIngest:
                 return True
             try:
                 counts = self._db.store_native([dec for _, _, dec in batch])
-            except Exception:
+            except Exception as exc:
                 # Erro OPERACIONAL (banco fora): sem ack, sem descarte — requeue
-                # preservando a ordem relativa (como no legado).
-                log.exception(
-                    "FALHA: lote nativo não commitado — aguardando redelivery (%d msgs)",
+                # preservando a ordem relativa (como no legado). Só o tipo é logado.
+                log.error(
+                    "FALHA: lote nativo não commitado — aguardando redelivery (%d msgs, %s)",
                     len(batch),
+                    type(exc).__name__,
                 )
                 with self._lock:
                     self._batch = batch + self._batch

@@ -21,6 +21,9 @@ VGW_VETORES = [
 PW_VETORES = [
     ("teste-secreto-h1", "!a0000001", "eIugm-YbMQVV6CCvwqSrIkRH4rJlVq"),
     ("teste-secreto-h1", "!a0000002", "SgArIutL4UOvk5TWmbDhdexP-M0Rui"),
+    # Par do univaja-lora (scripts/provision/modeA/tests/test_mtool.py TestRastroDerive): trava drift entre repos.
+    ("unit-test-secret-0123456789abcd", "!a35a8478", "YJjcPCwmcI6k87fuG2eOCJxY35RSAa"),
+    ("unit-test-secret-0123456789abcd", "!1ba19a84", "Z4HMYAdko21iOtvGU86wcQJTzqEbXq"),
 ]
 
 

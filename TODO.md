@@ -7,7 +7,7 @@
 | 1 | Limpeza segura do banco legado `mqtt` | ✅ Concluída (2026-10-01) | `DROP DATABASE mqtt` executado; `rastro` intacto (7 nós / 143 posições). Script agora é inspetor read-only (DROP removido); 3 shadow DBs `prisma_migrate_shadow_db_*` dropados (2026-10-01, vazios). Papel `mqtt` REMOVIDO (2026-10-01, a pedido do dono; origem: protótipo `meshtastic-map` criado por ele, sem uso): REVOKE ALL das 8 tabelas de `warehouse.public` + ACL padrão do `cmiadmin` (só entradas do `mqtt`; demais ACLs idênticas, verificado por diff) e `DROP ROLE mqtt` | 🔴 Alta |
 | 2 | Conexão admin: `/superset_metastore` → `/postgres` | ✅ Concluída (2026-10-01) | `RASTRO_PG_ADMIN_URL` do app `rastro-setup` e `DB=` do `.env` agora apontam para `/postgres`; `superset_metastore` sem tabelas do Rastro. Considerar apagar `rastro-setup` (docs/OPERACAO-caprover.md §3) | 🔴 Alta |
 | 3 | Versionar logo oficial e descartar diagramas PNG obsoletos | ✅ Concluída (2026-10-06) | `docs/rastro_logo.svg` comprimido com SVGO (-39.1%) e commitado; PNGs legados `rastro_flow*.png` descartados | 🟡 Baixa |
-| 4 | Ingest nativo Meshtastic (ServiceEnvelope) dos nós Nó Solar do Barco | 🟡 Imagens 0.7.0 implantadas (ingest/api/broker/web) + migração 02 aplicada em produção (2026-10-05); ingest nativo DESLIGADO (RASTRO_NATIVE_ENABLED não definido) | Pendências do dono: checklist em «Tarefa 4 — status» (porta 8883/firewall Azure, certificado real, contas reais, PSK EVU, migração 02 em produção) | 🔴 Alta |
+| 4 | Ingest nativo Meshtastic (ServiceEnvelope) dos nós Nó Solar do Barco | 🟡 Imagens 0.8.x em produção; migração 02 aplicada; barco de Ituí publicando desde 2026-10-06 (confirmar `RASTRO_NATIVE_ENABLED` no painel do CapRover — o valor não foi verificado nesta revisão) | Pendências do dono: checklist em «Tarefa 4 — status» (porta 8883/firewall Azure, certificado real, contas reais, PSK EVU, migração 02 em produção) | 🔴 Alta |
 | 5 | Chat no mapa: escritório ⇄ tripulação via MQTT (EVU downlink) | 🟡 Imagens 0.7.0 implantadas; chat sem uso até criar o app `rastro-chat` (imagem rastro-ingest:0.7.0, comando `python -m rastro_gateway.chat`) e o broker com contas; testes de campo pendentes | Mesmas pendências da tarefa 4 + conta `outbox` + testes de campo com humanos | 🔴 Alta |
 | 6 | Ações remotas por nó no mapa: **reiniciar** e **desligar** | 📝 Planejado | Botão por nó no visualizador (requer autenticação admin). Regras: nós **solares/fixed = somente reiniciar** (desligar é irreversível por rádio — ninguém no local para apertar o botão); desligar oferecido só em nós com tripulação por perto (morto até religarem fisicamente); **nunca** factory-reset remoto; transporte = AdminMessage PKC pela malha (depende do caminho de comando da tarefa 4/5 — hoje inexistente; guardrails no repo `univaja-lora`, skill `remote-management` §3.3) | 🔴 Alta |
 | 7 | Apagar o app `rastro-setup` no CapRover | ✅ Concluída (2026-10-05, a pedido do dono; volumes preservados) | Mantém a senha de admin do PostgreSQL em texto no ambiente (docs/OPERACAO-caprover.md §3). Só recriar se precisar reprovisionar | 🟠 Média |
@@ -26,6 +26,35 @@
 | 20 | Web App: Logo animado como Loader e Favicon (`docs/rastro_logo.svg`) | ✅ Concluída (2026-10-06) | Loader animado SolidJS (`LogoLoader.tsx`) com radar/pulso e `web/public/favicon.svg` com fundo transparente | 🟡 Média |
 
 > **Arquivos ainda não monitorados** (verificados via `git status`): `.agents/`, `deploy/sim.nonexistent_placeholder`.
+
+## Triagem 2026-10-08 — pendências reais
+
+Lista revisada por Opus e executada onde possível. Itens riscados foram descartados.
+
+**Humano (decisão, acesso físico, ou aprovação)**
+- [ ] H2 Testes de campo: escritório⇄tripulação, Starlink off/on, 5–6 barcos ao mesmo tempo, TTL.
+- [ ] H4 Mensagens do chat: histórico eterno (decidido 2026-10-08, igual às posições). Só falta decidir o procedimento de exclusão sob pedido (LGPD), se houver pedido.
+- [ ] H5 Canal de alerta (push ou e-mail) e destinatários.
+- [ ] H6 Regras de reiniciar/desligar nó remoto (quem, quais classes).
+- [ ] H7 Confirmar limiares de bateria por classe.
+- [ ] H8 Destino do dump com coordenadas reais `~/rastro-backups/rastro_pre_0.8.5_2026-10-08_154519.dump`.
+- [ ] H9 `RASTRO_NATIVE_SECRET` guardado em cofre.
+- [ ] H11/H12 Aprovar commits e pushes: `rastro` (`7ef9e81` à frente de `origin/main`), `univaja-lora` (sem upstream, docs misturadas com rename FLEET→EVU), `caprover-one-click-apps`, `.agents/`; apagar `deploy/sim.nonexistent_placeholder`.
+- [ ] H1 Caminho TLS para o app iOS (baixa prioridade; só se o app vier).
+- [ ] H14 Atalaia: adicionar `univaja-atalaia-barco-1` ao inventário quando houver rádio.
+
+**Máquina**
+- [x] M8 Imagem pública `communityfirst/rastro-broker:0.8.4` (produção, confirmada via `rastro_caprover.py status`): `mosquitto.conf.tmpl`, `aclfile.tmpl`, `entrypoint.sh`, `accounts.py`, `derive.py` são idênticos a `broker/` (verificado 2026-10-08 com `docker create` + `docker cp`, sem executar o contêiner).
+- [x] M10 Ramos fail-closed de `provision_node.py` cobertos (`univaja-lora/scripts/provision/modeA/tests/test_provision_node_branches.py`, 30 testes). Cobertura de `provision_node.py` 81%→90% (medida com `coverage run` em venv temporário). Suíte modeA: 259 passam com o venv do gateway (que tem `meshtastic`); sem ele, 101 são pulados.
+- [x] M5 Chat recebido com `is_alert`: destaque, aviso sonoro e contador de não lidas (`ChatPanel.tsx`). Falta só o teste de campo (H2).
+- [x] M9 Derivação de senha idêntica nas cópias (`broker/derive.py`, `native/derive.py`, `rastro_derive.py`).
+- [ ] M2 Reiniciar/desligar remoto: bloqueado por H6.
+- [ ] M3 Entrega de alertas: bloqueado por H5.
+- [ ] M11/M12 Commit e push: bloqueados por H11/H12.
+
+**Descartados**: M1 (retenção: histórico eterno, decidido), M4 (alerta preditivo, especulativo), M6 (absorvido em H4), M7 (rotação de chave EVU: trava todos os barcos sem visita USB), H3 (usuários reais de chat: só após o 1º rádio), H13 (nome curto: cosmético, chave vem do `long_name`), H15 (absorvido em H11/H12), H10 (absorvido em H11/H12).
+
+**Concluído nesta triagem**: M13 (esta atualização do TODO).
 
 ---
 
@@ -214,7 +243,7 @@ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
 
 ---
 
-## Tarefa 4: Ingest nativo Meshtastic (ServiceEnvelope) — 📝 Planejado (2026-10-01)
+## Tarefa 4: Ingest nativo Meshtastic (ServiceEnvelope) — 🟡 Em produção; campo pendente (atualizado 2026-10-09)
 
 Origem: plano da frota de seis rios em `univaja-lora` (`drafts/decisoes-pre-implantacao.md`). O nó Nó Solar do Barco (Heltec V4, no barco) publica por **MQTT nativo do firmware 2.7.26** (TCP/TLS, não WebSocket) em `univaja/mesh/2/e/<canal>/<id-do-gateway>`; **não haverá ponte USB paralela na implantação** (só na bancada, aposentada depois); o ingest nativo é o único caminho.
 - [ ] Decodificar `ServiceEnvelope → MeshPacket → AES-CTR (chave EVU) → Data → Position/Telemetry/NodeInfo/Text`; pacotes `PKI` ficam opacos.
@@ -224,14 +253,14 @@ Origem: plano da frota de seis rios em `univaja-lora` (`drafts/decisoes-pre-impl
 - [ ] Listener do broker: Mosquitto com TCP/TLS (ex.: 8883) com **certificado de CA** (o app iOS valida certificado) + mapeamento de porta no CapRover; manter o listener WebSocket; contas por nó (`%u` = id do nó), ACL por tópico, `retain` desligado; testar cada conta com publicação MQTT **v5** (a 3.1.1 confirma publicações negadas).
 - [ ] Chave EVU só no serviço de ingest isolado: sem log de payload/chave, backups restritos; procedimento de troca de chave documentado.
 - [ ] Alertas separados: gateway mudo (Nó Solar do Barco sem upload), posição parada, sem fix, móvel ausente; faixa de silêncio noturno (barcos com Starlink desligada à noite estão paradas).
-- [ ] Guardar o envelope bruto (retenção curta) antes de decodificar, para reprocessar após bug do adaptador; modelo de dados: texto, NodeInfo, id do pacote, gateway vs remetente, horário observado vs recebido, estado do outbox do chat, cadastro de gateways virtuais (6 barcos + cidade), vínculo dispositivo→barco com validade; provisionar contas/ACL de forma persistente e idempotente (o entrypoint de hoje só cria `gateway`/`ingest`; usar arquivo de ACL gerado, não `%u`, para permitir rotação de senha).
+- [ ] Guardar o envelope bruto (histórico eterno, sem purga) antes de decodificar, para reprocessar após bug do adaptador; modelo de dados: texto, NodeInfo, id do pacote, gateway vs remetente, horário observado vs recebido, estado do outbox do chat, cadastro de gateways virtuais (6 barcos + cidade), vínculo dispositivo→barco com validade; provisionar contas/ACL de forma persistente e idempotente (o entrypoint de hoje só cria `gateway`/`ingest`; usar arquivo de ACL gerado, não `%u`, para permitir rotação de senha).
 - [ ] Certificado do listener TCP: arquivos montados, recarga do Mosquitto após renovação, checagem externa de validade.
 - [ ] Testes: reconexão, replay, 6 contas simultâneas, ausência de fallback para MQTT público, SUBACK/entrega sob ACL, handshake TLS do Heltec V4 pelo mapeamento de porta do CapRover, porta 8883 liberada no firewall do Azure.
 
-## Tarefa 5: Chat no mapa — escritório ⇄ tripulação — 📝 Planejado (2026-10-01)
+## Tarefa 5: Chat no mapa — escritório ⇄ tripulação — 🟡 Em produção; testes de campo pendentes (atualizado 2026-10-09)
 
 Pedido do dono: o mapa terá uma interface de chat para o escritório enviar mensagens à tripulação por MQTT (EVU com downlink nas Nó Solar do Barcos) e receber os pedidos de ajuda dos monitores. Desenho verificado no firmware 2.7.26 (ver `univaja-lora` `drafts/decisoes-pre-implantacao.md`, seção #22).
-- [ ] **Recebimento:** decodificar `TEXT_MESSAGE_APP` (hoje ignorado) e mostrar no chat com **alerta sonoro/visual** para pedidos de ajuda; guardar horário de observação e de recebimento; retenção curta e configurável (texto de monitores é sensível).
+- [ ] **Recebimento:** decodificar `TEXT_MESSAGE_APP` (hoje ignorado) e mostrar no chat com **alerta sonoro/visual** para pedidos de ajuda; guardar horário de observação e de recebimento; sem retenção: histórico eterno (decidido 2026-10-08; texto de monitores é sensível).
 - [ ] **Envio:** montar `MeshPacket` de texto em broadcast (`to=0xffffffff`, `id` nunca reutilizado, `hop_limit` adequado), cifrar com AES-CTR da chave EVU (nonce = id + from), embrulhar em `ServiceEnvelope` e publicar em `univaja/mesh/2/e/EVU/<gateway-virtual>`; **um gateway virtual por barco** para a mensagem chegar só ao rio certo; `retain` desligado.
 - [ ] Publicar o NodeInfo "Rastro" do remetente virtual (nome exibido no app); descobrir como os apps exibem remetente desconhecido.
 - [ ] Segurança/robustez: o ingest **não republica** pacotes recebidos (evita eco); saída (outbox) separada, deduplicação `(from, id)`, limite de taxa; autenticação do usuário do chat; log sem conteúdo das mensagens.
@@ -240,7 +269,7 @@ Pedido do dono: o mapa terá uma interface de chat para o escritório enviar men
 - [ ] Testes de campo: escritório→tripulação e tripulação→escritório com humano lendo; barco com Starlink desligada e religada; seis barcos ao mesmo tempo sem vazar mensagem entre rios.
 
 
-### Tarefa 4/5 — status (2026-10-05, só código + rig local; nada em produção, nada commitado)
+### Tarefa 4/5 — status (2026-10-05; trecho antigo: código já commitado e em produção 0.8.x, ver «Estado ao fim da sessão» abaixo)
 
 Desenho e interfaces: `docs/native-ingest-design.md`. Novo código: `services/rastro_gateway/native/` (crypto, envelope, service, alerts), `services/rastro_gateway/chat/` (outbox, processo `python -m rastro_gateway.chat`), `deploy/postgres/init/02-native.sql` + `migrate-02-native.sh`, `broker/accounts.py` (contas por nó + ACL gerada), `services/rastro_api/api/chat.py`, painel de chat em `web/src`. Rig: `deploy/sim/native-rig.sh`/`native_rig_test.py` (broker, MQTT v5) e `deploy/sim/native_e2e.sh` (ingest+outbox reais, Postgres descartável).
 
@@ -257,7 +286,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 
 **Pendências (ordem sugerida):**
 - [x] Senha MQTT em 30 caracteres, `retain` + `write stat/<id>`, `captain-definition`: commitados (`867b61b`, `8aef48e`, `659b657`) e enviados; produção roda a imagem `img-captain-rastro-broker:6` construída da fonte. Barco e móvel de Ituí em campo funcionando (286 envelopes/24h do barco).
-- [ ] **NUNCA** `deploy-image rastro-broker …:0.8.0` nem instalar pelo template com a tag padrão 0.8.0 (derivam 32 caracteres e trancam o barco). Retorno seguro: `img-captain-rastro-broker:6` (conferir retenção da imagem no CapRover).
+- [ ] **NUNCA** `deploy-image rastro-broker …:0.8.0` nem instalar pelo template com a tag padrão 0.8.0 (derivam 32 caracteres e trancam o barco). Retorno anterior conhecido: `img-captain-rastro-broker:6` (conferir se a imagem ainda existe no CapRover). Produção atual: `communityfirst/rastro-broker:0.8.4` (conteúdo = `broker/`, verificado 2026-10-08).
 - [x] Imagens `0.8.1` (broker, ingest, chat, api, web, `pgtools:0.8.1-pg17`) publicadas no Docker Hub em 2026-10-06 a partir do HEAD `7f187e5` (`scripts/rastro_release.sh`); sim PASS (50); template `caprover-one-click-apps` (branch `rastro-0.5.1`, `2938a2a`) com default 0.8.1 e enviado.
 - [x] **Broker de produção trocado em 2026-10-06 ~23:45 (UTC-5)** para `communityfirst/rastro-broker:0.8.1`; o barco de Ituí (`!1ba19a84`) voltou a publicar em ~20 s (envelopes após o deploy), porta 8883 aberta. Retorno, se preciso: `deploy-image rastro-broker img-captain-rastro-broker:6`. ingest, chat, api e web também em 0.8.1 (2026-10-06 ~19:25 UTC-5, um app por vez; barco de Ituí continuou publicando).
 - [x] **Estreitar o ACL dos barcos no Broker (Release 0.8.2)**:
@@ -297,7 +326,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [ ] **Push** (nenhum feito): `rastro` (commits `cdb3a30`, `0c29c8f`, tag local `v0.8.0`), `caprover-one-click-apps` (`aee41cc`, branch `rastro-0.5.1`), `univaja-lora` (`b08dcf5`). Depois do push do `rastro`, conferir o workflow `images` verde (a API e o viewer ainda não foram rodados no CI desde o 0.8.0).
 - [ ] Certificado TLS confiável (Let's Encrypt): só necessário para o app iOS (Admin Móvel); os rádios não validam. Exige o devops: copiar `fullchain.pem`/`privkey.pem` do CapRover para um volume em `/mosquitto/secrets` do broker (dono 1883, 0400), reiniciar o broker, e agendar cópia+restart periódicos (renovação).
 - [ ] Segurança/higiene: o dump `~/rastro-backups/rastro_pre_*.dump` contém coordenadas reais (mover/apagar; `chmod 600`); apagar `~/evu_psk.b64`; guardar `RASTRO_NATIVE_SECRET` (deriva todas as senhas dos nós) em cofre; trocar a chave EVU exige procedimento ainda NÃO documentado.
-- [x] Decisão do dono R6 (retenção) RESOLVIDA 2026-10-08: histórico eterno — `purge_expired`/`RASTRO_*_RETENTION_DAYS` removidos; `prune_packet_seen` permanece hook (dedupe 7 dias). R9 (acesso ao servidor) segue aberta. Texto do chat é sensível: definir política antes do uso rotineiro.
+- [x] Decisão do dono R6 (retenção) RESOLVIDA 2026-10-08: histórico eterno — `purge_expired`/`RASTRO_*_RETENTION_DAYS` removidos; `prune_packet_seen` permanece hook (dedupe 7 dias). R9 (acesso ao servidor) segue aberta. Texto do chat também fica para sempre (sem retenção); é sensível, então o acesso é o controle principal.
 - [ ] Entrega de alertas (push/e-mail) — ainda NÃO implementada; o motor e a exposição (`GET /api/alerts`, badges) estão no ar desde 0.8.5, com `gateway_mudo`+`bateria_critica` e ciclo ligado em produção (`RASTRO_ALERTS_ENABLED=1`, fixo: `!f2664e10`; `atalaia-pico/torre` entra quando existir).
 - [ ] Chat: autenticação usa o token único da API (usuário «escritorio»); definir usuários reais se necessário. UI e API de chat estão no ar mas sem uso até o 1º rádio.
 - [ ] Logs de contêiner não são legíveis pela API do CapRover: diagnóstico = ler logs no painel do CapRover ou olhar o banco (`raw_envelopes`, `gateway_status`).
@@ -306,10 +335,14 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 
 ## Verificação de premissas e pendências (2026-10-01, plano da frota v7)
 - [x] Premissas de firmware/docs verificadas contra o firmware 2.7.26.54e0d8d e as docs 2.7 (`univaja-lora/drafts/verificacao-premissas.md`): o cliente MQTT do nó usa TCP puro (sem WebSocket), não valida certificado TLS e imprime a senha no log; a fila é de 16 mensagens e só 1 entrada é reenviada após reconexão; assina `<raiz>/2/e/<canal>/+` e `<raiz>/2/e/PKI/+`; telemetria do dispositivo exige `device_telemetry_enabled`.
-- [ ] **Retenção:** o dono informa que a retenção (nº de dias) é configurável no app web e que o log bruto no banco é eterno. No repositório só existe `scripts/rastro_retention.py` (dry-run por padrão; exige `RASTRO_RETENTION_DAYS` + `--executar`) e **nenhuma opção no app web** — confirmar onde está essa configuração. Definir o que a retenção apaga (posições, envelopes brutos, texto do chat, backups) e se o log bruto também terá limite (exclusão sob pedido/LGPD).
-- [ ] Texto do chat: mesma política de retenção das posições, ou menor; nunca registrar o conteúdo em logs.
+- [x] **Retenção (decidido 2026-10-08):** histórico mantido sem purga (posições e log bruto são eternos). Não há configuração de retenção no app web. `scripts/rastro_retention.py` continua no repo, e `deploy/systemd/rastro-retention.{service,timer}` o agenda todo dia às 04:15 — remover só com aprovação (confirmar se o timer está ativo no host).
+- [x] Logs de chat e PSK: `chat/outbox.py` e `chat/__main__.py` registram só tipo de exceção e IDs; PSK com `repr=False`, nunca logada (verificado 2026-10-08).
+- [x] Logs de erro agora registram só o tipo da exceção: `native/service.py` (sem `log.exception`, sem traceback) e `ingest/db.py` (sem os 120 caracteres da mensagem do banco). Gateway: 301 testes passam (2026-10-08). Ainda não implantado em produção (exige nova imagem `rastro-ingest`).
+- [x] Retenção do texto do chat: não há (histórico eterno, decidido 2026-10-08).
+- [ ] **Humano:** só se houver pedido de exclusão (LGPD): definir quem aprova e como apagar mensagens e posições.
 - [ ] Modelo de dados: texto, NodeInfo, id do pacote, gateway vs remetente, observado vs recebido, outbox do chat, gateways virtuais (6 barcos + cidade), vínculo dispositivo→barco com validade, **estado de energia/bateria por Nó Solar** para os alertas de energia.
-- [ ] Alertas de energia: telemetria de bateria dos Nós Solares (900 s) com limiares por classe e alerta antes do apagão.
+- [x] Alertas de energia: `bateria_critica` ativo para nós fixos. Limiares são padrões no código (`native/alerts.py`: 20 % e 3,55 V), configuráveis por env; não estão setados em produção.
+- [ ] **Humano:** confirmar limiares por classe. Alerta preditivo "antes do apagão" descartado (especulativo).
 
 ---
 

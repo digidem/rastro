@@ -302,3 +302,34 @@ def test_log_nao_vaza_payload_coordenadas_nem_chave(caplog):
                      "lixo-bruto-protobuf"):
         assert proibido not in caplog.text
     assert "lote nativo: 3 msgs" in caplog.text  # contagens/kinds podem
+
+
+def test_erro_de_commit_loga_so_o_tipo(caplog):
+    """Falha do banco: a mensagem da exceção (pode citar texto/coords) não entra no log."""
+    client = MqttFake()
+    db = DbNativeFake(error=RuntimeError("SEGREDO-COMMIT texto de chat"))
+    nativo = _nativo(client, db)
+    nativo.on_message(client, _msg(21, _payload_posicao(packet_id=901),
+                                   f"{TEST_ROOT}/2/e/EVU/!a0000006"))
+    with caplog.at_level(logging.DEBUG):
+        assert nativo.flush() is False
+    assert "SEGREDO-COMMIT" not in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert client.acks == []
+
+
+def test_erro_de_decodificacao_loga_so_o_tipo_e_acka(caplog, monkeypatch):
+    """Bug nosso no decode: loga tópico + tipo, acka e não derruba o loop do paho."""
+    client = MqttFake()
+    nativo = _nativo(client, DbNativeFake())
+
+    def explode(*_a, **_k):
+        raise ValueError("SEGREDO-DECODE payload")
+
+    monkeypatch.setattr(service, "decode_envelope", explode)
+    with caplog.at_level(logging.DEBUG):
+        nativo.on_message(client, _msg(22, _payload_posicao(packet_id=902),
+                                       f"{TEST_ROOT}/2/e/EVU/!a0000006"))
+    assert "SEGREDO-DECODE" not in caplog.text
+    assert "ValueError" in caplog.text
+    assert client.acks == [(22, 1)]

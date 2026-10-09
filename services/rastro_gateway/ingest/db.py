@@ -447,12 +447,13 @@ class Db:
                             deltas = self._store_envelope(cur, env)
                     except (psycopg.errors.IntegrityError, psycopg.errors.DataError) as exc:
                         counts["poison"] += 1
+                        # Só o tipo: a mensagem do banco pode citar valores da linha (texto de chat).
                         log.error(
                             "FALHA: envelope rejeitado pelo banco (from=%s id=%s): %s — "
                             "gravado como bruto e ackado; produtor fora do contrato?",
                             getattr(env, "from_num", "?"),
                             getattr(env, "packet_id", "?"),
-                            str(exc).splitlines()[0][:120],
+                            type(exc).__name__,
                         )
                         if self._gravar_bruto_veneno(conn, cur, env):
                             counts["raw"] += 1
