@@ -105,6 +105,17 @@ describe("LocalState — reset de sessão", () => {
     expect(LocalState.localState.selected).toBeNull();
   });
 
+  it("resetViewerState esquece o estado de parada da sessão antiga", () => {
+    LocalState.setNodeMovimento(1, {
+      parado: true,
+      desdeMs: 0,
+      velocidadeKmh: 0,
+      ultimoFixMs: Date.now(),
+    });
+    LocalState.resetViewerState();
+    expect(LocalState.localState.movimento[1]).toBeUndefined();
+  });
+
   it("clearSessionData do provider zera a visualização da sessão antiga", () => {
     montarProvider();
     LocalState.setNodes([no(1)]);

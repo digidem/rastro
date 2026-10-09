@@ -247,6 +247,7 @@ const resetViewerState = () => {
   setLocalState("hasAlertUnread", false);
   setLocalState("showInactive", false);
   setLocalState("alerts", reconcile({}));
+  setLocalState("movimento", reconcile({})); // estado de parada da sessão velha não vaza
   setLocalState("trilhaCarregada", false);
 };
 
