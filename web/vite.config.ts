@@ -24,6 +24,11 @@ export default defineConfig(({ mode }) => {
       tsconfigPaths({ root: "./" }),
       ...(isMock ? [mockApiPlugin()] : []),
     ],
+    // Alias explícito: o tsconfig exclui src/components/ui (typecheck rápido) e o
+    // vite-tsconfig-paths só resolve "~/" para arquivos incluídos no tsconfig.
+    resolve: {
+      alias: { "~": "/src" }, // relativo à raiz do Vite (web/)
+    },
     server: {
       host: process.env.VITE_HOST ?? "127.0.0.1",
       port: 5173,
