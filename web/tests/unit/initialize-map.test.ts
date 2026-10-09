@@ -5,10 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InitializeMap } from "../../src/InitializeMap.jsx";
 import { useMap } from "../../src/hooks/useMap.jsx";
 import {
+  type FixDwell,
+  type LngLat,
+  simplifyTrackDwells,
+} from "../../src/lib/dwell.js";
+import {
   DataContext,
   type DataValue,
 } from "../../src/providers/DataProvider.jsx";
 import { LocalState } from "../../src/store.js";
+import {
+  concat,
+  deslocar,
+  navegacao,
+  parada,
+} from "./fixtures/trilhaSintetica.js";
 
 // InitializeMap importa maplibre-gl (Map/Popup/addProtocol) e pmtiles
 // (Protocol) no escopo do módulo; mockamos tudo — o teste cobre a lógica de
@@ -40,6 +51,7 @@ vi.mock("maplibre-gl", () => {
         "track-points",
         "boat-tracks",
         "dwell-points",
+        "dwell-spread",
       ]) {
         this.sources.set(nome, { setData: vi.fn() });
       }
@@ -111,6 +123,24 @@ vi.mock("maplibre-gl", () => {
     addProtocol: vi.fn(),
   };
 });
+
+// A paginação por janela tem teste próprio (trilha-janela.test.ts). Aqui a busca
+// vira uma chamada única de api.track: as fixtures têm horário fixo, fora da
+// janela relativa a Date.now(), e os testes contam chamadas de fetch.
+const { janelasPedidas } = vi.hoisted(() => ({
+  janelasPedidas: [] as number[],
+}));
+vi.mock("../../src/lib/trilhaJanela.js", async (original) => ({
+  ...(await original<typeof import("../../src/lib/trilhaJanela.js")>()),
+  buscarTrilhaJanela: (
+    api: { track: (n: string) => Promise<unknown> },
+    node: string,
+    horas: number,
+  ) => {
+    janelasPedidas.push(horas);
+    return api.track(node);
+  },
+}));
 
 vi.mock("pmtiles", () => ({
   // biome-ignore lint/style/useNamingConvention: nome do export do pmtiles
@@ -197,6 +227,121 @@ afterEach(() => {
 });
 
 describe("InitializeMap — trilha", () => {
+  it("trilhas coletivas em voo não voltam ao mapa depois do logout", async () => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const api = {
+      track: vi.fn().mockReturnValue(promise),
+    } as unknown as DataValue["api"];
+    LocalState.setShowInactive(true); // no(n) tem fix de 1970
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([{ ...no(1), kind: "boat" as const }]);
+    expect(api.track).toHaveBeenCalled();
+
+    // Logout: geração avança e a lista de nós esvazia.
+    LocalState.bumpPollingGeracao();
+    LocalState.setNodes([]);
+    resolve({
+      line: null,
+      lines: [
+        [
+          [-30.02, -4.22],
+          [-30.03, -4.23],
+        ],
+      ],
+      points: [],
+    });
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+
+    expect(mapa().getSource("boat-tracks").setData).toHaveBeenLastCalledWith(
+      expect.objectContaining({ features: [] }),
+    );
+    LocalState.setShowInactive(false);
+  });
+
+  it("troca de período tira a trilha antiga já, mesmo se a busca nova falhar", async () => {
+    let chamadas = 0;
+    const api = {
+      // Só a primeira busca (14 dias) responde; as seguintes falham.
+      track: vi.fn().mockImplementation(() =>
+        chamadas++ === 0
+          ? Promise.resolve({
+              line: null,
+              lines: [
+                [
+                  [-30.02, -4.22],
+                  [-30.03, -4.23],
+                ],
+              ],
+              points: [],
+            })
+          : Promise.reject(new Error("503")),
+      ),
+    } as unknown as DataValue["api"];
+    LocalState.setJanelaTrilhaH(336);
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    const trilha = mapa().getSource("track").setData;
+    expect(trilha).toHaveBeenLastCalledWith(
+      expect.objectContaining({ features: [expect.anything()] }),
+    );
+
+    LocalState.setJanelaTrilhaH(24);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+
+    expect(trilha).toHaveBeenLastCalledWith(
+      expect.objectContaining({ features: [] }),
+    );
+    LocalState.setJanelaTrilhaH(336);
+  });
+
+  it("poll e troca de período não puxam a câmera de volta ao nó", async () => {
+    const api = {
+      track: vi.fn().mockResolvedValue({ line: null, lines: [], points: [] }),
+    } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    expect(mapa().flyTo).toHaveBeenCalledTimes(1);
+
+    LocalState.setNodes([no(1)]); // poll
+    LocalState.setJanelaTrilhaH(72);
+    expect(mapa().flyTo).toHaveBeenCalledTimes(1);
+
+    // Selecionar de novo volta a enquadrar.
+    LocalState.select(null);
+    LocalState.select(1);
+    expect(mapa().flyTo).toHaveBeenCalledTimes(2);
+    LocalState.setJanelaTrilhaH(336);
+  });
+
+  it("trocar o período da trilha busca de novo com a janela nova", async () => {
+    const api = {
+      track: vi.fn().mockResolvedValue({ line: null, lines: [], points: [] }),
+    } as unknown as DataValue["api"];
+    LocalState.setJanelaTrilhaH(336);
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    janelasPedidas.length = 0;
+
+    LocalState.setJanelaTrilhaH(72);
+
+    expect(janelasPedidas).toEqual([72]);
+    LocalState.setJanelaTrilhaH(336);
+  });
+
   it("seleção busca trilha e desenha LineString + pontos quando a resposta chega", async () => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     const api = {
@@ -724,5 +869,406 @@ describe("InitializeMap — enquadramento automático", () => {
       "visibility",
       "visible",
     );
+  });
+});
+
+describe("InitializeMap — paradas com dispersão (T4)", () => {
+  const C1: LngLat = [-70.0, -5.0];
+  const C2: LngLat = [-69.95, -5.0];
+  const T0 = Date.parse("2026-10-01T12:00:00Z");
+  const min = 60_000;
+
+  // Duas paradas de 1 h separadas por deslocamento de ~5 km.
+  const trilhaComDuasParadas = (): FixDwell[] =>
+    concat(
+      navegacao({
+        de: deslocar(C1, -6000, 0),
+        para: C1,
+        inicioMs: T0,
+        kmh: 20,
+      }),
+      parada({
+        centro: C1,
+        inicioMs: T0 + 20 * min,
+        duracaoMs: 60 * min,
+        semente: 3,
+      }),
+      navegacao({ de: C1, para: C2, inicioMs: T0 + 80 * min, kmh: 20 }),
+      parada({
+        centro: C2,
+        inicioMs: T0 + 100 * min,
+        duracaoMs: 60 * min,
+        semente: 4,
+      }),
+    );
+
+  const respostaDe = (fixes: FixDwell[]) => ({
+    line: null,
+    lines: [] as [number, number][][],
+    points: fixes.map((f) => ({ pos: f.pos, posTime: f.posTime, sats: null })),
+  });
+
+  // Seleciona o nó e responde a trilha com os pontos dados.
+  const selecionarComResposta = async (resposta: unknown) => {
+    const api = {
+      track: vi.fn().mockResolvedValue(resposta),
+    } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+  };
+
+  const ultimoSetData = (fonte: string) =>
+    mapa().getSource(fonte).setData.mock.lastCall?.[0] as {
+      features: Array<{
+        properties: Record<string, unknown>;
+        geometry: { type: string; coordinates: unknown };
+      }>;
+    };
+
+  it("track-points por padrão não recebe fixes de parada nem spikes", async () => {
+    const fixes = trilhaComDuasParadas();
+    await selecionarComResposta(respostaDe(fixes));
+
+    const simp = simplifyTrackDwells(fixes);
+    const movimento = simp.papel.filter((p) => p === "movimento").length;
+    const features = ultimoSetData("track-points").features;
+    expect(features).toHaveLength(movimento);
+    expect(features.length).toBeLessThan(fixes.length);
+    expect(features.every((f) => f.properties.papel === "movimento")).toBe(
+      true,
+    );
+  });
+
+  it("dwell-spread tem um polígono fechado por parada", async () => {
+    const fixes = trilhaComDuasParadas();
+    await selecionarComResposta(respostaDe(fixes));
+
+    const paradas = simplifyTrackDwells(fixes).dwells;
+    expect(paradas).toHaveLength(2);
+    const features = ultimoSetData("dwell-spread").features;
+    expect(features).toHaveLength(paradas.length);
+    for (const f of features) {
+      expect(f.geometry.type).toBe("Polygon");
+      const anel = (f.geometry.coordinates as LngLat[][])[0];
+      expect(anel).toHaveLength(49);
+      expect(anel[0]).toEqual(anel[48]);
+    }
+  });
+
+  it("camadas de dispersão ficam abaixo de track-line", () => {
+    montar({} as DataValue["api"]);
+    const ids = (
+      mapa().opts as { style: { layers: Array<{ id: string }> } }
+    ).style.layers.map((l) => l.id);
+    const fundo = ids.indexOf("dwell-spread-fill");
+    expect(fundo).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf("dwell-spread-line")).toBeGreaterThan(fundo);
+    expect(fundo).toBeLessThan(ids.indexOf("track-line"));
+  });
+
+  it("halo mínimo de parada fica abaixo de track-line, logo após dwell-spread-line", () => {
+    montar({} as DataValue["api"]);
+    const camadas = (
+      mapa().opts as {
+        style: { layers: Array<{ id: string; source?: string }> };
+      }
+    ).style.layers;
+    const ids = camadas.map((l) => l.id);
+    const halo = ids.indexOf("dwell-points-halo");
+    expect(halo).toBeGreaterThanOrEqual(0);
+    expect(halo).toBeLessThan(ids.indexOf("track-line"));
+    expect(halo).toBe(ids.indexOf("dwell-spread-line") + 1);
+    expect(camadas[halo].source).toBe("dwell-points");
+  });
+
+  it("linhas cruas da API só entram sem simplificação (menos de 2 fixes)", async () => {
+    const cruas: [number, number][][] = [
+      [
+        [-70, -5],
+        [-69.9, -5],
+      ],
+    ];
+    await selecionarComResposta({
+      line: null,
+      lines: cruas,
+      points: [{ pos: [-70, -5], posTime: null, sats: null }],
+    });
+    expect(ultimoSetData("track").features).toEqual([
+      expect.objectContaining({
+        geometry: { type: "LineString", coordinates: cruas[0] },
+      }),
+    ]);
+  });
+
+  it("com simplificação e 0 linhas, a trilha fica vazia (não usa linhas cruas)", async () => {
+    // Só parada: a simplificação devolve nenhuma linha de movimento.
+    const pontos = parada({
+      centro: C1,
+      inicioMs: T0,
+      duracaoMs: 2 * 60 * min,
+      semente: 5,
+    });
+    expect(simplifyTrackDwells(pontos).linhas).toHaveLength(0);
+    await selecionarComResposta({
+      line: null,
+      lines: [
+        [
+          [-70, -5],
+          [-69.9, -5],
+        ],
+      ],
+      points: respostaDe(pontos).points,
+    });
+    expect(ultimoSetData("track").features).toEqual([]);
+  });
+
+  it("popup da parada mostra duração, fixes, dispersão e ruído descartado", () => {
+    montar({} as DataValue["api"]);
+    const propriedades = {
+      rotulo: "Parada de 1h 0m",
+      chegadaMs: T0,
+      duracaoMs: 60 * min,
+      fixes: 120,
+      dispersaoP50M: 14.4,
+      dispersaoP90M: 52.6,
+      excluidos: 3,
+    };
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: C1 },
+          properties: propriedades,
+        },
+      ],
+    });
+    const html = (popups.at(-1) as FakePopupLike).html;
+    expect(html).toContain("Duração: 1h 0m");
+    expect(html).toContain("120 fixes");
+    expect(html).toContain("50% dos fixes em 14 m · 90% em 53 m");
+    expect(html).toContain("3 fixes descartados (ruído)");
+  });
+
+  it("popup omite a linha de ruído quando nada foi descartado", () => {
+    montar({} as DataValue["api"]);
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: C1 },
+          properties: {
+            rotulo: "Parada",
+            duracaoMs: min,
+            fixes: 5,
+            excluidos: 0,
+          },
+        },
+      ],
+    });
+    expect((popups.at(-1) as FakePopupLike).html).not.toContain("descartados");
+  });
+  it("rótulo 'Ancorado' envelhece com o relógio do store, sem nova busca da trilha", async () => {
+    const pontos = [
+      ...navegacao({
+        de: deslocar(C1, -6000, 0),
+        para: C1,
+        inicioMs: T0,
+        kmh: 20,
+      }),
+      ...parada({
+        centro: C1,
+        inicioMs: T0 + 20 * min,
+        duracaoMs: 60 * min,
+        semente: 5,
+      }),
+    ];
+    const fimMs = T0 + 80 * min; // último fix da parada em curso
+    const track = vi.fn().mockResolvedValue(respostaDe(pontos));
+    montar({ track } as unknown as DataValue["api"]);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.tickNow(fimMs + 5 * min);
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    const rotulo = () =>
+      ultimoSetData("dwell-points").features[0].properties.rotulo as string;
+    expect(rotulo().startsWith("Ancorado há ")).toBe(true);
+
+    LocalState.tickNow(fimMs + 40 * min); // passou de 30 min sem fix novo
+    expect(rotulo().startsWith("Parado 1h ")).toBe(true);
+    expect(rotulo()).toContain("· último fix há 40m");
+    expect(track).toHaveBeenCalledTimes(1);
+  });
+
+  it("parada mesclada após lacuna sem sinal: rótulo cita o tempo sem sinal", async () => {
+    const pontos = [
+      ...parada({ centro: C1, inicioMs: T0, duracaoMs: 60 * min, semente: 3 }),
+      ...parada({
+        centro: C1,
+        inicioMs: T0 + 60 * min + 7 * 60 * min,
+        duracaoMs: 60 * min,
+        semente: 4,
+      }),
+    ];
+    const fimMs = T0 + 60 * min + 7 * 60 * min + 60 * min;
+    const track = vi.fn().mockResolvedValue(respostaDe(pontos));
+    montar({ track } as unknown as DataValue["api"]);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.tickNow(fimMs + 5 * min);
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    const rotulo = ultimoSetData("dwell-points").features[0].properties
+      .rotulo as string;
+    expect(rotulo).toContain("sem sinal");
+    expect(rotulo.endsWith(" sem sinal")).toBe(true);
+    expect(rotulo).toContain(" · 7h ");
+  });
+
+  it("popup de parada com lacuna mostra a linha 'Sem sinal por ... durante a parada'", () => {
+    montar({} as DataValue["api"]);
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: C1 },
+          properties: {
+            rotulo: "Parada de 1h 0m · 7h 0m sem sinal",
+            duracaoMs: 8 * 60 * min,
+            lacunaMs: 7 * 60 * min,
+            fixes: 240,
+            excluidos: 0,
+          },
+        },
+      ],
+    });
+    const html = (popups.at(-1) as FakePopupLike).html;
+    expect(html).toContain("Sem sinal por 7h 0m durante a parada");
+  });
+
+  it("parada após lacuna zera o rumo antigo do nó (sem rumo novo)", async () => {
+    // Navegação para leste, lacuna de 118 min e depois só fixes parados ao sul.
+    // Parada sem ruído (mesmo posição): o rumo congelado não tem aproximação observada.
+    const nav = navegacao({
+      de: C1,
+      para: deslocar(C1, 3000, 0),
+      inicioMs: T0,
+      kmh: 20,
+    });
+    const centroSul = deslocar(C1, 0, -4000);
+    const pontos = concat(
+      nav,
+      parada({
+        centro: centroSul,
+        inicioMs: T0 + 127 * min,
+        duracaoMs: 60 * min,
+        semente: 7,
+      }).map((f) => ({ ...f, pos: centroSul })),
+    );
+    expect(simplifyTrackDwells(pontos).parado).toBe(true);
+    const track = vi.fn().mockResolvedValue(respostaDe(pontos));
+    montar({ track } as unknown as DataValue["api"]);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([{ ...no(1), bearing: 90 }]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    expect(track).toHaveBeenCalledTimes(1);
+    expect(LocalState.localState.nodes[1]?.bearing).toBeNull();
+  });
+
+  describe("fixes brutos (T5)", () => {
+    // Trilha com um spike: o fix 200 sai 400 m do centro da primeira parada.
+    const trilhaComSpike = (): FixDwell[] => {
+      const fixes = trilhaComDuasParadas();
+      fixes[200] = { ...fixes[200], pos: deslocar(C1, 400, 0) };
+      return fixes;
+    };
+
+    const papeis = (fonte: string) =>
+      ultimoSetData(fonte).features.map((f) => f.properties.papel);
+
+    beforeEach(() => LocalState.setMostrarFixesBrutos(false));
+    afterEach(() => LocalState.setMostrarFixesBrutos(false));
+
+    it("ligado: track-points recebe todos os fixes, com paradas e spikes", async () => {
+      const fixes = trilhaComSpike();
+      expect(simplifyTrackDwells(fixes).papel[200]).toBe("spike");
+      await selecionarComResposta(respostaDe(fixes));
+
+      LocalState.setMostrarFixesBrutos(true);
+
+      const lista = papeis("track-points");
+      expect(lista).toHaveLength(fixes.length);
+      expect(lista).toContain("parada");
+      expect(lista).toContain("spike");
+    });
+
+    it("desligado: track-points volta a ter só movimento", async () => {
+      const fixes = trilhaComSpike();
+      await selecionarComResposta(respostaDe(fixes));
+      LocalState.setMostrarFixesBrutos(true);
+
+      LocalState.setMostrarFixesBrutos(false);
+
+      const lista = papeis("track-points");
+      expect(lista.every((p) => p === "movimento")).toBe(true);
+      expect(lista).toHaveLength(
+        simplifyTrackDwells(fixes).papel.filter((p) => p === "movimento")
+          .length,
+      );
+    });
+
+    it("alternar o toggle não refaz o fetch da trilha", async () => {
+      const api = {
+        track: vi.fn().mockResolvedValue(respostaDe(trilhaComSpike())),
+      } as unknown as DataValue["api"];
+      montar(api);
+      await new Promise((r) => setTimeout(r, 0));
+      LocalState.setNodes([no(1)]);
+      LocalState.select(1);
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+
+      LocalState.setMostrarFixesBrutos(true);
+      LocalState.setMostrarFixesBrutos(false);
+      LocalState.setMostrarFixesBrutos(true);
+
+      expect(api.track).toHaveBeenCalledTimes(1);
+      expect(papeis("track-points")).toContain("spike");
+    });
+
+    it("sem trilha analisada, ligar o toggle não envia pontos", async () => {
+      montar({} as DataValue["api"]);
+      await new Promise((r) => setTimeout(r, 0));
+      const antes = mapa().getSource("track-points").setData.mock.calls.length;
+
+      LocalState.setMostrarFixesBrutos(true);
+
+      expect(mapa().getSource("track-points").setData.mock.calls.length).toBe(
+        antes,
+      );
+    });
+
+    it("desselecionar esquece a análise: ligar o toggle depois não reaparece com os pontos antigos", async () => {
+      await selecionarComResposta(respostaDe(trilhaComSpike()));
+      LocalState.select(null);
+      const antes = mapa().getSource("track-points").setData.mock.calls.length;
+
+      LocalState.setMostrarFixesBrutos(true);
+
+      expect(mapa().getSource("track-points").setData.mock.calls.length).toBe(
+        antes,
+      );
+      expect(LocalState.localState.trilhaCarregada).toBe(false);
+    });
   });
 });

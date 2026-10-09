@@ -6,7 +6,7 @@ import {
   tituloBateriaCritica,
   tituloGatewayMudo,
 } from "../../lib/alertas.js";
-import { duracaoLabel } from "../../lib/dwell.js";
+import { ANCORADO_MAX_MS, duracaoLabel } from "../../lib/dwell.js";
 import {
   type BatteryLevel,
   batteryLabel,
@@ -19,7 +19,12 @@ import {
   nodeKind,
   nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
-import type { NodeAlertType, NodeInfo, NodeKind } from "../../store.js";
+import type {
+  Movimento,
+  NodeAlertType,
+  NodeInfo,
+  NodeKind,
+} from "../../store.js";
 import { LogoLoader } from "../ui/LogoLoader.jsx";
 import { Button } from "../ui/button.jsx";
 import { Text } from "../ui/text.jsx";
@@ -30,6 +35,12 @@ const ROTULO_CATEGORIA = new Map<NodeKind, string>([
   ["handheld", "Portátil"],
   ["unknown", "Não informado"],
 ]);
+
+/** "parado desde" só se o último fix da parada ainda é recente pelo relógio atual. */
+const paradaFresca = (m: Movimento, agoraMs: number): boolean =>
+  m.desdeMs !== null &&
+  m.ultimoFixMs !== null &&
+  agoraMs - m.ultimoFixMs < ANCORADO_MAX_MS;
 
 const COR_BATERIA = new Map<BatteryLevel, string>([
   ["none", "text-slate-500"],
@@ -246,7 +257,7 @@ export const NodeList: Component<NodeListProps> = (props) => {
                           >
                             {m().parado
                               ? `⚓ Ancorado / Parado${
-                                  m().desdeMs !== null
+                                  paradaFresca(m(), props.nowMs())
                                     ? ` (há ${duracaoLabel(props.nowMs() - (m().desdeMs as number))})`
                                     : ""
                                 }`

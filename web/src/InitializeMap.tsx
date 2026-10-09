@@ -8,7 +8,10 @@ import { Protocol } from "pmtiles";
 import type { Component, JSXElement } from "solid-js";
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import { bearingComParada, bearingDaTrilha } from "./lib/bearing.js";
+import { circuloGeo } from "./lib/circulo.js";
 import {
+  ANCORADO_MAX_MS,
+  type Dwell,
   type TrilhaSimplificada,
   duracaoLabel,
   simplifyTrackDwells,
@@ -28,9 +31,10 @@ import {
 } from "./lib/nodes.js";
 import { espalharPinsSobrepostos } from "./lib/overlap.js";
 import { adicionarOverlays, fetchOverlays } from "./lib/overlays.js";
+import { buscarTrilhaJanela } from "./lib/trilhaJanela.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
-import { LocalState, type NodeKind } from "./store.js";
+import { LocalState, type NodeInfo, type NodeKind } from "./store.js";
 
 export interface InitializeMapProps {
   children?: JSXElement;
@@ -236,6 +240,7 @@ const estilo: StyleSpecification = {
     track: { type: "geojson", data: EMPTY_FC },
     "track-points": { type: "geojson", data: EMPTY_FC },
     "dwell-points": { type: "geojson", data: EMPTY_FC },
+    "dwell-spread": { type: "geojson", data: EMPTY_FC },
   },
   layers: [
     {
@@ -274,6 +279,52 @@ const estilo: StyleSpecification = {
       },
     },
     {
+      id: "dwell-spread-fill",
+      type: "fill",
+      source: "dwell-spread",
+      paint: { "fill-color": "#0ea5e9", "fill-opacity": 0.15 },
+    },
+    {
+      id: "dwell-spread-line",
+      type: "line",
+      source: "dwell-spread",
+      paint: {
+        "line-color": "#0ea5e9",
+        "line-width": 1,
+        "line-opacity": 0.5,
+      },
+    },
+    {
+      // Anel mínimo visível: some quando o polígono p90 real já é maior (zoom alto).
+      id: "dwell-points-halo",
+      type: "circle",
+      source: "dwell-points",
+      paint: {
+        "circle-radius": 22,
+        "circle-color": "#0ea5e9",
+        "circle-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          15,
+          0.15,
+          16.5,
+          0,
+        ],
+        "circle-stroke-color": "#0ea5e9",
+        "circle-stroke-width": 1,
+        "circle-stroke-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          15,
+          0.6,
+          16.5,
+          0,
+        ],
+      },
+    },
+    {
       id: "track-line",
       type: "line",
       source: "track",
@@ -283,11 +334,35 @@ const estilo: StyleSpecification = {
       id: "track-points",
       type: "circle",
       source: "track-points",
+      // Só "movimento" por padrão; com "Fixes brutos" ligado, paradas e spikes
+      // entram com estilo próprio (spike: só contorno, sem preenchimento).
       paint: {
-        "circle-radius": 3,
-        "circle-color": "#f2b544",
-        "circle-stroke-color": "#121b14",
+        "circle-radius": ["match", ["get", "papel"], ["parada", "spike"], 2, 3],
+        "circle-color": [
+          "match",
+          ["get", "papel"],
+          "spike",
+          "#ef4444",
+          "#f2b544",
+        ],
+        "circle-opacity": [
+          "match",
+          ["get", "papel"],
+          "parada",
+          0.35,
+          "spike",
+          0,
+          1,
+        ],
+        "circle-stroke-color": [
+          "match",
+          ["get", "papel"],
+          "spike",
+          "#ef4444",
+          "#121b14",
+        ],
         "circle-stroke-width": 1,
+        "circle-stroke-opacity": ["match", ["get", "papel"], "parada", 0.35, 1],
       },
     },
     {
@@ -564,11 +639,16 @@ const abrirPopupDoPin = (
 type TrilhaApi = {
   line: [number, number][] | null;
   lines: [number, number][][];
-  points: { pos: [number, number]; posTime: string | null }[];
+  points: {
+    pos: [number, number];
+    posTime: string | null;
+    sats?: number | null;
+  }[];
 };
 
-// Segmentos da trilha sem o "novelo" de GPS (ST-DAH); sem fixes suficientes
-// (ou sem horário), cai nas linhas cruas da API.
+// Segmentos da trilha sem o "novelo" de GPS (ST-DAH). Sem simplificação
+// (menos de 2 fixes ou sem horário), cai nas linhas cruas da API. Com
+// simplificação, só as linhas dela: 0 linhas significa trilha vazia.
 const analisarTrilha = (
   t: TrilhaApi,
 ): {
@@ -581,11 +661,11 @@ const analisarTrilha = (
     return { segments: cruas, simp: null };
   }
   const simp = simplifyTrackDwells(t.points);
-  return {
-    segments: simp.linhas.length > 0 ? simp.linhas : cruas,
-    simp,
-  };
+  return { segments: simp.linhas, simp };
 };
+
+// Relógio do store (reativo e controlável em teste); Date.now() só se não estiver definido.
+const relogioMs = (): number => LocalState.localState.nowMs || Date.now();
 
 const registrarMovimento = (
   nodeNum: number,
@@ -595,26 +675,110 @@ const registrarMovimento = (
     return;
   }
   const ultima = simp.dwells[simp.dwells.length - 1];
+  // Frescor não é decidido aqui: a lista compara ultimoFixMs com o relógio reativo.
   LocalState.setNodeMovimento(nodeNum, {
     parado: simp.parado,
     desdeMs: simp.parado && ultima ? ultima.chegadaMs : null,
+    ultimoFixMs: simp.parado && ultima ? ultima.ultimoFixMs : null,
     velocidadeKmh: simp.velocidadeKmh,
   });
 };
 
-const featuresDeParadas = (simp: TrilhaSimplificada | null) =>
-  (simp?.dwells ?? []).map((d) => ({
+/** Rótulo da parada: em curso, sem inventar permanência além do último fix. */
+const rotuloBaseParada = (d: Dwell, agoraMs: number): string => {
+  if (d.partidaMs !== null) {
+    return `Parada de ${duracaoLabel(d.duracaoMs)}`;
+  }
+  const semFixMs = agoraMs - d.ultimoFixMs;
+  return semFixMs < ANCORADO_MAX_MS
+    ? `Ancorado há ${duracaoLabel(agoraMs - d.chegadaMs)}`
+    : `Parado ${duracaoLabel(d.duracaoMs)} · último fix há ${duracaoLabel(semFixMs)}`;
+};
+
+/** Tempo sem sinal dentro da parada, quando houve lacuna mesclada. */
+const sufixoLacuna = (lacunaMs: number): string =>
+  lacunaMs > 0 ? ` · ${duracaoLabel(lacunaMs)} sem sinal` : "";
+
+const rotuloParada = (d: Dwell, agoraMs: number): string =>
+  `${rotuloBaseParada(d, agoraMs)}${sufixoLacuna(d.lacunaMs)}`;
+
+const featuresDeParadas = (simp: TrilhaSimplificada | null) => {
+  const agoraMs = relogioMs();
+  return (simp?.dwells ?? []).map((d) => ({
     type: "Feature" as const,
     properties: {
-      rotulo:
-        d.partidaMs === null
-          ? `Ancorado há ${duracaoLabel(Date.now() - d.chegadaMs)}`
-          : `Parada de ${duracaoLabel(d.duracaoMs)}`,
+      rotulo: rotuloParada(d, agoraMs),
       chegadaMs: d.chegadaMs,
       emCurso: d.partidaMs === null,
+      duracaoMs: d.duracaoMs,
+      lacunaMs: d.lacunaMs,
+      fixes: d.fixes,
+      dispersaoP50M: d.dispersaoP50M,
+      dispersaoP90M: d.dispersaoP90M,
+      excluidos: d.excluidos,
     },
     geometry: { type: "Point" as const, coordinates: d.centroide },
   }));
+};
+
+/** Um círculo de dispersão (raio P90) por parada. */
+const featuresDeDispersao = (simp: TrilhaSimplificada | null) =>
+  (simp?.dwells ?? []).map((d) => ({
+    type: "Feature" as const,
+    properties: { chegadaMs: d.chegadaMs },
+    geometry: {
+      type: "Polygon" as const,
+      // piso de 5 m: dispersão 0 (fixes idênticos) geraria polígono degenerado
+      coordinates: [circuloGeo(d.centroide, Math.max(d.dispersaoP90M, 5))],
+    },
+  }));
+
+/**
+ * Pontos brutos da trilha com o papel de cada fix (índice original). Sem
+ * simplificação, todos são "movimento" (comportamento anterior).
+ */
+const featuresDePontos = (t: TrilhaApi, simp: TrilhaSimplificada | null) =>
+  t.points.map((p, i) => ({
+    type: "Feature" as const,
+    properties: {
+      posTime: p.posTime,
+      sats: p.sats,
+      papel: simp?.papel[i] ?? "movimento",
+    },
+    geometry: { type: "Point" as const, coordinates: p.pos },
+  }));
+
+const numeroOu = (v: unknown, padrao = 0): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : padrao;
+
+/** Popup da parada: chegada, duração, fixes e dispersão. Texto sempre escapado. */
+const htmlPopupParada = (p: Record<string, unknown>): string => {
+  const chegada =
+    typeof p.chegadaMs === "number"
+      ? new Date(p.chegadaMs).toLocaleString("pt-BR", {
+          dateStyle: "short",
+          timeStyle: "short",
+        })
+      : "—";
+  const linhas = [
+    `Chegada: ${chegada}`,
+    `Duração: ${duracaoLabel(numeroOu(p.duracaoMs))}`,
+    `${numeroOu(p.fixes)} fixes`,
+    `50% dos fixes em ${Math.round(numeroOu(p.dispersaoP50M))} m · 90% em ${Math.round(numeroOu(p.dispersaoP90M))} m`,
+  ];
+  const lacunaMs = numeroOu(p.lacunaMs);
+  if (lacunaMs > 0) {
+    linhas.push(`Sem sinal por ${duracaoLabel(lacunaMs)} durante a parada`);
+  }
+  const excluidos = numeroOu(p.excluidos);
+  if (excluidos > 0) {
+    linhas.push(`${excluidos} fixes descartados (ruído)`);
+  }
+  const corpo = linhas
+    .map((l) => `<div class="text-slate-400">${esc(l)}</div>`)
+    .join("");
+  return `<div class="px-3 py-2 text-slate-100 text-xs"><div class="font-bold">${esc(String(p.rotulo ?? "Parada"))}</div>${corpo}</div>`;
+};
 
 const registrarIconeBarco = (
   map: maplibregl,
@@ -678,10 +842,51 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   const [carregado, setCarregado] = createSignal(false);
   let trackReq = 0; // descarta resposta de trilha de seleção anterior
   let boatTrackReq = 0; // descarta resposta de trilhas coletivas anterior
+  // Última análise por nó: poll sem fix novo não re-simplifica a trilha inteira.
+  const analisesPorNo = new Map<
+    number,
+    { chave: string; res: ReturnType<typeof analisarTrilha> }
+  >();
+  const analisarComCache = (
+    nodeNum: number,
+    horas: number,
+    t: TrilhaApi,
+  ): ReturnType<typeof analisarTrilha> => {
+    const pts = t.points ?? [];
+    const chave = `${horas}|${pts.length}|${pts[0]?.posTime}|${pts.at(-1)?.posTime}|${t.lines?.length ?? 0}`;
+    const guardada = analisesPorNo.get(nodeNum);
+    if (guardada !== undefined && guardada.chave === chave) {
+      return guardada.res;
+    }
+    const res = analisarTrilha(t);
+    analisesPorNo.set(nodeNum, { chave, res });
+    return res;
+  };
   let interagiu = false; // o usuário mexeu no mapa: para de recentralizar sozinho
   let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
   let cancelarCargaIcone: (() => void) | undefined;
+  // Última análise da trilha (todos os fixes com papel). Alternar "Fixes brutos"
+  // reaplica daqui, sem novo fetch; null = nenhuma trilha analisada.
+  let pontosDaTrilha: ReturnType<typeof featuresDePontos> | null = null;
+  let noDaTrilha: number | null = null; // nó dono de `pontosDaTrilha`
+  let noEnquadrado: number | null = null; // nó para onde a câmera já voou
+  let janelaDaTrilha: number | null = null; // período de `pontosDaTrilha`
+  const trilhaNaoSeAplica = (sel: number, horas: number) =>
+    noDaTrilha !== sel || janelaDaTrilha !== horas;
+  // Só na troca de seleção: poll e troca de período não puxam a câmera de volta.
+  const enquadrarSeNovo = (map: maplibregl, sel: number, node: NodeInfo) => {
+    if (noEnquadrado === sel || !hasConfirmedPosition(node)) {
+      return;
+    }
+    noEnquadrado = sel;
+    map.flyTo({
+      center: [node.lon, node.lat],
+      zoom: Math.max(map.getZoom(), 12),
+    });
+  };
+  // Última parada analisada e nó dono: o relógio reavalia rótulos sem nova busca.
+  let simpDaTrilha: { simp: TrilhaSimplificada; nodeNum: number } | null = null;
   // Pins reais (antes do espalhamento); reaplicados quando o zoom muda.
   let ultimosPins: Parameters<typeof espalharPinsSobrepostos>[0] | null = null;
 
@@ -689,6 +894,41 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     (map.getSource("dwell-points") as GeoJSONSource | undefined)?.setData(
       EMPTY_FC,
     );
+    (map.getSource("dwell-spread") as GeoJSONSource | undefined)?.setData(
+      EMPTY_FC,
+    );
+  };
+
+  const aplicarParadas = (map: maplibregl, simp: TrilhaSimplificada | null) => {
+    (map.getSource("dwell-points") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: featuresDeParadas(simp),
+    });
+    (map.getSource("dwell-spread") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: featuresDeDispersao(simp),
+    });
+  };
+
+  // Filtra pelo toggle "Fixes brutos" sobre a última análise guardada.
+  const aplicarPontos = (map: maplibregl) => {
+    const source = map.getSource("track-points") as GeoJSONSource | undefined;
+    if (source === undefined || pontosDaTrilha === null) {
+      return;
+    }
+    const features = LocalState.localState.mostrarFixesBrutos
+      ? pontosDaTrilha
+      : pontosDaTrilha.filter((f) => f.properties.papel === "movimento");
+    source.setData({ type: "FeatureCollection", features });
+  };
+
+  // Esquece a análise e o "trilha carregada" (limpar, troca de seleção, logout).
+  const esquecerTrilha = () => {
+    pontosDaTrilha = null;
+    noDaTrilha = null;
+    janelaDaTrilha = null;
+    simpDaTrilha = null;
+    LocalState.setTrilhaCarregada(false);
   };
 
   const aplicarPins = (map: maplibregl) => {
@@ -824,19 +1064,10 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         if (typeof p.rotulo !== "string") {
           return;
         }
-        const chegada =
-          typeof p.chegadaMs === "number"
-            ? new Date(p.chegadaMs).toLocaleString("pt-BR", {
-                dateStyle: "short",
-                timeStyle: "short",
-              })
-            : "—";
         popup?.remove();
         popup = new Popup({ offset: 12 })
           .setLngLat([f.geometry.coordinates[0], f.geometry.coordinates[1]])
-          .setHTML(
-            `<div class="px-3 py-2 text-slate-100 text-xs"><div class="font-bold">${esc(String(p.rotulo ?? "Parada"))}</div><div class="text-slate-400">Chegada: ${esc(chegada)}</div></div>`,
-          )
+          .setHTML(htmlPopupParada(p))
           .addTo(map);
       });
 
@@ -1035,6 +1266,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     if (sel === null) {
       // Desseleção também deve matar a resposta em voo (mesma corrida da troca).
       trackReq++;
+      noEnquadrado = null; // selecionar de novo volta a enquadrar o nó
+      esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
       pointsSrc.setData(EMPTY_FC);
       limparParadas(map);
@@ -1048,6 +1281,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       // Seleção órfã (nó sumiu do reconcile): trilha congelada do nó velho
       // não pode ficar no mapa quando a lista some.
       trackReq++;
+      noEnquadrado = null;
+      esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
       pointsSrc.setData(EMPTY_FC);
       limparParadas(map);
@@ -1055,21 +1290,26 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     }
     // Só desloca a câmera para coordenada confirmada (nunca inventa posição);
     // a trilha é buscada de qualquer forma.
-    if (hasConfirmedPosition(node)) {
-      map.flyTo({
-        center: [node.lon, node.lat],
-        zoom: Math.max(map.getZoom(), 12),
-      });
-    }
+    enquadrarSeNovo(map, sel, node);
     const req = ++trackReq;
+    const horas = LocalState.localState.janelaTrilhaH; // tracked: trocar a janela rebusca
+    // Troca de seleção ou de período: a análise anterior sai já (se a busca
+    // nova falhar, o mapa não mostra 14 dias sob o rótulo "24 h"). Refetch do
+    // mesmo nó e período (polling) mantém a análise até a resposta nova chegar.
+    if (trilhaNaoSeAplica(sel, horas)) {
+      // a trilha, os fixes e o círculo do nó anterior saem do mapa já
+      esquecerTrilha();
+      lineSrc.setData(EMPTY_FC);
+      pointsSrc.setData(EMPTY_FC);
+      limparParadas(map);
+    }
     const target = node.nodeId || String(node.nodeNum);
-    api
-      .track(target)
+    buscarTrilhaJanela(api, target, horas)
       .then((t) => {
         if (req !== trackReq) {
           return; // seleção mudou durante o fetch
         }
-        const { segments, simp } = analisarTrilha(t);
+        const { segments, simp } = analisarComCache(sel, horas, t);
 
         // Rumo estável: parado congela no último rumo de aproximação.
         let bearing: number | null = null;
@@ -1079,14 +1319,12 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           const lastSeg = segments[segments.length - 1];
           bearing = lastSeg.length >= 2 ? bearingDaTrilha(lastSeg) : null;
         }
-        if (bearing !== null) {
+        // Trilha analisada sem rumo (ex.: parada após lacuna): zera o rumo antigo.
+        if (simp !== null || bearing !== null) {
           LocalState.setNodeBearing(sel, bearing);
         }
         registrarMovimento(sel, simp);
-        (map.getSource("dwell-points") as GeoJSONSource | undefined)?.setData({
-          type: "FeatureCollection",
-          features: featuresDeParadas(simp),
-        });
+        aplicarParadas(map, simp);
 
         const lineFeatures = segments.map((seg, idx) => ({
           type: "Feature" as const,
@@ -1102,18 +1340,31 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
                 features: lineFeatures,
               },
         );
-        pointsSrc.setData({
-          type: "FeatureCollection",
-          features: t.points.map((p) => ({
-            type: "Feature",
-            properties: { posTime: p.posTime, sats: p.sats },
-            geometry: { type: "Point", coordinates: p.pos },
-          })),
-        });
+        // Guarda a análise; o filtro do toggle decide o que vai ao mapa.
+        pontosDaTrilha = featuresDePontos(t, simp);
+        noDaTrilha = sel;
+        janelaDaTrilha = horas;
+        simpDaTrilha = simp === null ? null : { simp, nodeNum: sel };
+        LocalState.setTrilhaCarregada(true);
+        aplicarPontos(map);
       })
       .catch(() => {
         // 401/rede: painel e indicador já refletem; mapa fica como está.
       });
+  });
+
+  // Relógio: "Ancorado"/"Parado" e "parado desde" envelhecem sem nova busca da trilha.
+  createEffect(() => {
+    LocalState.localState.nowMs; // rastreado: gatilho do relógio do store
+    const map = currentView();
+    const cache = simpDaTrilha;
+    if (map === undefined || !carregado() || cache === null) {
+      return;
+    }
+    untrack(() => {
+      aplicarParadas(map, cache.simp);
+      registrarMovimento(cache.nodeNum, cache.simp);
+    });
   });
 
   // Reação à geração de sessão (logout/401): limpa JÁ a visualização —
@@ -1121,6 +1372,9 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   createEffect(() => {
     LocalState.localState.pollingGeracao;
     trackReq++;
+    boatTrackReq++; // trilhas coletivas em voo também são da sessão velha
+    analisesPorNo.clear();
+    esquecerTrilha();
     popup?.remove();
     popup = null;
     const map = currentView();
@@ -1137,7 +1391,20 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       | undefined;
     lineSrc?.setData(EMPTY_FC);
     pointsSrc?.setData(EMPTY_FC);
+    (map.getSource("boat-tracks") as GeoJSONSource | undefined)?.setData(
+      EMPTY_FC,
+    );
     limparParadas(map);
+  });
+
+  // "Fixes brutos": alternar só reaplica a última análise (sem refazer o fetch).
+  createEffect(() => {
+    LocalState.localState.mostrarFixesBrutos; // rastreado: gatilho do efeito
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    aplicarPontos(map);
   });
 
   // Mapa base: reage a mudanças em localState.basemapMode
@@ -1192,6 +1459,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     });
 
     if (barcos.length === 0) {
+      boatTrackReq++; // resposta em voo não redesenha barcos que sumiram
       boatSrc.setData(EMPTY_FC);
       return;
     }
@@ -1201,9 +1469,12 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     }
 
     const req = ++boatTrackReq;
+    const horas = LocalState.localState.janelaTrilhaH; // tracked: trocar a janela rebusca
     // Busca as trilhas dos barcos em paralelo e junta em um único FeatureCollection
     Promise.allSettled(
-      barcos.map((b) => api.track(b.nodeId || String(b.nodeNum))),
+      barcos.map((b) =>
+        buscarTrilhaJanela(api, b.nodeId || String(b.nodeNum), horas),
+      ),
     ).then((resultados) => {
       // Descarta se uma nova requisição de trilhas coletivas iniciou ou se um nó foi selecionado
       if (
@@ -1221,7 +1492,11 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       resultados.forEach((res, idx) => {
         if (res.status === "fulfilled") {
           const t = res.value;
-          const { segments, simp } = analisarTrilha(t);
+          const { segments, simp } = analisarComCache(
+            barcos[idx].nodeNum,
+            horas,
+            t,
+          );
           registrarMovimento(barcos[idx].nodeNum, simp);
           for (const seg of segments) {
             if (seg.length >= 2) {

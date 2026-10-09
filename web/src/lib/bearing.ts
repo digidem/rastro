@@ -81,17 +81,17 @@ export function bearingDaTrilha(
 
 /**
  * Rumo a partir da trilha simplificada (ST-DAH). Parado: congela no último
- * rumo de aproximação (null se não houve). Navegando: último segmento
- * da linha sem o novelo de GPS, para o ícone não girar a cada fix.
+ * rumo de aproximação (null se não houve). Navegando: último segmento contínuo
+ * da linha sem o novelo de GPS, para o ícone não girar a cada fix. Depois de
+ * uma lacuna, um fix isolado não herda o rumo do segmento anterior.
  */
 export function bearingComParada(t: {
   parado: boolean;
   aproximacao: readonly Coordenada[] | null;
-  linhas: readonly (readonly Coordenada[])[];
+  ultimaLinha: readonly Coordenada[] | null;
 }): number | null {
   if (t.parado) {
     return t.aproximacao ? bearingDaTrilha(t.aproximacao) : null;
   }
-  const ultima = t.linhas[t.linhas.length - 1];
-  return ultima && ultima.length >= 2 ? bearingDaTrilha(ultima) : null;
+  return t.ultimaLinha ? bearingDaTrilha(t.ultimaLinha) : null;
 }

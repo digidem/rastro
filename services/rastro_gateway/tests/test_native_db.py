@@ -1453,3 +1453,61 @@ def test_gateway_uplink_times_exclui_virtuais(db, pg_session):
     tempos = db.gateway_uplink_times()
     assert 8001 in tempos
     assert 9999 not in tempos  # virtual: fora do ciclo gateway_mudo
+
+
+# --------------------------------------------------------------------------
+# Qualidade do fix (migração 03): gravada se a coluna existe; ingest sem ela não cai
+# --------------------------------------------------------------------------
+
+_COLUNAS_QUALIDADE_SQL = (
+    "ALTER TABLE positions DROP COLUMN IF EXISTS pdop, DROP COLUMN IF EXISTS hdop, "
+    "DROP COLUMN IF EXISTS ground_speed_ms, DROP COLUMN IF EXISTS ground_track_deg, "
+    "DROP COLUMN IF EXISTS precision_bits"
+)
+
+
+def _conninfo_admin(pg_session) -> str:
+    return (
+        f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} "
+        f"password={pg_session['password']} dbname={pg_session['dbname']}"
+    )
+
+
+def test_qualidade_gravada_quando_colunas_existem(db, pg_session):
+    env = _env_posicao(0x0BAD0101, 901, int(time.time()) - 600)
+    env.position.pdop = 1.5
+    env.position.hdop = 0.9
+    env.position.ground_speed_ms = 3.0
+    env.position.ground_track_deg = 123.45
+    env.position.precision_bits = 16
+    db.store_native([env])
+    with psycopg.connect(_conninfo_admin(pg_session)) as conn:
+        linha = conn.execute(
+            "SELECT pdop, hdop, ground_speed_ms, ground_track_deg, precision_bits "
+            "FROM rastro.positions WHERE node_num = %s",
+            (0x0BAD0101,),
+        ).fetchone()
+    assert linha is not None
+    assert float(linha[0]) == pytest.approx(1.5)
+    assert float(linha[1]) == pytest.approx(0.9)
+    assert linha[4] == 16
+
+
+def test_ingest_grava_posicao_sem_colunas_de_qualidade(db, pg_session):
+    """Deploy em ordem errada: ingest novo contra banco SEM a migração 03."""
+    env = _env_posicao(0x0BAD0202, 902, int(time.time()) - 600)
+    env.position.pdop = 1.5
+    with psycopg.connect(_conninfo_admin(pg_session)) as conn:
+        conn.execute("SET search_path = rastro, public")
+        conn.execute(_COLUNAS_QUALIDADE_SQL)  # só nesta transação; rollback desfaz
+        with conn.cursor() as cur:
+            db._store_envelope(cur, env)
+            cur.execute("SELECT count(*) FROM positions WHERE node_num = %s", (0x0BAD0202,))
+            assert cur.fetchone()[0] == 1
+        conn.rollback()
+    with psycopg.connect(_conninfo_admin(pg_session)) as conn:
+        presentes = conn.execute(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'rastro' "
+            "AND table_name = 'positions' AND column_name = 'pdop'"
+        ).fetchone()[0]
+    assert presentes == 1  # rollback restaurou o esquema

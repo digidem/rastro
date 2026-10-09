@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS positions (
     )
 );
 
+-- Qualidade do fix do firmware (migração 03, aditiva e idempotente; anuláveis).
+-- Mesmo bloco de deploy/postgres/migrate-03-qualidade.sh.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS pdop REAL;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS hdop REAL;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS ground_speed_ms REAL;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS ground_track_deg REAL;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS precision_bits SMALLINT;
+
 CREATE TABLE IF NOT EXISTS device_telemetry (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     node_num      BIGINT NOT NULL REFERENCES nodes(node_num),

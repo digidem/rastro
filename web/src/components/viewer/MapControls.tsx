@@ -1,9 +1,10 @@
 import type { Component } from "solid-js";
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import {
   ArrowsOutIcon,
   ChatCircleTextIcon,
   CheckIcon,
+  ClockCounterClockwiseIcon,
   ListIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
@@ -11,6 +12,12 @@ import {
 } from "solid-phosphor/regular";
 import { useMap } from "../../hooks/useMap.jsx";
 import { useStore } from "../../hooks/useStore.jsx";
+import {
+  JANELAS_TRILHA_H,
+  type JanelaTrilhaH,
+  rotuloJanela,
+  rotuloJanelaCurto,
+} from "../../lib/trilhaJanela.js";
 import type { BasemapMode } from "../../store.js";
 
 export interface MapControlsProps {
@@ -24,11 +31,56 @@ export interface MapControlsProps {
  * Direita (coluna vertical): zoom +, zoom −, enquadrar todos e camadas (só ícones).
  */
 export const MapControls: Component<MapControlsProps> = (props) => {
-  const { localState, setChatOpen, resetFilters, setBasemapMode } = useStore();
+  const {
+    localState,
+    setChatOpen,
+    resetFilters,
+    setBasemapMode,
+    setJanelaTrilhaH,
+  } = useStore();
   const { fitAllNodes, zoomIn, zoomOut } = useMap();
   const [menuCamadasAberto, setMenuCamadasAberto] = createSignal(false);
+  const [menuJanelaAberto, setMenuJanelaAberto] = createSignal(false);
   let menuRef: HTMLDivElement | undefined;
   let menuTriggerRef: HTMLButtonElement | undefined;
+  let menuJanelaRef: HTMLDivElement | undefined;
+  let menuJanelaTriggerRef: HTMLButtonElement | undefined;
+
+  // Fecha o menu da janela de trilha ao clicar fora ou pressionar Escape
+  createEffect(() => {
+    if (!menuJanelaAberto()) {
+      return;
+    }
+    // Ao abrir, o foco vai para o período marcado; setas percorrem as opções.
+    queueMicrotask(() =>
+      menuJanelaRef
+        ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+        ?.focus(),
+    );
+    const aoClicarFora = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (
+        menuJanelaRef &&
+        !menuJanelaRef.contains(target) &&
+        menuJanelaTriggerRef &&
+        !menuJanelaTriggerRef.contains(target)
+      ) {
+        setMenuJanelaAberto(false);
+      }
+    };
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuJanelaAberto(false);
+        menuJanelaTriggerRef?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", aoClicarFora);
+    document.addEventListener("keydown", aoTeclar);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", aoClicarFora);
+      document.removeEventListener("keydown", aoTeclar);
+    });
+  });
 
   // Fecha o menu de camadas ao clicar fora ou pressionar Escape
   createEffect(() => {
@@ -68,6 +120,43 @@ export const MapControls: Component<MapControlsProps> = (props) => {
   const selecionarModo = (modo: BasemapMode) => {
     setBasemapMode(modo);
     setMenuCamadasAberto(false);
+  };
+
+  // Setas só dentro do menu: não roubam teclas de outros controles.
+  const aoTeclarNoMenuJanela = (e: KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      return;
+    }
+    const opcoes = [
+      ...(menuJanelaRef?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitemradio"]',
+      ) ?? []),
+    ];
+    if (opcoes.length === 0) {
+      return;
+    }
+    e.preventDefault();
+    const atual = opcoes.indexOf(document.activeElement as HTMLButtonElement);
+    const passo = e.key === "ArrowDown" ? 1 : -1;
+    opcoes[(atual + passo + opcoes.length) % opcoes.length].focus();
+  };
+
+  // Tab para fora do menu fecha (o foco foi para outro lugar, não para o botão).
+  const aoPerderFocoMenuJanela = (e: FocusEvent) => {
+    const destino = e.relatedTarget as Node | null;
+    if (
+      destino !== null &&
+      !menuJanelaRef?.contains(destino) &&
+      !menuJanelaTriggerRef?.contains(destino)
+    ) {
+      setMenuJanelaAberto(false);
+    }
+  };
+
+  const selecionarJanela = (h: JanelaTrilhaH) => {
+    setJanelaTrilhaH(h);
+    setMenuJanelaAberto(false);
+    menuJanelaTriggerRef?.focus(); // a opção some com o menu: foco volta ao botão
   };
 
   const btnVisual =
@@ -288,6 +377,68 @@ export const MapControls: Component<MapControlsProps> = (props) => {
                   />
                 </Show>
               </button>
+            </div>
+          </Show>
+        </div>
+
+        {/* Janela da trilha: quantas horas de histórico buscar e desenhar */}
+        <div class="relative">
+          <button
+            ref={menuJanelaTriggerRef}
+            type="button"
+            aria-expanded={menuJanelaAberto()}
+            aria-haspopup="menu"
+            aria-controls="menu-janela-trilha"
+            aria-label={`Período da trilha: ${rotuloJanela(localState.janelaTrilhaH)}`}
+            class={`${btnIcone} flex-col gap-0`}
+            title="Período da trilha"
+            onClick={() => setMenuJanelaAberto((v) => !v)}
+          >
+            <ClockCounterClockwiseIcon
+              class="h-4 w-4 text-emerald-400 shrink-0"
+              aria-hidden="true"
+            />
+            <span class="text-[9px] leading-none text-slate-300">
+              {rotuloJanelaCurto(localState.janelaTrilhaH)}
+            </span>
+          </button>
+
+          <Show when={menuJanelaAberto()}>
+            <div
+              ref={menuJanelaRef}
+              id="menu-janela-trilha"
+              role="menu"
+              aria-label="Período da trilha"
+              onKeyDown={aoTeclarNoMenuJanela}
+              onFocusOut={aoPerderFocoMenuJanela}
+              class="absolute right-0 top-full mt-1.5 w-40 rounded-lg bg-slate-950/95 border border-slate-700/80 shadow-2xl backdrop-blur-md p-1 z-30 flex flex-col gap-0.5 text-xs"
+            >
+              <div class="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-500">
+                Trilha dos últimos
+              </div>
+              <For each={JANELAS_TRILHA_H}>
+                {(h) => (
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={localState.janelaTrilhaH === h}
+                    class={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-left transition-colors ${
+                      localState.janelaTrilhaH === h
+                        ? "bg-slate-800 text-emerald-400 font-semibold"
+                        : "text-slate-200 hover:bg-slate-900"
+                    }`}
+                    onClick={() => selecionarJanela(h)}
+                  >
+                    <span>{rotuloJanela(h)}</span>
+                    <Show when={localState.janelaTrilhaH === h}>
+                      <CheckIcon
+                        class="h-3.5 w-3.5 text-emerald-400"
+                        aria-hidden="true"
+                      />
+                    </Show>
+                  </button>
+                )}
+              </For>
             </div>
           </Show>
         </div>

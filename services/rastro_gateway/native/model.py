@@ -16,6 +16,12 @@ class PositionFix:
     time: int  # epoch s efetivo (válido ou fallback)
     time_source: str  # 'device' | 'gateway'
     time_flag: str | None  # None | 'invalid_zero' | 'invalid_past' | 'invalid_future'
+    # qualidade do fix do firmware (None = ausente ou 0 no protobuf)
+    pdop: float | None = None
+    hdop: float | None = None
+    ground_speed_ms: float | None = None
+    ground_track_deg: float | None = None
+    precision_bits: int | None = None
 
 
 @dataclass

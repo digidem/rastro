@@ -1,5 +1,5 @@
 // biome-ignore lint/style/useFilenamingConvention: convenção de arquivo de teste em Solid
-import { cleanup, render, screen } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MapContext } from "../../providers/MapProvider.jsx";
 import { LocalStateContext } from "../../providers/index.js";
@@ -64,5 +64,49 @@ describe("NodeInspector badges de alerta", () => {
     ));
     expect(screen.queryByText(BADGE_RE)).toBeNull();
     expect(screen.queryByText("📡 Sem sinal (>1h)")).toBeNull();
+  });
+});
+
+describe("NodeInspector — Fixes brutos (T5)", () => {
+  beforeEach(() => {
+    LocalState.resetViewerState();
+    LocalState.setMostrarFixesBrutos(false);
+    LocalState.setNodes([NODE]);
+  });
+
+  const montar = () =>
+    render(() => (
+      <MapContext.Provider value={{ centerOnNode: vi.fn() } as never}>
+        <LocalStateContext.Provider value={LocalState}>
+          <NodeInspector node={() => NODE} nowMs={() => Date.now()} />
+        </LocalStateContext.Provider>
+      </MapContext.Provider>
+    ));
+
+  it("sem trilha carregada, o switch não aparece", () => {
+    montar();
+    expect(screen.queryByText("Fixes brutos")).toBeNull();
+  });
+
+  it("com trilha carregada, mostra o switch e reflete o estado", () => {
+    LocalState.setTrilhaCarregada(true);
+    montar();
+    const chave = screen.getByRole("checkbox", { name: "Fixes brutos" });
+    expect((chave as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("alternar o switch atualiza o store", () => {
+    LocalState.setTrilhaCarregada(true);
+    montar();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Fixes brutos" }));
+    expect(LocalState.localState.mostrarFixesBrutos).toBe(true);
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: "Fixes brutos",
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    LocalState.setMostrarFixesBrutos(false);
   });
 });

@@ -17,10 +17,24 @@ export class ErrOffline extends Error {
   }
 }
 
+/** Janela [fromMs, toMs] de GET /track; a API devolve no máximo TRACK_LIMITE fixes (os mais novos). */
+export interface JanelaTrack {
+  fromMs: number;
+  toMs: number;
+}
+
+/** Teto de fixes por chamada de /track (`_MAX_LIMIT` da API). */
+export const TRACK_LIMITE = 2000;
+
 export interface TrackPoint {
   pos: LngLat;
   posTime: string | null;
   sats: number | null;
+  /** Qualidade do fix (migração 03); ausente quando a API não a enviou. */
+  pdop?: number;
+  hdop?: number;
+  speedMs?: number;
+  trackDeg?: number;
 }
 
 export type NodeEventKind = "pos" | "telem" | "msg";
@@ -79,7 +93,11 @@ export interface ApiClient {
   latest(): Promise<NodeInfo[]>;
   /** Alertas ativos (GET /api/alerts); API sem a rota → []. */
   alerts(): Promise<NodeAlert[]>;
-  track(node: string): Promise<{
+  /** Fixes do nó; sem `janela` a API usa as últimas 24 h. */
+  track(
+    node: string,
+    janela?: JanelaTrack,
+  ): Promise<{
     line: LngLat[] | null;
     lines: LngLat[][];
     points: TrackPoint[];
@@ -270,6 +288,28 @@ const adicionarSegmento = (
   }
 };
 
+/** Qualidade do fix (migração 03): só as chaves presentes; campo ausente não vira null. */
+const qualidadeDoPonto = (p: Record<string, unknown>): Partial<TrackPoint> => {
+  const q: Partial<TrackPoint> = {};
+  const pdop = num(p.pdop);
+  const hdop = num(p.hdop);
+  const speedMs = num(p.speed_ms);
+  const trackDeg = num(p.track_deg);
+  if (pdop !== null) {
+    q.pdop = pdop;
+  }
+  if (hdop !== null) {
+    q.hdop = hdop;
+  }
+  if (speedMs !== null) {
+    q.speedMs = speedMs;
+  }
+  if (trackDeg !== null) {
+    q.trackDeg = trackDeg;
+  }
+  return q;
+};
+
 const trackFromFeature = (
   f: ApiFeature,
   acc: { line: LngLat[] | null; lines: LngLat[][]; points: TrackPoint[] },
@@ -291,6 +331,7 @@ const trackFromFeature = (
         pos,
         posTime: str(p.pos_time),
         sats: num(p.sats),
+        ...qualidadeDoPonto(p),
       });
     }
   }
@@ -395,9 +436,18 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
       return out;
     },
 
-    async track(node) {
+    async track(node, janela) {
+      let qs = "";
+      if (janela !== undefined) {
+        const q = new URLSearchParams({
+          from: new Date(janela.fromMs).toISOString(),
+          to: new Date(janela.toMs).toISOString(),
+          limit: String(TRACK_LIMITE),
+        });
+        qs = `?${q.toString()}`;
+      }
       const fc = await pedir(
-        `/api/nodes/${encodeURIComponent(node)}/track`,
+        `/api/nodes/${encodeURIComponent(node)}/track${qs}`,
         opts.getToken?.(),
       );
       const acc: {
