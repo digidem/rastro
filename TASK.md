@@ -114,7 +114,7 @@ Arquivos: `services/rastro_api/api/clima_texto.py`, `services/rastro_api/tests/t
 
 - `LIMITE_BYTES = 200`, `META_BYTES = 180`.
 - `compor(regional: str, dia: datetime.date, hora: str, r: Resumo) -> str` monta o texto
-  (`hora` = `"08h"`) exatamente como a seção "Texto" e aplica as reduções em ordem só
+  (`hora` = rótulo `"08h"` ou `"08h30"`; o passo 2 da redução remove ` {hora}`) exatamente como a seção "Texto" e aplica as reduções em ordem só
   enquanto `len(texto.encode("utf-8")) > LIMITE_BYTES`. Corte final por bytes sem
   quebrar caractere UTF-8. Acima de `META_BYTES` no fim: `log.warning` com o tamanho
   (nunca o texto). Logger: `logging.getLogger("rastro_api.clima")`.
@@ -132,21 +132,35 @@ Arquivos: `services/rastro_api/api/clima_config.py`, `services/rastro_api/tests/
 - `@dataclass(frozen=True) class BarcoClima`: `boat_id: str`, `regional: str`,
   `reserva: tuple[float, float] | None` (lat, lon).
 - `@dataclass(frozen=True) class ConfigClima`: `ativo: bool`, `barcos: tuple[BarcoClima, ...]`,
-  `hora: int` (0–23), `minuto: int`, `intervalo_s: int`, `ttl_h: int`,
-  `max_idade_h: int`, `utc_offset_h: int`, `api_url: str`.
+  `hora: int`, `minuto: int`, `intervalo_s: int`, `ttl_h: int`, `max_idade_h: int`,
+  `utc_offset_h: int`, `api_url: str`. Propriedade `rotulo_hora -> str`: `"08h"` quando
+  `minuto == 0`, senão `"08h30"` (é o que vai no texto no lugar de `08h`).
 - `BARCOS_PADRAO`: os 5 da tabela, na ordem da tabela, sem reserva.
-- `carregar(env: Mapping[str, str]) -> ConfigClima`:
-  - `RASTRO_CLIMA_ENABLED` (padrão `"0"`; só `"1"` liga).
-  - `RASTRO_CLIMA_BARCOS`: JSON lista de `{"boat_id", "regional", "lat"?, "lon"?}`.
-    Ausente/vazia → `BARCOS_PADRAO`. Inválida (JSON ruim, não-lista, item sem
-    `boat_id`/`regional`, `lat` sem `lon` ou fora de ±90/±180, boat_id repetido) →
-    `log.error` SEM coordenadas e `ativo=False` (a API sobe normal, só sem previsão).
-  - `RASTRO_CLIMA_HORA` `"HH:MM"` (padrão `"08:00"`), `RASTRO_CLIMA_INTERVALO_S` (60),
-    `RASTRO_CLIMA_TTL_H` (6), `RASTRO_CLIMA_MAX_IDADE_H` (48), `RASTRO_CLIMA_UTC_OFFSET_H`
-    (-5), `RASTRO_CLIMA_API_URL` (URL padrão do T1). Valor inválido → `log.error` e
-    `ativo=False`.
-- Testes: padrão; JSON custom com e sem reserva; cada caso inválido desliga; a
-  mensagem de log de JSON inválido não contém coordenadas (`caplog`).
+- `carregar(env: Mapping[str, str]) -> ConfigClima`. Qualquer valor inválido →
+  `log.error` (logger `rastro_api.clima`) SEM coordenadas e SEM o JSON cru, e
+  `ativo=False` (a API sobe normal, só sem previsão). Regras:
+  - `RASTRO_CLIMA_ENABLED`: só `"1"` liga (padrão `"0"`).
+  - `RASTRO_CLIMA_BARCOS`: ausente ou só espaços → `BARCOS_PADRAO`. Senão tem de ser
+    uma lista JSON NÃO vazia de objetos. Cada objeto: `boat_id` e `regional` strings
+    não vazias depois de `strip()` (guarde sem os espaços); `boat_id` casa
+    `^[a-z0-9-]+$`; sem `boat_id` repetido. `lat` e `lon` opcionais mas **juntos**
+    (um sem o outro é inválido); cada um `int` ou `float` (NÃO `bool`), finito
+    (`math.isfinite`), `-90 ≤ lat ≤ 90`, `-180 ≤ lon ≤ 180`. Chaves extras são ignoradas.
+  - `RASTRO_CLIMA_HORA`: `"HH:MM"` (regex `^\d{2}:\d{2}$`), `00 ≤ HH ≤ 23`,
+    `00 ≤ MM ≤ 59` (padrão `"08:00"`).
+  - Inteiros (`int(texto)`; texto não inteiro é inválido): `RASTRO_CLIMA_INTERVALO_S`
+    (padrão 60, `1..3600`), `RASTRO_CLIMA_TTL_H` (6, `1..12`),
+    `RASTRO_CLIMA_MAX_IDADE_H` (48, `1..720`), `RASTRO_CLIMA_UTC_OFFSET_H` (-5, `-12..14`).
+  - O último slot (`hora:minuto + (n_barcos-1) * intervalo_s`) tem de cair no MESMO dia
+    local (antes de 24:00); senão inválido. Assim cada envio pertence a um único dia.
+  - `RASTRO_CLIMA_API_URL`: padrão `clima_previsao.URL_PADRAO`; tem de começar com
+    `https://` ou `http://`.
+- Testes: padrão (5 barcos, 08:00, `rotulo_hora == "08h"`); `"08:30"` → `"08h30"`;
+  JSON custom com e sem reserva; strings com espaços são aparadas; CADA caso inválido
+  acima desliga (parametrize), incluindo `lat: true`, `lat: NaN` (via `float("nan")` não
+  existe em JSON: use `"lat": 1e999`, que vira `inf`), lista vazia, `"23:59"` com 5
+  barcos (atravessa o dia); a mensagem de log nunca contém os números das coordenadas
+  (`caplog`).
 
 ## T4 — Agenda diária: `api/clima_agenda.py` + consultas
 
@@ -154,10 +168,17 @@ Arquivos: `services/rastro_api/api/clima_agenda.py`, `services/rastro_api/api/qu
 (só ACRESCENTAR funções/SQL no fim; não alterar as existentes),
 `services/rastro_api/tests/test_clima_agenda.py`.
 
-Consultas novas em `queries.py`:
+### Regra de conexões (importante)
 
-- `ultima_posicao_barco(conn, boat_id) -> dict | None` → `{lat, lon, pos_time}` do fix
-  mais novo entre os nós com vínculo aberto do barco:
+psycopg recusa mudar `conn.read_only` com transação aberta, e qualquer SELECT abre uma.
+Por isso **cada função de `queries.py` abaixo recebe sua própria conexão**: a agenda faz
+`with self.pool.connection() as conn:` separado para (a) leituras, e outro para (b) a
+escrita. A busca HTTP acontece FORA de qualquer conexão (não segure conexão do pool
+durante até 15 s de rede).
+
+### Consultas novas em `queries.py`
+
+- `ultima_posicao_barco(conn, boat_id) -> dict | None` → `{lat, lon, pos_time}`:
   ```sql
   SELECT v.lat, v.lon, v.pos_time
   FROM boat_devices bd
@@ -166,48 +187,81 @@ Consultas novas em `queries.py`:
   ORDER BY v.pos_time DESC
   LIMIT 1
   ```
-- `enfileirar_clima(conn, boat_id, texto, expires_at, desde) -> int | None`: numa
-  transação READ WRITE (mesmo padrão de `insert_outbox_message`, inclusive restaurar
-  `read_only`): `SELECT pg_advisory_xact_lock(hashtext('rastro-clima'))`; se já existe
-  `chat_outbox` com `boat_id = %s AND created_by = 'clima' AND created_at >= %s`
-  (`desde`) → devolve `None`; senão insere (`created_by='clima'`) e devolve o `id`.
-  O lock + checagem tornam o envio idempotente mesmo com 2 instâncias da API.
-- `clima_ja_enfileirado(conn, boat_id, desde) -> bool` (mesma checagem, só leitura;
-  usada para não buscar previsão à toa).
+- `clima_ja_enfileirado(conn, boat_id, desde) -> bool`: existe `chat_outbox` com
+  `boat_id = %s AND created_by = 'clima' AND created_at >= %s`. Só leitura.
+- `enfileirar_clima(conn, boat_id, texto, expires_at, desde, intervalo_s) -> int | None`:
+  conexão recém-tirada do pool, mesmo padrão de `insert_outbox_message` (vira
+  `read_only = False`, `with conn.transaction():`, restaura `read_only` no `finally`).
+  Dentro da transação, nesta ordem:
+  1. `SELECT pg_advisory_xact_lock(hashtext('rastro-clima'))`
+  2. já existe linha `clima` deste barco com `created_at >= desde` → devolve `None`;
+  3. `SELECT max(created_at) FROM chat_outbox WHERE created_by = 'clima'`; se
+     `now() - max < intervalo_s` segundos → devolve `None` (espaçamento PERSISTENTE:
+     vale entre reinícios e entre duas instâncias da API; use `now()` do Postgres na
+     comparação, ex.: `SELECT max(created_at) > now() - make_interval(secs => %s)`);
+  4. `INSERT ... (boat_id, text, created_by, expires_at) VALUES (%s, %s, 'clima', %s) RETURNING id`
+     → devolve o id.
 
-`clima_agenda.py`:
+### `clima_agenda.py`
 
-- `class AgendaClima(pool, cfg: ConfigClima, *, buscar=clima_previsao.buscar, agora=None)`
-  (`agora` padrão `lambda: datetime.now(timezone.utc)`).
-- `rodar_uma_vez() -> int` (quantos enfileirou, 0 ou 1). Com `tz = timezone(timedelta(hours=cfg.utc_offset_h))`
-  e `local = agora().astimezone(tz)`:
-  1. Envia **no máximo um** barco por chamada, e só se já passaram `cfg.intervalo_s` desde
-     o último envio desta instância (garante o espaçamento de 1 min mesmo quando a API
-     reinicia às 08:10 com os 5 atrasados).
-  2. Para cada barco `i` na ordem da config: `slot = local.replace(hora, minuto, 0, 0) + i*intervalo_s`.
-     Pula se `local < slot` ou `local > slot + ttl_h`. `desde` = 00:00 local do dia, em UTC.
-  3. Pula se `clima_ja_enfileirado`, ou se o barco está em espera de nova tentativa
-     (`self._tentar_depois[boat_id] > agora`).
-  4. Posição: `ultima_posicao_barco`; idade > `max_idade_h` ou ausente → `reserva`;
-     sem nada → `log.warning("clima: %s sem posição recente; pulado hoje", boat_id)`,
-     marca o barco como pulado no dia (não tenta de novo até o dia seguinte).
-  5. `buscar(lat, lon, base=cfg.api_url)` → `resumir` → `compor(regional, local.date(), f"{cfg.hora:02d}h", r)`.
-     `PrevisaoErro`/qualquer exceção → `log.warning` com `boat_id` e o TIPO/mensagem do
-     erro (já sem coordenadas) e `_tentar_depois[boat_id] = agora + 5 min`.
-  6. `enfileirar_clima(..., expires_at = slot (UTC) + ttl_h, desde)`; se devolveu id,
-     `log.info("clima: previsão enfileirada para %s (id=%s, %d bytes)", ...)` e retorna 1.
-  - Conexão: `with self.pool.connection() as conn:` por barco processado.
-- `iniciar(stop: threading.Event, passo_s: float = 30.0) -> threading.Thread`: thread
-  daemon `rastro-clima` que chama `rodar_uma_vez()` a cada `passo_s` até `stop`;
-  exceção inesperada vira `log.error` com o tipo e o laço segue.
-- Testes (pool/conexão falsos que gravam as consultas; `agora` fixo; `buscar` falso):
-  antes das 08:00 nada; 08:00 → só o barco 0; 08:00:30 na mesma instância → nada
-  (intervalo); 08:01 → barco 1; reinício às 08:10 → um por chamada, respeitando
-  intervalo; depois de 08:00 + 6 h → nada; já enfileirado → não chama `buscar`; fix
-  velho com reserva usa a reserva; fix velho sem reserva pula o dia e não loga
-  coordenadas; `buscar` falhando → espera 5 min e tenta de novo; `expires_at` = slot + 6 h;
-  `desde` = meia-noite local em UTC (05:00 UTC); `enfileirar_clima` devolvendo `None`
-  (outra instância enviou) → retorna 0 sem erro.
+- `class AgendaClima(pool, cfg: ConfigClima, *, buscar=clima_previsao.buscar, agora=None, parar: threading.Event | None = None)`
+  (`agora` padrão `lambda: datetime.now(timezone.utc)`; `parar` padrão `threading.Event()`).
+- Estado em memória (só otimização; a verdade está no banco):
+  `self._pulados: dict[str, date]` (boat_id → dia local em que foi pulado) e
+  `self._tentar_depois: dict[str, datetime]`. Entrada de outro dia é ignorada (e pode
+  ser apagada), então a virada do dia limpa sozinha.
+- `rodar_uma_vez() -> int` (0 ou 1 enfileirado). `tz = timezone(timedelta(hours=cfg.utc_offset_h))`,
+  `agora_utc = agora()`, `local = agora_utc.astimezone(tz)`, `hoje = local.date()`,
+  `base = local.replace(hour=cfg.hora, minute=cfg.minuto, second=0, microsecond=0)`,
+  `desde = local.replace(hour=0, minute=0, second=0, microsecond=0)` (aware; o psycopg
+  converte). Percorre os barcos na ordem; processa **no máximo um** por chamada:
+  1. `slot = base + timedelta(seconds=i * cfg.intervalo_s)`;
+     `expira = slot + timedelta(hours=cfg.ttl_h)`. Pula se `local < slot` ou
+     `local >= expira` (o consumidor expira na igualdade).
+  2. Pula se `self._pulados.get(boat_id) == hoje` ou `self._tentar_depois.get(boat_id, mínimo) > agora_utc`.
+  3. Conexão de leitura: `clima_ja_enfileirado(conn, boat_id, desde)` → pula se True;
+     senão `ultima_posicao_barco`. Fecha a conexão.
+  4. Posição: fix ausente ou `agora_utc - pos_time > max_idade_h` → `reserva`; sem as
+     duas → `log.warning("clima: %s sem posição recente; pulado hoje", boat_id)`,
+     `self._pulados[boat_id] = hoje`, segue para o próximo barco.
+  5. HTTP fora de conexão: `dados = buscar(lat, lon, base=cfg.api_url)`;
+     `texto = compor(regional, hoje, cfg.rotulo_hora, resumir(dados))`.
+     `PrevisaoErro` → `log.warning("clima: %s falhou: %s", boat_id, str(erro))`.
+     Qualquer OUTRA exceção → loga SÓ o tipo (`type(erro).__name__`), nunca `str()`
+     (pode conter URL com coordenadas). Nos dois casos
+     `self._tentar_depois[boat_id] = agora_utc + 5 min` e segue para o próximo barco.
+  6. Depois do HTTP: se `self.parar.is_set()` → retorna 0 sem escrever. Recalcule
+     `agora()`; se agora `>= expira` → retorna 0.
+  7. Conexão NOVA de escrita: `id = enfileirar_clima(conn, boat_id, texto, expira, desde, cfg.intervalo_s)`.
+     `None` → retorna 0 (outra instância enviou, ou espaçamento ainda não venceu: a
+     próxima chamada tenta de novo). Senão
+     `log.info("clima: previsão enfileirada para %s (id=%s, %d bytes)", boat_id, id, len(texto.encode()))`
+     e retorna 1.
+  - Erro de banco (qualquer exceção nos passos 3 ou 7) → `log.error` só com o tipo e
+    retorna 0.
+- `iniciar(passo_s: float = 30.0) -> threading.Thread`: thread daemon `rastro-clima`;
+  laço `while not self.parar.is_set(): try rodar_uma_vez() except Exception → log.error(tipo); self.parar.wait(passo_s)`.
+- Testes (pool falso cujas conexões **levantam erro se `read_only` mudar com
+  "transação aberta"**, i.e. depois de qualquer `execute` fora de `transaction()`;
+  `agora` controlável; `buscar` falso):
+  antes das 08:00 nada; 08:00 → só barco 0; 08:01 → barco 1; 08:10 com os 5 atrasados →
+  um por chamada; o barco 4 (slot 08:04) ainda sai às 14:03:59 e não às 14:04:00;
+  `clima_ja_enfileirado` True → `buscar` não é chamado; fix velho com reserva usa a
+  reserva; fix velho sem reserva pula o dia, não loga coordenadas, e volta a ser tentado
+  no dia seguinte (dois dias consecutivos no mesmo objeto); `PrevisaoErro` → espera 5 min;
+  exceção genérica cuja mensagem contém `"-5.0"` e uma URL → log tem só o tipo;
+  `parar` setado durante o `buscar` → nada escrito; `expires_at == slot + 6 h`;
+  `desde` = meia-noite local (05:00 UTC); `enfileirar_clima` → `None` retorna 0 sem erro;
+  duas `AgendaClima` sobre o mesmo pool falso cujo `enfileirar_clima` simula o lock
+  (estado compartilhado) → nunca duas inserções com menos de `intervalo_s`.
+  Testes das três consultas com conexão falsa: SQL e parâmetros, e a ordem lock →
+  checagem do barco → checagem do espaçamento → INSERT.
+
+### Limitação aceita (não implementar)
+
+Espaçar as inserções não garante espaçar a transmissão: se o `rastro-chat` ficar fora do
+ar, as 5 linhas acumulam e saem juntas quando ele volta (o `claim_outbox` pega até 10).
+Fica registrado na lição do AGENTS.md (T5).
 
 ## T5 — Ligar na API e documentar
 
@@ -215,16 +269,22 @@ Arquivos: `services/rastro_api/api/main.py`, `services/rastro_api/tests/test_cli
 `AGENTS.md`, `docs/native-ingest-design.md`.
 
 - No `lifespan` de `main.py`: depois de abrir o pool, `cfg = clima_config.carregar(os.environ)`;
-  se `cfg.ativo`, cria `AgendaClima(pool, cfg)` e `iniciar(stop)`; log
-  `"previsão do tempo: ligada (%d barcos, %02d:%02d UTC%+d)"` ou `"previsão do tempo: desligada"`.
-  No `finally`, `stop.set()` e `join(timeout=5)` ANTES de `pool.close()`.
+  se `cfg.ativo`, cria `agenda = AgendaClima(pool, cfg)` e `thread = agenda.iniciar()`;
+  log `"previsão do tempo: ligada (%d barcos, %s, UTC%+d)"` (barcos, `cfg.rotulo_hora`,
+  offset) ou `"previsão do tempo: desligada"`.
+  No `finally`, ANTES de `pool.close()`: `agenda.parar.set()` e `thread.join(timeout=20)`
+  (maior que o timeout HTTP de 15 s); se a thread ainda estiver viva, `log.warning`.
+  Todo o encerramento dentro de `try/finally` para `pool.close()` sempre rodar.
 - Teste: com `RASTRO_CLIMA_ENABLED` ausente a agenda não é criada (monkeypatch de
-  `AgendaClima` para detectar); com `"1"` é criada e parada no shutdown. Sem Postgres:
-  siga o padrão de testes existentes que sobem o app sem banco, ou monkeypatch do
-  `ConnectionPool`.
+  `AgendaClima` para detectar); com `"1"` é criada, `iniciar` chamado, e no shutdown
+  `parar` é setado antes de `pool.close()` (monkeypatch do `ConnectionPool` para
+  registrar a ordem). Use `TestClient(app)` como context manager para rodar o lifespan.
 - `AGENTS.md`: nova lição **12. Previsão do tempo diária** (curta, no estilo das outras):
-  onde roda (thread na API, papel viewer), envs `RASTRO_CLIMA_*` e padrões, idempotência
-  por `created_by='clima'` + advisory lock, espaçamento de 1 min, tamanho em bytes, posição
-  exata vai ao Open-Meteo por decisão do dono (2026-10-09), desligada por padrão.
+  roda como thread na API (papel viewer: lê posição, insere em `chat_outbox`); envs
+  `RASTRO_CLIMA_*` e padrões; desligada por padrão; idempotência e espaçamento de 1 min
+  garantidos no banco (advisory lock + `created_by='clima'`); uma tentativa enfileirada
+  por barco por dia (sem garantia de recebimento); tamanho medido em bytes; posição
+  exata vai ao Open-Meteo por decisão do dono (2026-10-09); limitação: chat fora do ar
+  acumula e envia junto.
 - `docs/native-ingest-design.md`: perto de `RASTRO_CHAT_TTL_SECS`, uma linha citando as
-  envs `RASTRO_CLIMA_*` e apontando para a lição 12.
+  envs `RASTRO_CLIMA_*` e apontando para a lição 12 do AGENTS.md.
