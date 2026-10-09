@@ -204,3 +204,44 @@ def test_run_alert_cycle_aposenta_kinds_removidos(monkeypatch):
     assert por_kind["gateway_mudo"]["cleared_at"] is None  # ativo permanece
     # idempotente: 2º ciclo não aposenta nada de novo
     assert alerts.run_alert_cycle(db, NOW)["aposentados"] == 0
+
+
+# --- guard de leitura plausível (preserve-until-plausible) ----------------------
+
+def test_bateria_lixo_nao_dispara_e_nao_limpa(monkeypatch):
+    monkeypatch.setenv(alerts.ENV_BATTERY_LOW_PCT, "20")
+    monkeypatch.setenv(alerts.ENV_BATTERY_MIN_VOLTS, "3.55")
+    fixos = {FIXO: alerts.TIPO_FIXO}
+    lixo = {FIXO: {"battery_level": 101.0, "voltage": -0.001}}
+    # sem estado ativo: lixo não dispara
+    assert alerts.evaluate(NOW, [], {}, lixo, fixos) == []
+    # com alerta ativo: lixo NÃO limpa (preserva até leitura plausível)
+    ativa = [_linha_ativa("bateria_critica", FIXO)]
+    assert alerts.evaluate(NOW, ativa, {}, lixo, fixos) == []
+
+
+def test_bateria_campo_lixo_com_campo_plausivel(monkeypatch):
+    monkeypatch.setenv(alerts.ENV_BATTERY_LOW_PCT, "20")
+    monkeypatch.setenv(alerts.ENV_BATTERY_MIN_VOLTS, "3.55")
+    fixos = {FIXO: alerts.TIPO_FIXO}
+    # % impossível + tensão plausível saudável → limpa (há evidência plausível)
+    ativa = [_linha_ativa("bateria_critica", FIXO)]
+    leitura = {FIXO: {"battery_level": 101.0, "voltage": 4.10}}
+    assert [e.action for e in alerts.evaluate(NOW, ativa, {}, leitura, fixos)] == ["clear"]
+    # % plausível baixo + tensão impossível → dispara
+    leitura = {FIXO: {"battery_level": 5.0, "voltage": -1.0}}
+    evs = alerts.evaluate(NOW, [], {}, leitura, fixos)
+    assert [e.kind for e in evs] == ["bateria_critica"]
+
+
+def test_bateria_nan_infinito_sao_lixo(monkeypatch):
+    monkeypatch.setenv(alerts.ENV_BATTERY_LOW_PCT, "20")
+    monkeypatch.setenv(alerts.ENV_BATTERY_MIN_VOLTS, "3.55")
+    fixos = {FIXO: alerts.TIPO_FIXO}
+    ativa = [_linha_ativa("bateria_critica", FIXO)]
+    # NaN/Inf: tratados como lixo igual a valores fora de faixa
+    leitura = {FIXO: {"battery_level": float("nan"), "voltage": float("inf")}}
+    assert alerts.evaluate(NOW, ativa, {}, leitura, fixos) == []
+    # NaN num campo não impede o outro de limpar (há evidência plausível)
+    leitura = {FIXO: {"battery_level": float("nan"), "voltage": 4.10}}
+    assert [e.action for e in alerts.evaluate(NOW, ativa, {}, leitura, fixos)] == ["clear"]

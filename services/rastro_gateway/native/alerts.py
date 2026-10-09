@@ -29,6 +29,7 @@ Semântica de cada kind (detection = condição ativa agora):
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 
@@ -124,6 +125,21 @@ def _chave(kind: str, sujeito: int) -> str:
     return f"{kind}:{sujeito}"
 
 
+def _campo_valido(valor: object, minimo: float, maximo: float | None) -> float | None:
+    """Número finito dentro dos limites; ausente/lixo → None.
+
+    Leitura IMPOSSÍVEL (ex.: ``101%``/``-0.001 V`` de sensor quebrado) não é
+    evidência de nada: não dispara e — pelo mesmo motivo — não limpa
+    (preserve-until-plausible, consulta ao senior 2026-10-08).
+    """
+    if not isinstance(valor, (int, float)) or isinstance(valor, bool):
+        return None
+    v = float(valor)
+    if not math.isfinite(v) or v < minimo or (maximo is not None and v > maximo):
+        return None
+    return v
+
+
 def evaluate(
     now: float,
     state_rows: list,
@@ -137,7 +153,8 @@ def evaluate(
     ``key/node_num/kind/since/cleared_at`` (epochs float ou None).
     ``last_uplink_by_gateway``: {gateway_num: epoch_do_último_uplink}.
     ``node_power_by_node``: {node_num: dict} com ``battery_level``/``voltage``
-    (None = sem leitura daquele campo; ausente do dict = sem telemetria).
+    (None = sem leitura daquele campo; ausente do dict = sem telemetria;
+    valores impossíveis — p.ex. ``101%``/``-0.001 V`` — são descartados como lixo).
     ``node_kinds``: {node_num: 'fixed' | 'mobile'}; ausente = móvel.
     """
     cfg = _config()
@@ -146,28 +163,41 @@ def evaluate(
 
     for gw, ultimo in sorted(last_uplink_by_gateway.items()):
         mudo = (now - ultimo) > cfg.gateway_silent_secs
-        deteccoes[_chave(KIND_GATEWAY_MUDO, gw)] = (KIND_GATEWAY_MUDO, gw, mudo)
+        deteccoes[_chave(KIND_GATEWAY_MUDO, gw)] = (
+            KIND_GATEWAY_MUDO,
+            gw,
+            "critica" if mudo else "saudavel",
+        )
 
     for num, leitura in sorted((node_power_by_node or {}).items()):
         fixo = (node_kinds or {}).get(num, TIPO_MOVEL) == TIPO_FIXO
         # bateria_critica: só classe fixa (repetidor/base solar). "OU" entre os
-        # dois limiares: cada um dispara sozinho; None nunca dispara sozinho.
-        critica = False
+        # dois limiares: cada um dispara sozinho. Campos impossíveis são
+        # descartados ANTES do limiar; lixo puro (nenhum campo plausível) não
+        # dispara E não limpa — preserva o estado ativo (último conhecido).
+        estado = "ignora"
         if fixo and leitura:
-            bateria = leitura.get("battery_level")
-            volts = leitura.get("voltage")
-            critica = (bateria is not None and bateria < cfg.battery_low_pct) or (
+            bateria = _campo_valido(leitura.get("battery_level"), 0.0, 100.0)
+            volts = _campo_valido(leitura.get("voltage"), 0.0, None)
+            if (bateria is not None and bateria < cfg.battery_low_pct) or (
                 volts is not None and volts < cfg.battery_min_volts
-            )
+            ):
+                estado = "critica"
+            elif bateria is not None or volts is not None:
+                # pelo menos um campo plausível, nenhum abaixo do limiar
+                estado = "saudavel"
         deteccoes[_chave(KIND_BATERIA_CRITICA, num)] = (
             KIND_BATERIA_CRITICA,
             num,
-            critica,
+            estado,
         )
 
     eventos: list[AlertEvent] = []
     for key in sorted(deteccoes):
-        kind, sujeito, detectado = deteccoes[key]
+        kind, sujeito, estado = deteccoes[key]
+        if estado == "ignora":
+            continue  # sem evidência plausível: preserva raise/clear como está
+        detectado = estado == "critica"
         ativo = ativos.get(key)
         if detectado and ativo is None:
             eventos.append(AlertEvent(action="raise", kind=kind, key=key, node_num=sujeito))

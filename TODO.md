@@ -275,6 +275,16 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
   5. Deploy realizado no CapRover (`scripts/rastro_caprover.py deploy-image --execute`) para todos os cinco apps de produção (`rastro-ingest`, `rastro-api`, `rastro-chat`, `rastro-broker`, `rastro`).
   6. Validação em produção: `https://rastro.javari.guardianconnector.net` respondendo HTTP/2 200, `/api/healthz` OK (4.2ms) e sessões ativas no PostgreSQL `rastro`.
   7. Template one-click atualizado para `defaultValue: '0.8.4'` e commits enviados para `origin/main`.
+- [x] **Release 0.8.5/0.8.6 — Alertas de Campo + Retenção Eterna (2026-10-08)**:
+  1. Motor enxuto: só `gateway_mudo` + `bateria_critica` (nós fixos via `RASTRO_FIXED_NODES`, `<20%` ou `<3,55 V` em `node_power`); `sem_fix`/`posicao_parada`/`movel_ausente`/janela noturna removidos; kinds aposentados limpos por `Db.retire_alert_kinds` (idempotente, preserva histórico). Semântica last-known mantida por design (consulta Opus 5.5; badge mostra a idade da leitura).
+  2. Guard preserve-until-plausible: leitura impossível (ex. `101%`/`-0.001 V`) não dispara E não limpa; só leitura plausível saudável limpa (consulta senior gpt-6.1-sol). NaN/Inf = lixo.
+  3. Retenção eterna: `purge_expired` e `RASTRO_*_RETENTION_DAYS` removidos (R6 resolvida); só `prune_packet_seen` (dedupe 7 dias, hook).
+  4. API `GET /api/alerts` (array autenticado; `last_seen` de `gateway_status.last_uplink`; grant aditivo `gateway_status`→`rastro_viewer` nos 3 scripts de schema).
+  5. Viewer: polling + badges 📡/🪫 com idade da leitura; fixtures `dev:test`.
+  6. Suítes: gateway 300, API 101, web 233; sim `F5 SIM: PASS`.
+  7. Migração aditiva aplicada com backup (`rastro_pre_0.8.5_2026-10-08_154519.dump`) e rehearsal em container descartável (dump do Azure exige role `azure_pg_admin` + DB `OWNER rastro_owner`; ver skill rastro-caprover).
+  8. Imagens 0.8.5/0.8.6 publicadas; deploy `api`/`ingest`/`web` 0.8.5 (broker/chat 0.8.4 intocados); `RASTRO_ALERTS_ENABLED=1` + `RASTRO_FIXED_NODES=!f2664e10` no ingest; primeiro ciclo: `gateway_mudo` (medio-javari-barco-1, real) + `bateria_critica` (atalaia-teto, leitura lixo — motiva o guard).
+  9. Template `caprover-one-click-apps` default 0.8.5 (`0079106`); 0.8.6 sobe com o guard.
 - [ ] Verificar o broker em produção: sha256 de `/rastro/*` no contêiner contra `broker/` local (só leitura) e nomes (não valores) das variáveis do app.
 - [ ] `univaja-lora` sem remoto git (`fee73ba`, `b08dcf5` só locais). Docs/AGENTS/TUTORIAL do 30 caracteres estão na árvore, misturados com o rename EVU de outra sessão, não commitados. Rodar `fleet_sync.py --check` antes de commitar o `fleet_sync.py` modificado.
 - [x] Web: Todos os 189 testes unitários passando em 13 arquivos (Vitest). Suporte a dados reais via proxy HTTPS/local e auto-login em ambiente de desenvolvimento.
@@ -286,8 +296,8 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 - [ ] **Push** (nenhum feito): `rastro` (commits `cdb3a30`, `0c29c8f`, tag local `v0.8.0`), `caprover-one-click-apps` (`aee41cc`, branch `rastro-0.5.1`), `univaja-lora` (`b08dcf5`). Depois do push do `rastro`, conferir o workflow `images` verde (a API e o viewer ainda não foram rodados no CI desde o 0.8.0).
 - [ ] Certificado TLS confiável (Let's Encrypt): só necessário para o app iOS (Admin Móvel); os rádios não validam. Exige o devops: copiar `fullchain.pem`/`privkey.pem` do CapRover para um volume em `/mosquitto/secrets` do broker (dono 1883, 0400), reiniciar o broker, e agendar cópia+restart periódicos (renovação).
 - [ ] Segurança/higiene: o dump `~/rastro-backups/rastro_pre_*.dump` contém coordenadas reais (mover/apagar; `chmod 600`); apagar `~/evu_psk.b64`; guardar `RASTRO_NATIVE_SECRET` (deriva todas as senhas dos nós) em cofre; trocar a chave EVU exige procedimento ainda NÃO documentado.
-- [ ] Decisões do dono: retenção (R6) e acesso ao servidor (R9) — só existem hooks (`RASTRO_RAW_RETENTION_DAYS`, `RASTRO_CHAT_RETENTION_DAYS`, `purge_expired`, `prune_packet_seen`; nada agendado, nada apaga). Texto do chat é sensível: definir política antes do uso rotineiro.
-- [ ] Entrega de alertas (push/e-mail) e alertas de energia (limiares de bateria; `node_power` já é gravado). O ciclo de alertas só liga com `RASTRO_ALERTS_ENABLED=1` (desligado).
+- [x] Decisão do dono R6 (retenção) RESOLVIDA 2026-10-08: histórico eterno — `purge_expired`/`RASTRO_*_RETENTION_DAYS` removidos; `prune_packet_seen` permanece hook (dedupe 7 dias). R9 (acesso ao servidor) segue aberta. Texto do chat é sensível: definir política antes do uso rotineiro.
+- [ ] Entrega de alertas (push/e-mail) — ainda NÃO implementada; o motor e a exposição (`GET /api/alerts`, badges) estão no ar desde 0.8.5, com `gateway_mudo`+`bateria_critica` e ciclo ligado em produção (`RASTRO_ALERTS_ENABLED=1`, fixo: `!f2664e10`; `atalaia-pico/torre` entra quando existir).
 - [ ] Chat: autenticação usa o token único da API (usuário «escritorio»); definir usuários reais se necessário. UI e API de chat estão no ar mas sem uso até o 1º rádio.
 - [ ] Logs de contêiner não são legíveis pela API do CapRover: diagnóstico = ler logs no painel do CapRover ou olhar o banco (`raw_envelopes`, `gateway_status`).
 - [ ] Riscos aceitos/conhecidos: replay antigo com horário inválido cai no fallback «agora» (sinalizado por `time_flag`); `rastro_ingest` também grava `virtual_gateways`/`boat_devices` (tabelas de configuração, sem coordenadas).
