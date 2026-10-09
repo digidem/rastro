@@ -1,4 +1,9 @@
 import { createStore, reconcile } from "solid-js/store";
+import {
+  JANELAS_TRILHA_H,
+  JANELA_TRILHA_PADRAO,
+  type JanelaTrilhaH,
+} from "./lib/trilhaJanela.js";
 
 /** Categoria operacional do nó; "unknown" quando o contrato não informa. */
 export type NodeKind = "boat" | "fixed_station" | "handheld" | "unknown";
@@ -114,6 +119,8 @@ interface LocalState {
   mostrarFixesBrutos: boolean;
   /** A trilha do nó selecionado já foi analisada e está no mapa (ativa o toggle de fixes). */
   trilhaCarregada: boolean;
+  /** Quantas horas de trilha buscar e desenhar (seletor do mapa). */
+  janelaTrilhaH: JanelaTrilhaH;
 }
 
 const carregarFixesBrutosPadrao = (): boolean => {
@@ -122,6 +129,16 @@ const carregarFixesBrutosPadrao = (): boolean => {
   } catch {
     // Storage indisponível (modo privado estrito, bloqueado): usa o padrão
     return false;
+  }
+};
+
+const carregarJanelaTrilhaPadrao = (): JanelaTrilhaH => {
+  try {
+    const salvo = Number(window.localStorage.getItem("rastro_janela_trilha"));
+    const opcao = JANELAS_TRILHA_H.find((h) => h === salvo);
+    return opcao ?? JANELA_TRILHA_PADRAO;
+  } catch {
+    return JANELA_TRILHA_PADRAO;
   }
 };
 
@@ -162,6 +179,7 @@ const [localState, setLocalState] = createStore<LocalState>({
   basemapMode: carregarBasemapPadrao(),
   mostrarFixesBrutos: carregarFixesBrutosPadrao(),
   trilhaCarregada: false,
+  janelaTrilhaH: carregarJanelaTrilhaPadrao(),
 });
 
 // Substitui a lista inteira (reconcile remove nós que sumiram do latest).
@@ -260,6 +278,15 @@ const setMostrarFixesBrutos = (mostrar: boolean) => {
   }
 };
 
+const setJanelaTrilhaH = (h: JanelaTrilhaH) => {
+  setLocalState("janelaTrilhaH", h);
+  try {
+    window.localStorage.setItem("rastro_janela_trilha", String(h));
+  } catch {
+    // Ignora falhas de localStorage (ex: quota ou modo privado estrito)
+  }
+};
+
 const setTrilhaCarregada = (b: boolean) => setLocalState("trilhaCarregada", b);
 
 const setNodeBearing = (nodeNum: number, bearing: number | null) => {
@@ -286,6 +313,7 @@ export const LocalState = {
   setBasemapMode,
   setMostrarFixesBrutos,
   setTrilhaCarregada,
+  setJanelaTrilhaH,
   tickNow,
   setLatestStatus,
   setAuth,

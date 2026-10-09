@@ -124,6 +124,24 @@ vi.mock("maplibre-gl", () => {
   };
 });
 
+// A paginação por janela tem teste próprio (trilha-janela.test.ts). Aqui a busca
+// vira uma chamada única de api.track: as fixtures têm horário fixo, fora da
+// janela relativa a Date.now(), e os testes contam chamadas de fetch.
+const { janelasPedidas } = vi.hoisted(() => ({
+  janelasPedidas: [] as number[],
+}));
+vi.mock("../../src/lib/trilhaJanela.js", async (original) => ({
+  ...(await original<typeof import("../../src/lib/trilhaJanela.js")>()),
+  buscarTrilhaJanela: (
+    api: { track: (n: string) => Promise<unknown> },
+    node: string,
+    horas: number,
+  ) => {
+    janelasPedidas.push(horas);
+    return api.track(node);
+  },
+}));
+
 vi.mock("pmtiles", () => ({
   // biome-ignore lint/style/useNamingConvention: nome do export do pmtiles
   Protocol: class {
@@ -209,6 +227,23 @@ afterEach(() => {
 });
 
 describe("InitializeMap — trilha", () => {
+  it("trocar o período da trilha busca de novo com a janela nova", async () => {
+    const api = {
+      track: vi.fn().mockResolvedValue({ line: null, lines: [], points: [] }),
+    } as unknown as DataValue["api"];
+    LocalState.setJanelaTrilhaH(336);
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    janelasPedidas.length = 0;
+
+    LocalState.setJanelaTrilhaH(72);
+
+    expect(janelasPedidas).toEqual([72]);
+    LocalState.setJanelaTrilhaH(336);
+  });
+
   it("seleção busca trilha e desenha LineString + pontos quando a resposta chega", async () => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     const api = {

@@ -2,6 +2,7 @@ import type { Component, JSXElement } from "solid-js";
 import { createContext, onCleanup, useContext } from "solid-js";
 import { calcularBearing } from "../lib/bearing.js";
 import { ANCORADO_MAX_MS, DWELL_PADRAO, distanciaM } from "../lib/dwell.js";
+import { limparCacheTrilhas } from "../lib/trilhaJanela.js";
 import { LocalState, type NodeInfo } from "../store.js";
 import { type ApiClient, ErrTokenInvalid, createApiClient } from "./api.js";
 
@@ -174,6 +175,8 @@ export const DataProvider: Component<{ children?: JSXElement }> = (props) => {
     LocalState.bumpPollingGeracao();
     // Âncoras de rumo são da sessão velha: não podem definir rumo na nova.
     limparAncorasDeRumo();
+    // Fatias de trilha guardadas também são da sessão velha.
+    limparCacheTrilhas();
     LocalState.setNodes([]);
     LocalState.setOnline(false);
     // Zera também a VISUALIZAÇÃO da sessão velha: filtros, status de carga e

@@ -17,6 +17,15 @@ export class ErrOffline extends Error {
   }
 }
 
+/** Janela [fromMs, toMs] de GET /track; a API devolve no máximo TRACK_LIMITE fixes (os mais novos). */
+export interface JanelaTrack {
+  fromMs: number;
+  toMs: number;
+}
+
+/** Teto de fixes por chamada de /track (`_MAX_LIMIT` da API). */
+export const TRACK_LIMITE = 2000;
+
 export interface TrackPoint {
   pos: LngLat;
   posTime: string | null;
@@ -84,7 +93,11 @@ export interface ApiClient {
   latest(): Promise<NodeInfo[]>;
   /** Alertas ativos (GET /api/alerts); API sem a rota → []. */
   alerts(): Promise<NodeAlert[]>;
-  track(node: string): Promise<{
+  /** Fixes do nó; sem `janela` a API usa as últimas 24 h. */
+  track(
+    node: string,
+    janela?: JanelaTrack,
+  ): Promise<{
     line: LngLat[] | null;
     lines: LngLat[][];
     points: TrackPoint[];
@@ -423,9 +436,18 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
       return out;
     },
 
-    async track(node) {
+    async track(node, janela) {
+      let qs = "";
+      if (janela !== undefined) {
+        const q = new URLSearchParams({
+          from: new Date(janela.fromMs).toISOString(),
+          to: new Date(janela.toMs).toISOString(),
+          limit: String(TRACK_LIMITE),
+        });
+        qs = `?${q.toString()}`;
+      }
       const fc = await pedir(
-        `/api/nodes/${encodeURIComponent(node)}/track`,
+        `/api/nodes/${encodeURIComponent(node)}/track${qs}`,
         opts.getToken?.(),
       );
       const acc: {

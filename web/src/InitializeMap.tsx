@@ -31,6 +31,7 @@ import {
 } from "./lib/nodes.js";
 import { espalharPinsSobrepostos } from "./lib/overlap.js";
 import { adicionarOverlays, fetchOverlays } from "./lib/overlays.js";
+import { buscarTrilhaJanela } from "./lib/trilhaJanela.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
 import { LocalState, type NodeKind } from "./store.js";
@@ -1268,8 +1269,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       limparParadas(map);
     }
     const target = node.nodeId || String(node.nodeNum);
-    api
-      .track(target)
+    const horas = LocalState.localState.janelaTrilhaH; // tracked: trocar a janela rebusca
+    buscarTrilhaJanela(api, target, horas)
       .then((t) => {
         if (req !== trackReq) {
           return; // seleção mudou durante o fetch
@@ -1427,9 +1428,12 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     }
 
     const req = ++boatTrackReq;
+    const horas = LocalState.localState.janelaTrilhaH; // tracked: trocar a janela rebusca
     // Busca as trilhas dos barcos em paralelo e junta em um único FeatureCollection
     Promise.allSettled(
-      barcos.map((b) => api.track(b.nodeId || String(b.nodeNum))),
+      barcos.map((b) =>
+        buscarTrilhaJanela(api, b.nodeId || String(b.nodeNum), horas),
+      ),
     ).then((resultados) => {
       // Descarta se uma nova requisição de trilhas coletivas iniciou ou se um nó foi selecionado
       if (
