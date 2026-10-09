@@ -113,10 +113,6 @@ docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
   -v /srv/rastro-backups:/backups -e RASTRO_BACKUP_DIR=/backups \
   -e RASTRO_PG_HOST=srv-captain--postgres -e RASTRO_PG_DB=rastro --env-file rastro-backup.env \
   --entrypoint /rastro/rastro_backup.sh communityfirst/rastro-pgtools:<versão>-pg<major>
-# retenção: por padrão só simula (dry-run); apagar exige confirmação explícita
-docker run --rm --network captain-overlay-network \
-  -e RASTRO_PG_HOST=srv-captain--postgres -e RASTRO_PG_DB=rastro --env-file rastro-maint.env \
-  --entrypoint python3 communityfirst/rastro-pgtools:<versão>-pg<major> /rastro/rastro_retention.py --help
 ```
 
 `rastro-backup.env` / `rastro-maint.env` (modo 600) têm só `RASTRO_PG_PASSWORD=` do papel correspondente (as senhas `maint`/`backup` anotadas no passo 3). Se o CapRover já faz backup do Postgres inteiro, avalie se precisa deste.

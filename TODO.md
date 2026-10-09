@@ -34,8 +34,8 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 **Humano (decisão, acesso físico, ou aprovação)**
 - [ ] H2 Testes de campo: escritório⇄tripulação, Starlink off/on, 5–6 barcos ao mesmo tempo, TTL.
 - [ ] H4 Mensagens do chat: histórico eterno (decidido 2026-10-08, igual às posições). Só falta decidir o procedimento de exclusão sob pedido (LGPD), se houver pedido.
-- [ ] H5 Canal de alerta (push ou e-mail) e destinatários.
-- [ ] H6 Regras de reiniciar/desligar nó remoto (quem, quais classes).
+- [x] H5 Canal de alerta: decidido 2026-10-09 — só os selos no mapa (📡/🪫), sem push nem e-mail. M3 descartado.
+- [x] H6 Regras de reiniciar/desligar aprovadas 2026-10-09: nós solares/fixos só reiniciam; desligar só com tripulação por perto; nunca factory reset remoto. Construção (M2) continua bloqueada pelo caminho de comando pela malha (tarefa 4/5).
 - [ ] H7 Confirmar limiares de bateria por classe.
 - [ ] H8 Destino do dump com coordenadas reais `~/rastro-backups/rastro_pre_0.8.5_2026-10-08_154519.dump`.
 - [ ] H9 `RASTRO_NATIVE_SECRET` guardado em cofre.
@@ -49,7 +49,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [x] M5 Chat recebido com `is_alert`: destaque, aviso sonoro e contador de não lidas (`ChatPanel.tsx`). Falta só o teste de campo (H2).
 - [x] M9 Derivação de senha idêntica nas cópias (`broker/derive.py`, `native/derive.py`, `rastro_derive.py`).
 - [ ] M2 Reiniciar/desligar remoto: bloqueado por H6.
-- [ ] M3 Entrega de alertas: bloqueado por H5.
+- [x] M3 Entrega de alertas: descartado (decisão H5: só selos no mapa).
 - [ ] M11/M12 Commit e push: bloqueados por H11/H12.
 
 **Descartados**: M1 (retenção: histórico eterno, decidido), M4 (alerta preditivo, especulativo), M6 (absorvido em H4), M7 (rotação de chave EVU: trava todos os barcos sem visita USB), H3 (usuários reais de chat: só após o 1º rádio), H13 (nome curto: cosmético, chave vem do `long_name`), H15 (absorvido em H11/H12), H10 (absorvido em H11/H12).
@@ -335,7 +335,7 @@ Feito e provado localmente: decodificação ServiceEnvelope→Position/Telemetry
 
 ## Verificação de premissas e pendências (2026-10-01, plano da frota v7)
 - [x] Premissas de firmware/docs verificadas contra o firmware 2.7.26.54e0d8d e as docs 2.7 (`univaja-lora/drafts/verificacao-premissas.md`): o cliente MQTT do nó usa TCP puro (sem WebSocket), não valida certificado TLS e imprime a senha no log; a fila é de 16 mensagens e só 1 entrada é reenviada após reconexão; assina `<raiz>/2/e/<canal>/+` e `<raiz>/2/e/PKI/+`; telemetria do dispositivo exige `device_telemetry_enabled`.
-- [x] **Retenção (decidido 2026-10-08):** histórico mantido sem purga (posições e log bruto são eternos). Não há configuração de retenção no app web. `scripts/rastro_retention.py` continua no repo, e `deploy/systemd/rastro-retention.{service,timer}` o agenda todo dia às 04:15 — remover só com aprovação (confirmar se o timer está ativo no host).
+- [x] **Retenção (decidido 2026-10-08):** histórico mantido sem purga (posições e log bruto são eternos). Não há configuração de retenção no app web. Removidos do repo em 2026-10-09 (aprovado pelo dono): `scripts/rastro_retention.py`, `deploy/systemd/rastro-retention.{service,timer}` e referências em Dockerfile/docs. **Pendente no host:** desativar o timer antigo, se ainda estiver instalado: `sudo systemctl disable --now rastro-retention.timer` (não é feito pelo repo).
 - [x] Logs de chat e PSK: `chat/outbox.py` e `chat/__main__.py` registram só tipo de exceção e IDs; PSK com `repr=False`, nunca logada (verificado 2026-10-08).
 - [x] Logs de erro agora registram só o tipo da exceção: `native/service.py` (sem `log.exception`, sem traceback) e `ingest/db.py` (sem os 120 caracteres da mensagem do banco). Gateway: 301 testes passam (2026-10-08). Implantado em produção em 2026-10-09 como `rastro-ingest:0.8.8` (deploy aprovado pelo dono; `deploy-image` enfileirado, conferir se o mapa segue atualizando).
 - [x] Retenção do texto do chat: não há (histórico eterno, decidido 2026-10-08).
