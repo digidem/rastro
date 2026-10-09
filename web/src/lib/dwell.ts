@@ -104,6 +104,8 @@ export interface Dwell {
 export interface TrilhaSimplificada {
   /** Segmentos sem o novelo: uma parada vira um único vértice (centróide). */
   linhas: LngLat[][];
+  /** Linha simplificada só do último segmento contínuo (sem lacuna antes dele); null se tem menos de 2 vértices. Base do rumo ao navegar. */
+  ultimaLinha: LngLat[] | null;
   dwells: Dwell[];
   /** Último fix pertence a uma parada em curso. */
   parado: boolean;
@@ -489,16 +491,20 @@ function somarDistancias(segmentos: readonly ItemLinha[][]): number {
 /**
  * Odômetro sobre a linha suavizada ANTES do Douglas–Peucker;
  * `linhas` vem DEPOIS (segmentos com menos de 2 vértices somem).
+ * `ultimaLinha` é o último segmento sozinho: o rumo nunca herda de antes de uma lacuna.
  */
 function montarLinhaOdometro(
   suavizados: readonly ItemLinha[],
   gapMs: number,
-): { linhas: LngLat[][]; distanciaM: number } {
+): { linhas: LngLat[][]; ultimaLinha: LngLat[] | null; distanciaM: number } {
   const segmentos = segmentar(suavizados, gapMs);
-  const linhas = segmentos
-    .map((seg) => douglasPeucker(seg).map((it) => it.pos))
-    .filter((linha) => linha.length >= 2);
-  return { linhas, distanciaM: somarDistancias(segmentos) };
+  const dp = segmentos.map((seg) => douglasPeucker(seg).map((it) => it.pos));
+  const ultima = dp.at(-1) ?? [];
+  return {
+    linhas: dp.filter((linha) => linha.length >= 2),
+    ultimaLinha: ultima.length >= 2 ? ultima : null,
+    distanciaM: somarDistancias(segmentos),
+  };
 }
 
 /** Velocidade entre os dois últimos fixes sem spike (spike gera velocidade falsa). */
@@ -577,12 +583,16 @@ export function simplifyTrackDwells(
   const temposSpike = entradas.filter((_, k) => spikes[k]).map((e) => e.t);
   const itens = montarItens(L, paradas);
   const suavizados = suavizarLocal(itens, undefined, undefined, o.gapMs);
-  const { linhas, distanciaM } = montarLinhaOdometro(suavizados, o.gapMs);
+  const { linhas, ultimaLinha, distanciaM } = montarLinhaOdometro(
+    suavizados,
+    o.gapMs,
+  );
   const ultima: Parada | undefined = paradas[paradas.length - 1];
   const parado = ultima?.emCurso === true;
 
   return {
     linhas,
+    ultimaLinha,
     dwells: paradas.map((p) => paraDwell(L, p, temposSpike)),
     parado,
     aproximacao: parado

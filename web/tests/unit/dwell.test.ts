@@ -433,6 +433,15 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
       expect(bearingComParada(simp)).toBeNull();
     }
   });
+
+  it("navegando após lacuna de 60 min: um fix remoto sozinho não herda o rumo leste de antes", () => {
+    const antes = navegar(0, 3); // três fixes para leste, minutos 0 a 4
+    const remoto = [fix(4 + 60, 5000, 0)]; // um fix 5 km a leste, após lacuna
+    const simp = simplifyTrackDwells([...antes, ...remoto]);
+    expect(simp.parado).toBe(false);
+    expect(simp.ultimaLinha).toBeNull();
+    expect(bearingComParada(simp)).toBeNull();
+  });
 });
 
 describe("velocidade", () => {

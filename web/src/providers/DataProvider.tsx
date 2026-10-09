@@ -1,7 +1,7 @@
 import type { Component, JSXElement } from "solid-js";
 import { createContext, onCleanup, useContext } from "solid-js";
 import { calcularBearing } from "../lib/bearing.js";
-import { DWELL_PADRAO, distanciaM } from "../lib/dwell.js";
+import { ANCORADO_MAX_MS, DWELL_PADRAO, distanciaM } from "../lib/dwell.js";
 import { LocalState, type NodeInfo } from "../store.js";
 import { type ApiClient, ErrTokenInvalid, createApiClient } from "./api.js";
 
@@ -37,15 +37,29 @@ const devToken = (): string | undefined =>
 // Posição onde o rumo de cada nó foi definido pela última vez (âncora do deslocamento).
 const ancorasDeRumo = new Map<number, [number, number]>();
 
+/** Esquece as âncoras da sessão corrente (logout/401): não herdam posição antiga. */
+export function limparAncorasDeRumo(): void {
+  ancorasDeRumo.clear();
+}
+
+/** Parado só vale com fix recente pelo relógio do store (mesma regra da lista de nós). */
+function paradoRecente(nodeNum: number): boolean {
+  const m = LocalState.localState.movimento[nodeNum];
+  if (m?.parado !== true || m.ultimoFixMs === null) {
+    return false;
+  }
+  const agoraMs = LocalState.localState.nowMs || Date.now();
+  return agoraMs - m.ultimoFixMs < ANCORADO_MAX_MS;
+}
+
 /** Rumo de `node` desde a âncora; mantém o anterior em jitter ou com o nó parado. */
 function rumoPorDeslocamento(node: NodeInfo, prev: NodeInfo): number | null {
   const ancora = ancorasDeRumo.get(node.nodeNum) ?? [prev.lon, prev.lat];
   // Parado, ou deslocamento desde a âncora dentro do raio de saída de parada:
   // é ruído de GPS (multipath de 20–100 m), não rumo. Medir desde a âncora (e não
   // do poll anterior) deixa o barco lento acumular deslocamento até definir rumo.
-  const parado = LocalState.localState.movimento[node.nodeNum]?.parado === true;
   if (
-    parado ||
+    paradoRecente(node.nodeNum) ||
     distanciaM(ancora, [node.lon, node.lat]) <= DWELL_PADRAO.raioSaidaM
   ) {
     ancorasDeRumo.set(node.nodeNum, ancora);
@@ -158,6 +172,8 @@ export const DataProvider: Component<{ children?: JSXElement }> = (props) => {
     stopPolling();
     // Geração nova mata respostas em voo da sessão anterior.
     LocalState.bumpPollingGeracao();
+    // Âncoras de rumo são da sessão velha: não podem definir rumo na nova.
+    limparAncorasDeRumo();
     LocalState.setNodes([]);
     LocalState.setOnline(false);
     // Zera também a VISUALIZAÇÃO da sessão velha: filtros, status de carga e
