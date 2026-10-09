@@ -1,5 +1,6 @@
 // biome-ignore lint/style/useFilenamingConvention: convenção de arquivo de teste em Solid
 import { cleanup, render, screen } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LocalStateContext } from "../../providers/index.js";
 import { LocalState, type NodeAlert, type NodeInfo } from "../../store.js";
@@ -105,5 +106,63 @@ describe("NodeList badges de alerta", () => {
     ));
     expect(screen.queryByText(/Sem sinal/)).toBeNull();
     expect(screen.queryByText(/Bateria crítica/)).toBeNull();
+  });
+});
+
+describe("NodeList parada (há X) pelo relógio reativo", () => {
+  const minuto = 60_000;
+  const agoraBase = Date.UTC(2026, 9, 9, 12, 0, 0);
+
+  beforeEach(() => {
+    LocalState.resetViewerState();
+    LocalState.setAlerts([]);
+    LocalState.setNodes([NODE_OK]);
+  });
+
+  // Renderiza com relógio controlável: o teste avança `agora` sem nova busca.
+  const montarParada = (movimento: {
+    desdeMs: number | null;
+    ultimoFixMs: number | null;
+  }) => {
+    const [agora, setAgora] = createSignal(agoraBase);
+    LocalState.setNodeMovimento(NODE_OK.nodeNum, {
+      parado: true,
+      velocidadeKmh: 0,
+      ...movimento,
+    });
+    render(() => (
+      <LocalStateContext.Provider value={LocalState}>
+        <NodeList
+          nodes={() => [NODE_OK]}
+          totalCount={() => 1}
+          filteredCount={() => 1}
+          nowMs={agora}
+        />
+      </LocalStateContext.Provider>
+    ));
+    return setAgora;
+  };
+
+  it("mostra '(há X)' com último fix recente", () => {
+    montarParada({
+      desdeMs: agoraBase - 60 * minuto,
+      ultimoFixMs: agoraBase - 5 * minuto,
+    });
+    expect(screen.getByText("⚓ Ancorado / Parado (há 1h 0m)")).toBeTruthy();
+  });
+
+  it("some o '(há X)' quando o relógio passa de 30 min sem fix novo", () => {
+    const setAgora = montarParada({
+      desdeMs: agoraBase - 60 * minuto,
+      ultimoFixMs: agoraBase - 5 * minuto,
+    });
+    setAgora(agoraBase + 26 * minuto); // último fix há 31 min
+    expect(screen.getByText("⚓ Ancorado / Parado")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("(há ");
+  });
+
+  it("sem último fix conhecido: só '⚓ Ancorado / Parado'", () => {
+    montarParada({ desdeMs: agoraBase - 60 * minuto, ultimoFixMs: null });
+    expect(screen.getByText("⚓ Ancorado / Parado")).toBeTruthy();
   });
 });

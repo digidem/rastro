@@ -10,6 +10,7 @@ import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import { bearingComParada, bearingDaTrilha } from "./lib/bearing.js";
 import { circuloGeo } from "./lib/circulo.js";
 import {
+  ANCORADO_MAX_MS,
   type Dwell,
   type TrilhaSimplificada,
   duracaoLabel,
@@ -632,9 +633,6 @@ const analisarTrilha = (
   return { segments: simp.linhas, simp };
 };
 
-// Parada em curso sem fix há mais que isto deixa de ser "ancorada" (ms).
-const ANCORADO_MAX_MS = 30 * 60_000;
-
 // Relógio do store (reativo e controlável em teste); Date.now() só se não estiver definido.
 const relogioMs = (): number => LocalState.localState.nowMs || Date.now();
 
@@ -646,12 +644,11 @@ const registrarMovimento = (
     return;
   }
   const ultima = simp.dwells[simp.dwells.length - 1];
-  // Mesma regra do rótulo do mapa: "parado desde" só com fix recente.
-  const fresca =
-    ultima !== undefined && relogioMs() - ultima.ultimoFixMs < ANCORADO_MAX_MS;
+  // Frescor não é decidido aqui: a lista compara ultimoFixMs com o relógio reativo.
   LocalState.setNodeMovimento(nodeNum, {
     parado: simp.parado,
-    desdeMs: simp.parado && ultima && fresca ? ultima.chegadaMs : null,
+    desdeMs: simp.parado && ultima ? ultima.chegadaMs : null,
+    ultimoFixMs: simp.parado && ultima ? ultima.ultimoFixMs : null,
     velocidadeKmh: simp.velocidadeKmh,
   });
 };
@@ -1245,7 +1242,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           const lastSeg = segments[segments.length - 1];
           bearing = lastSeg.length >= 2 ? bearingDaTrilha(lastSeg) : null;
         }
-        if (bearing !== null) {
+        // Trilha analisada sem rumo (ex.: parada após lacuna): zera o rumo antigo.
+        if (simp !== null || bearing !== null) {
           LocalState.setNodeBearing(sel, bearing);
         }
         registrarMovimento(sel, simp);

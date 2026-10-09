@@ -72,6 +72,9 @@ export const DWELL_PADRAO: DwellOptions = {
   gapMs: 1_800_000,
 };
 
+// Parada em curso sem fix há mais que isto deixa de ser "ancorada" (ms).
+export const ANCORADO_MAX_MS = 30 * 60_000;
+
 /**
  * Papel de cada fix da entrada, alinhado com `pontos` (índice original).
  * Fix inválido (sem posição finita) fica "movimento": não entra em parada nem spike.
@@ -104,7 +107,7 @@ export interface TrilhaSimplificada {
   dwells: Dwell[];
   /** Último fix pertence a uma parada em curso. */
   parado: boolean;
-  /** Vértices da linha até o centróide da parada em curso (rumo congelado); null se não parado. */
+  /** [último vértice a >= 2× raioSaidaM do centro, centro] da parada em curso (rumo congelado); null se não parado ou sem aproximação observada. */
   aproximacao: LngLat[] | null;
   /** Velocidade entre os dois últimos fixes com horário, km/h; null se indefinida ou parado. */
   velocidadeKmh: number | null;
@@ -538,15 +541,28 @@ function montarPapel(
 }
 
 /**
- * Posições do último segmento contínuo (sem lacuna > gapMs): o rumo congelado não
- * pode herdar deslocamento não observado antes de uma lacuna. Menos de 2 ⇒ null.
+ * Aproximação da parada em curso: [último vértice a >= raioM do centro, centro],
+ * dentro do último segmento contínuo (sem lacuna > gapMs). O rumo congelado não
+ * herda deslocamento não observado antes da lacuna nem ruído junto ao centro.
  */
 function aproximacaoParada(
   suavizados: readonly ItemLinha[],
   gapMs: number,
+  raioM: number,
 ): LngLat[] | null {
   const ultimo = segmentar(suavizados, gapMs).at(-1) ?? [];
-  return ultimo.length >= 2 ? ultimo.map((it) => it.pos) : null;
+  const centro = ultimo.at(-1);
+  if (centro === undefined) {
+    return null;
+  }
+  // Fixes a menos de raioM (2× raio de saída, além do alcance do multipath) do
+  // centro podem ser ruído: o rumo vem do último vértice afastado. Sem nenhum (parada logo após lacuna), não há rumo observado.
+  for (let k = ultimo.length - 2; k >= 0; k--) {
+    if (distanciaM(ultimo[k].pos, centro.pos) >= raioM) {
+      return [ultimo[k].pos, centro.pos];
+    }
+  }
+  return null;
 }
 
 export function simplifyTrackDwells(
@@ -569,7 +585,9 @@ export function simplifyTrackDwells(
     linhas,
     dwells: paradas.map((p) => paraDwell(L, p, temposSpike)),
     parado,
-    aproximacao: parado ? aproximacaoParada(suavizados, o.gapMs) : null,
+    aproximacao: parado
+      ? aproximacaoParada(suavizados, o.gapMs, 2 * o.raioSaidaM)
+      : null,
     velocidadeKmh: calcularVelocidade(L, parado),
     distanciaM,
     papel: montarPapel(pontos.length, entradas, spikes, L, paradas),

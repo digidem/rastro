@@ -957,6 +957,38 @@ describe("InitializeMap — paradas com dispersão (T4)", () => {
     expect(track).toHaveBeenCalledTimes(1);
   });
 
+  it("parada após lacuna zera o rumo antigo do nó (sem rumo novo)", async () => {
+    // Navegação para leste, lacuna de 118 min e depois só fixes parados ao sul.
+    // Parada sem ruído (mesmo posição): o rumo congelado não tem aproximação observada.
+    const nav = navegacao({
+      de: C1,
+      para: deslocar(C1, 3000, 0),
+      inicioMs: T0,
+      kmh: 20,
+    });
+    const centroSul = deslocar(C1, 0, -4000);
+    const pontos = concat(
+      nav,
+      parada({
+        centro: centroSul,
+        inicioMs: T0 + 127 * min,
+        duracaoMs: 60 * min,
+        semente: 7,
+      }).map((f) => ({ ...f, pos: centroSul })),
+    );
+    expect(simplifyTrackDwells(pontos).parado).toBe(true);
+    const track = vi.fn().mockResolvedValue(respostaDe(pontos));
+    montar({ track } as unknown as DataValue["api"]);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([{ ...no(1), bearing: 90 }]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    expect(track).toHaveBeenCalledTimes(1);
+    expect(LocalState.localState.nodes[1]?.bearing).toBeNull();
+  });
+
   describe("fixes brutos (T5)", () => {
     // Trilha com um spike: o fix 200 sai 400 m do centro da primeira parada.
     const trilhaComSpike = (): FixDwell[] => {

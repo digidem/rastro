@@ -69,6 +69,8 @@ export interface Movimento {
   parado: boolean;
   /** Início da parada em curso (ms); null se navegando. */
   desdeMs: number | null;
+  /** Último fix da parada em curso (ms); a lista só mostra "há X" se for recente. */
+  ultimoFixMs: number | null;
   velocidadeKmh: number | null;
 }
 
@@ -259,7 +261,7 @@ const setMostrarFixesBrutos = (mostrar: boolean) => {
 
 const setTrilhaCarregada = (b: boolean) => setLocalState("trilhaCarregada", b);
 
-const setNodeBearing = (nodeNum: number, bearing: number) => {
+const setNodeBearing = (nodeNum: number, bearing: number | null) => {
   if (localState.nodes[nodeNum]) {
     setLocalState("nodes", nodeNum, "bearing", bearing);
   }

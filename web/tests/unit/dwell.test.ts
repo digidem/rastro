@@ -418,6 +418,21 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
     expect(simp.parado).toBe(true);
     expect(bearingComParada(simp)).toBeNull();
   });
+
+  it("após lacuna, parada com ruído de multipath também fica sem rumo", () => {
+    const antes = navegar(0, 10); // termina no minuto 18
+    for (let semente = 1; semente <= 10; semente++) {
+      const depois = parada({
+        centro: [-70, LAT + 3000 / GRAU_M],
+        inicioMs: T0 + (18 + 118) * M,
+        duracaoMs: 120 * M,
+        semente,
+      });
+      const simp = simplifyTrackDwells([...antes, ...depois]);
+      expect(simp.parado).toBe(true);
+      expect(bearingComParada(simp)).toBeNull();
+    }
+  });
 });
 
 describe("velocidade", () => {
