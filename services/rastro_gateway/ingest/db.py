@@ -1006,12 +1006,24 @@ class Db:
                 return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     def gateway_uplink_times(self) -> dict[int, float]:
-        """``{gateway_num: epoch do último uplink}`` a partir de gateway_status."""
+        """``{gateway_num: epoch do último uplink}`` a partir de gateway_status.
+
+        Exclui os gateways VIRTUAIS do chat (``virtual_gateways``): eles só
+        "transmitem" quando o escritório envia um downlink, então o silêncio
+        deles é design — nunca condição operacional para o ``gateway_mudo``.
+        """
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT gateway_num, "
-                    "EXTRACT(EPOCH FROM last_uplink)::double precision FROM gateway_status"
+                    """
+                    SELECT g.gateway_num,
+                           EXTRACT(EPOCH FROM g.last_uplink)::double precision
+                    FROM gateway_status g
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM virtual_gateways v
+                        WHERE v.virtual_node_num = g.gateway_num
+                    )
+                    """
                 )
                 return {row[0]: row[1] for row in cur.fetchall()}
 

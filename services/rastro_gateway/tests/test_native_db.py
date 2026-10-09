@@ -1434,3 +1434,22 @@ def test_retire_alert_kinds_limpa_so_aposentados(db, pg_session):
                 " WHERE cleared_at IS NOT NULL GROUP BY kind"
             )
             assert dict(cur.fetchall()) == {"sem_fix": 2, "gateway_mudo": 1}
+
+
+def test_gateway_uplink_times_exclui_virtuais(db, pg_session):
+    """gateway_mudo não deve enxergar gateways virtuais do chat como gateways."""
+    conn_str = f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} password={pg_session['password']} dbname={pg_session['dbname']}"
+    with psycopg.connect(conn_str, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SET search_path = rastro, public")
+            cur.execute(
+                "INSERT INTO gateway_status (gateway_num, uplinks, last_uplink)"
+                " VALUES (8001, 5, now()), (9999, 3, now())"
+            )
+            cur.execute(
+                "INSERT INTO virtual_gateways (gateway_id, virtual_node_num, boat_id, active)"
+                " VALUES ('!0000270f', 9999, 'cidade', true)"
+            )
+    tempos = db.gateway_uplink_times()
+    assert 8001 in tempos
+    assert 9999 not in tempos  # virtual: fora do ciclo gateway_mudo
