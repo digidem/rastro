@@ -1,287 +1,230 @@
-# TASK — Régua: medir distâncias no mapa
+# TASK — Previsão do tempo diária para os barcos
 
-Branch `feat/regua` (worktree `../rastro-regua`). Cada tarefa abaixo é implementada
-por um subagente, revisada e commitada antes da próxima. Todo o trabalho fica em `web/`.
+Branch `feat/clima` (worktree `../rastro-clima`). Cada tarefa abaixo é implementada
+por um subagente, revisada e commitada antes da próxima. Todo o código novo fica em
+`services/rastro_api/api/` (a API já tem os GRANTs certos: o papel `viewer` lê
+`vw_ultima_posicao`/`boat_devices`/`virtual_gateways`/`chat_outbox` e pode inserir em
+`chat_outbox`; o papel do chat/ingest NÃO lê coordenadas).
 
 ## Decisões do dono (2026-10-09)
 
-- Botão da régua (ícone `RulerIcon` de `solid-phosphor/regular`) na coluna da direita
-  do `MapControls`, **logo abaixo do botão de período (relógio)**.
-- **Caminho de vários pontos.** Cada clique adiciona um vértice. O painel mostra o total
-  e cada segmento. Duplo clique ou "Concluir" fecha o caminho; um clique depois de
-  concluído começa uma medição nova. Dois pontos é só o caso mais simples.
-- **Encaixe em nós.** Na régua, clicar sobre/perto de um pin adiciona um vértice
-  ancorado no nó (`{ tipo: "no", nodeNum }`). Vértice ancorado **segue o nó ao vivo**:
-  a coordenada vem sempre de `localState.nodes[nodeNum]`, então a distância se atualiza
-  a cada rodada de polling.
-- **Painel:** distância por segmento e total; rumo por segmento e em linha reta
-  (primeiro→último); chegada estimada quando o PRIMEIRO vértice é um nó em movimento com
-  velocidade conhecida; vértices arrastáveis (mouse e toque); "Copiar" copia coordenadas
-  + distância como texto.
-- **Entrada pelo nó:** botão "Medir daqui" no popup do pin e no `NodeInspector`. Liga a
-  régua com o vértice 0 ancorado no nó.
-- Com a régua ligada, cliques NÃO selecionam nó, não abrem popup e não desselecionam.
-- `Escape` sai da régua. Sair apaga a medição.
+- Todo dia, cada barco configurado recebe UMA mensagem de texto no rádio com a
+  previsão do dia para a posição dele.
+- **Barcos padrão:** os 5 regionais (barco 1 de cada regional). `{REGIONAL}` é o nome
+  de exibição:
+
+  | boat_id          | regional     |
+  |------------------|--------------|
+  | `itui-1`         | Ituí         |
+  | `itaquai-1`      | Itaquaí      |
+  | `medio-javari-1` | Médio Javari |
+  | `curuca-1`       | Curuçá       |
+  | `jaquirana-1`    | Jaquirana    |
+
+  A lista muda pela env `RASTRO_CLIMA_BARCOS` (JSON); reiniciar a API aplica. Sem tela web.
+- **Fonte:** Open-Meteo (`https://api.open-meteo.com/v1/forecast`, grátis, sem chave).
+- **Posição:** último fix do barco, **exata** (decisão do dono: sem arredondar). Fix com
+  mais de 48 h → usa o ponto reserva do barco (`lat`/`lon` opcionais no JSON da env);
+  sem fix e sem reserva → pula o barco e loga (sem coordenadas no log).
+- **Horário:** 08:00 local, UTC−5 fixo (Atalaia do Norte; Brasil sem horário de verão).
+  `{DATA}` = `dd/mm`. Os barcos saem **1 minuto um do outro** (barco i às 08:00 + i min).
+- **Entrega:** insere em `chat_outbox` (`created_by = 'clima'`), então aparece no
+  histórico do chat. Expira 6 h depois do horário do barco.
+- **Broadcast aceito:** o canal EVU é compartilhado; todo barco ouve as 5 previsões.
+- Coordenadas vão ao Open-Meteo, mas **nunca** aparecem em log, mensagem de erro ou teste
+  com valores reais.
+
+### Texto (aprovado)
+
+```
+{REGIONAL} – {DATA} 08h | Hoje: {TEMP_MIN}–{TEMP_MAX}°C. {CHUVA}. {TROVOADA}. Vento {VENTO}. {ALERTA}
+```
+
+Exemplo: `Médio Javari – 09/10 08h | Hoje: 22–33°C. Chuva à tarde, chance 70%. Trovoada provável. Vento fraco, rajadas 25 km/h. ALERTA: chuva forte`
+
+- Janela do dia: horas locais 06–22 (inclusive).
+- `{CHUVA}`: chance máxima de chuva na janela `< 20%` → `Sem chuva prevista`; senão
+  `Chuva {PERIODO}, chance {PROB}%`. `{PERIODO}` = período da hora de pico:
+  `de manhã` (06–11), `à tarde` (12–17), `à noite` (18–22); `o dia todo` quando os três
+  períodos têm chance máxima ≥ 50%.
+- `{TROVOADA}`: alguma hora da janela com `weather_code` 95, 96 ou 99 →
+  `Trovoada provável`; senão `Sem trovoada`.
+- `{VENTO}`: classe pelo vento sustentado máximo da janela: `fraco` (< 20 km/h),
+  `moderado` (20–40), `forte` (> 40); seguido de `, rajadas {G} km/h` (rajada máxima da
+  janela). Ex.: `Vento fraco, rajadas 25 km/h.`
+- `{ALERTA}`: chuva do dia ≥ 30 mm → `chuva forte`; rajada ≥ 50 km/h → `ventania`;
+  ambos → `ALERTA: chuva forte e ventania`; nenhum → parte omitida (texto termina em
+  `km/h.`).
+- Números arredondados para inteiro (`round`).
+- **Tamanho medido em BYTES UTF-8** (acento = 2 bytes no rádio). Meta 150–180;
+  acima de 180 loga aviso (só o tamanho, nunca o texto). Acima de 200, aplica em ordem
+  até caber: (1) remove `Sem trovoada.`; (2) remove ` 08h`; (3) vento vira
+  `Vento {G} km/h.`; (4) `{REGIONAL}` cortado em 12 caracteres. Se ainda passar,
+  corta no limite de 200 bytes sem quebrar caractere.
 
 ## Convenções (ler antes de codar)
 
-- Identificadores, comentários e textos de UI em **português** (veja o código vizinho).
-- Imports com sufixo `.js`/`.jsx` (como nos arquivos existentes).
-- Testes de libs puras em `web/tests/unit/*.test.ts`; testes de componente ao lado do
-  componente (`*.test.tsx`, ver `MapControls.test.tsx`).
-- Gates de cada tarefa, rodados em `web/`: `pnpm test` (base: 329 passando) e
-  `pnpm biome check src tests`. NÃO rode `pnpm typecheck` (não termina neste ambiente).
-- Não mexa em arquivos fora dos listados na tarefa, exceto imports.
-- Não faça commit. O revisor commita.
-- Dados de teste: só coordenadas fictícias (ex.: perto de lon -70.0, lat -5.0).
+- Identificadores, comentários, logs e docstrings em **português** (veja o código vizinho).
+- Só biblioteca padrão para HTTP (`urllib.request`, como `api/osm.py`). Nenhuma
+  dependência nova.
+- Testes em `services/rastro_api/tests/test_clima_*.py`, sem rede e sem Postgres
+  (use fakes, como `tests/test_api_chat.py` faz com conexões falsas).
+- Dados de teste: só coordenadas fictícias (ex.: lat -5.0, lon -70.0).
+- NUNCA logar coordenadas, URL com coordenadas ou texto da mensagem.
+- Gate de cada tarefa, rodado em `services/rastro_api/` do worktree:
+  `RASTRO_API_TOKEN=x /home/luandro/Dev/digidem/rastro/services/rastro_api/.venv/bin/pytest -q -p no:cacheprovider`
+  (base: 66 passando, 38 pulados). Tudo tem de passar.
+- Não mexa em arquivos fora dos listados na tarefa. Não faça commit. O revisor commita.
 
 ---
 
-## T1 — Lib pura de geometria `web/src/lib/regua.ts`
+## T1 — Busca e resumo da previsão: `api/clima_previsao.py`
 
-Criar `web/src/lib/regua.ts` e `web/tests/unit/regua.test.ts`.
+Arquivos: `services/rastro_api/api/clima_previsao.py`, `services/rastro_api/tests/test_clima_previsao.py`.
 
-```ts
-export type LngLat = [number, number];
+- `montar_url(lat: float, lon: float, base: str = URL_PADRAO) -> str` com os parâmetros:
+  `latitude`, `longitude`,
+  `hourly=precipitation_probability,weather_code,wind_speed_10m,wind_gusts_10m`,
+  `daily=temperature_2m_min,temperature_2m_max,precipitation_sum`,
+  `timezone=America/Eirunepe`, `forecast_days=1`, `wind_speed_unit=kmh`
+  (use `urllib.parse.urlencode`). `URL_PADRAO = "https://api.open-meteo.com/v1/forecast"`;
+  a base pode vir da env `RASTRO_CLIMA_API_URL`.
+- `buscar(lat, lon, *, base=None, timeout=15.0, abrir=urllib.request.urlopen) -> dict`:
+  GET, lê JSON. Qualquer falha (rede, HTTP != 200, JSON inválido) levanta
+  `PrevisaoErro` com mensagem SEM URL e SEM coordenadas (ex.: `"Open-Meteo: HTTP 503"`,
+  `"Open-Meteo: TimeoutError"`). `abrir` é injetável para teste.
+- `@dataclass(frozen=True) class Resumo`: `temp_min: int`, `temp_max: int`,
+  `chance_chuva: int`, `periodo: str | None` (`"de manhã"`, `"à tarde"`, `"à noite"`,
+  `"o dia todo"`; `None` quando `chance_chuva < 20`), `trovoada: bool`,
+  `vento_kmh: int`, `rajada_kmh: int`, `chuva_mm: float`.
+- `resumir(dados: dict) -> Resumo`: aplica as regras da seção "Texto". `hourly.time`
+  vem como `"2026-10-09T06:00"` (hora local, pois pedimos `timezone`); filtre horas
+  06–22. Valores `None` nas listas são ignorados; janela sem nenhum valor → 0 (para
+  chuva/vento) e `trovoada=False`. Temperaturas e `precipitation_sum` vêm de `daily`
+  (índice 0); ausentes → `PrevisaoErro("Open-Meteo: resposta incompleta")`.
+  Empate de pico: a primeira hora vence.
+- Testes: URL contém todos os parâmetros; `buscar` com `abrir` falso (sucesso, HTTP 500,
+  timeout, JSON inválido) e mensagem de erro sem `-5.0`/`-70.0`; `resumir` cobre cada
+  período, `o dia todo`, chance < 20 → `periodo=None`, trovoada 95/96/99 e 95 fora da
+  janela (ex.: 03:00) ignorada, `None` nas listas, `daily` ausente.
 
-/** Distância geodésica em metros (haversine, R = 6_371_008.8). */
-export function haversineM(a: LngLat, b: LngLat): number;
+## T2 — Composição do texto: `api/clima_texto.py`
 
-/** Distância de cada segmento (tamanho n-1). */
-export function distanciasSegmentos(pts: readonly LngLat[]): number[];
+Arquivos: `services/rastro_api/api/clima_texto.py`, `services/rastro_api/tests/test_clima_texto.py`.
 
-/** Soma dos segmentos; 0 com menos de 2 pontos. */
-export function distanciaTotalM(pts: readonly LngLat[]): number;
+- `LIMITE_BYTES = 200`, `META_BYTES = 180`.
+- `compor(regional: str, dia: datetime.date, hora: str, r: Resumo) -> str` monta o texto
+  (`hora` = `"08h"`) exatamente como a seção "Texto" e aplica as reduções em ordem só
+  enquanto `len(texto.encode("utf-8")) > LIMITE_BYTES`. Corte final por bytes sem
+  quebrar caractere UTF-8. Acima de `META_BYTES` no fim: `log.warning` com o tamanho
+  (nunca o texto). Logger: `logging.getLogger("rastro_api.clima")`.
+- Use `–` (en dash, U+2013) depois do regional e entre as temperaturas, como no modelo.
+- Testes: o exemplo da seção "Texto" sai idêntico; sem chuva; sem alerta (termina em
+  `km/h.`); alerta só ventania; ambos; cada passo de redução (regional enorme força os
+  passos 1–4, verifique a ordem e que passos posteriores não rodam quando já cabe);
+  resultado nunca passa de 200 bytes nem quebra caractere (regional com só `ç`/`í`);
+  aviso logado acima de 180 (use `caplog`) sem o texto.
 
-/** "850 m" (< 1000 m, inteiro); "1,2 km" (< 100 km, 1 casa, vírgula);
- *  "134 km" (>= 100 km, inteiro). Separador decimal "," (pt-BR).
- *  Arredonde ANTES de escolher a faixa: 999,6 m vira "1,0 km", não "1000 m";
- *  99 960 m vira "100 km", não "100,0 km". */
-export function rotuloDistancia(m: number): string;
+## T3 — Configuração: `api/clima_config.py`
 
-/** Rosa de 8 pontos em PT + graus inteiros: "NE 47°", "L 90°", "SO 225°".
- *  Pontos: N, NE, L, SE, S, SO, O, NO (setores de 45° centrados em cada um).
- *  Graus arredondados; 359,6 vira "N 0°". null → "—". */
-export function rotuloRumo(graus: number | null): string;
+Arquivos: `services/rastro_api/api/clima_config.py`, `services/rastro_api/tests/test_clima_config.py`.
 
-/** Rumo inicial de a para b (reusa calcularBearing). */
-export function rumo(a: LngLat, b: LngLat): number | null;
+- `@dataclass(frozen=True) class BarcoClima`: `boat_id: str`, `regional: str`,
+  `reserva: tuple[float, float] | None` (lat, lon).
+- `@dataclass(frozen=True) class ConfigClima`: `ativo: bool`, `barcos: tuple[BarcoClima, ...]`,
+  `hora: int` (0–23), `minuto: int`, `intervalo_s: int`, `ttl_h: int`,
+  `max_idade_h: int`, `utc_offset_h: int`, `api_url: str`.
+- `BARCOS_PADRAO`: os 5 da tabela, na ordem da tabela, sem reserva.
+- `carregar(env: Mapping[str, str]) -> ConfigClima`:
+  - `RASTRO_CLIMA_ENABLED` (padrão `"0"`; só `"1"` liga).
+  - `RASTRO_CLIMA_BARCOS`: JSON lista de `{"boat_id", "regional", "lat"?, "lon"?}`.
+    Ausente/vazia → `BARCOS_PADRAO`. Inválida (JSON ruim, não-lista, item sem
+    `boat_id`/`regional`, `lat` sem `lon` ou fora de ±90/±180, boat_id repetido) →
+    `log.error` SEM coordenadas e `ativo=False` (a API sobe normal, só sem previsão).
+  - `RASTRO_CLIMA_HORA` `"HH:MM"` (padrão `"08:00"`), `RASTRO_CLIMA_INTERVALO_S` (60),
+    `RASTRO_CLIMA_TTL_H` (6), `RASTRO_CLIMA_MAX_IDADE_H` (48), `RASTRO_CLIMA_UTC_OFFSET_H`
+    (-5), `RASTRO_CLIMA_API_URL` (URL padrão do T1). Valor inválido → `log.error` e
+    `ativo=False`.
+- Testes: padrão; JSON custom com e sem reserva; cada caso inválido desliga; a
+  mensagem de log de JSON inválido não contém coordenadas (`caplog`).
 
-/** Abaixo disso o "deslocamento" é ruído de multipath (AGENTS.md, lição 9). */
-export const VELOCIDADE_MIN_ETA_KMH = 2;
+## T4 — Agenda diária: `api/clima_agenda.py` + consultas
 
-/** Tempo em ms para `distanciaM` a `velocidadeKmh`. null se a velocidade for null,
- *  não finita ou menor que VELOCIDADE_MIN_ETA_KMH. */
-export function etaMs(distanciaM: number, velocidadeKmh: number | null): number | null;
+Arquivos: `services/rastro_api/api/clima_agenda.py`, `services/rastro_api/api/queries.py`
+(só ACRESCENTAR funções/SQL no fim; não alterar as existentes),
+`services/rastro_api/tests/test_clima_agenda.py`.
 
-/** Texto para a área de transferência: uma linha por vértice
- *  "1. -5.00000, -70.00000 (Nome do nó)" (lat, lon, 5 casas; nome só em vértice de nó),
- *  depois "Total: 1,2 km". */
-export function textoCompartilhar(
-  pts: readonly { pos: LngLat; nome?: string | null }[],
-): string;
-```
+Consultas novas em `queries.py`:
 
-- Reusar `calcularBearing` de `./bearing.js` (não reimplementar).
-- NÃO reusar `distanciaM` de `dwell.ts`: é aproximação equirretangular local; a régua
-  pode cobrir centenas de km.
+- `ultima_posicao_barco(conn, boat_id) -> dict | None` → `{lat, lon, pos_time}` do fix
+  mais novo entre os nós com vínculo aberto do barco:
+  ```sql
+  SELECT v.lat, v.lon, v.pos_time
+  FROM boat_devices bd
+  JOIN vw_ultima_posicao v ON v.node_num = bd.node_num
+  WHERE bd.boat_id = %s AND bd.valid_to IS NULL AND v.pos_time IS NOT NULL
+  ORDER BY v.pos_time DESC
+  LIMIT 1
+  ```
+- `enfileirar_clima(conn, boat_id, texto, expires_at, desde) -> int | None`: numa
+  transação READ WRITE (mesmo padrão de `insert_outbox_message`, inclusive restaurar
+  `read_only`): `SELECT pg_advisory_xact_lock(hashtext('rastro-clima'))`; se já existe
+  `chat_outbox` com `boat_id = %s AND created_by = 'clima' AND created_at >= %s`
+  (`desde`) → devolve `None`; senão insere (`created_by='clima'`) e devolve o `id`.
+  O lock + checagem tornam o envio idempotente mesmo com 2 instâncias da API.
+- `clima_ja_enfileirado(conn, boat_id, desde) -> bool` (mesma checagem, só leitura;
+  usada para não buscar previsão à toa).
 
-Testes (mínimo): haversine de 1° de latitude ≈ 111 195 m ± 1 m; distância zero;
-caminho de 3 pontos soma os segmentos; `rotuloDistancia` em 0, 999.4, 999.6, 1000, 1234,
-99_949, 99_960, 100_000, 134_400; `rotuloRumo` em 0, 22.4, 22.6, 90, 180, 225, 315, 359.6,
-null; `etaMs` com null/0/1.9/2/10 km/h; formato de `textoCompartilhar`.
+`clima_agenda.py`:
 
-## T2 — Estado no store `web/src/store.ts`
+- `class AgendaClima(pool, cfg: ConfigClima, *, buscar=clima_previsao.buscar, agora=None)`
+  (`agora` padrão `lambda: datetime.now(timezone.utc)`).
+- `rodar_uma_vez() -> int` (quantos enfileirou, 0 ou 1). Com `tz = timezone(timedelta(hours=cfg.utc_offset_h))`
+  e `local = agora().astimezone(tz)`:
+  1. Envia **no máximo um** barco por chamada, e só se já passaram `cfg.intervalo_s` desde
+     o último envio desta instância (garante o espaçamento de 1 min mesmo quando a API
+     reinicia às 08:10 com os 5 atrasados).
+  2. Para cada barco `i` na ordem da config: `slot = local.replace(hora, minuto, 0, 0) + i*intervalo_s`.
+     Pula se `local < slot` ou `local > slot + ttl_h`. `desde` = 00:00 local do dia, em UTC.
+  3. Pula se `clima_ja_enfileirado`, ou se o barco está em espera de nova tentativa
+     (`self._tentar_depois[boat_id] > agora`).
+  4. Posição: `ultima_posicao_barco`; idade > `max_idade_h` ou ausente → `reserva`;
+     sem nada → `log.warning("clima: %s sem posição recente; pulado hoje", boat_id)`,
+     marca o barco como pulado no dia (não tenta de novo até o dia seguinte).
+  5. `buscar(lat, lon, base=cfg.api_url)` → `resumir` → `compor(regional, local.date(), f"{cfg.hora:02d}h", r)`.
+     `PrevisaoErro`/qualquer exceção → `log.warning` com `boat_id` e o TIPO/mensagem do
+     erro (já sem coordenadas) e `_tentar_depois[boat_id] = agora + 5 min`.
+  6. `enfileirar_clima(..., expires_at = slot (UTC) + ttl_h, desde)`; se devolveu id,
+     `log.info("clima: previsão enfileirada para %s (id=%s, %d bytes)", ...)` e retorna 1.
+  - Conexão: `with self.pool.connection() as conn:` por barco processado.
+- `iniciar(stop: threading.Event, passo_s: float = 30.0) -> threading.Thread`: thread
+  daemon `rastro-clima` que chama `rodar_uma_vez()` a cada `passo_s` até `stop`;
+  exceção inesperada vira `log.error` com o tipo e o laço segue.
+- Testes (pool/conexão falsos que gravam as consultas; `agora` fixo; `buscar` falso):
+  antes das 08:00 nada; 08:00 → só o barco 0; 08:00:30 na mesma instância → nada
+  (intervalo); 08:01 → barco 1; reinício às 08:10 → um por chamada, respeitando
+  intervalo; depois de 08:00 + 6 h → nada; já enfileirado → não chama `buscar`; fix
+  velho com reserva usa a reserva; fix velho sem reserva pula o dia e não loga
+  coordenadas; `buscar` falhando → espera 5 min e tenta de novo; `expires_at` = slot + 6 h;
+  `desde` = meia-noite local em UTC (05:00 UTC); `enfileirar_clima` devolvendo `None`
+  (outra instância enviou) → retorna 0 sem erro.
 
-Em `web/src/store.ts`:
+## T5 — Ligar na API e documentar
 
-```ts
-/** Vértice da régua: ponto livre ou ancorado num nó (segue o nó ao vivo). */
-export type PontoRegua =
-  | { tipo: "livre"; lon: number; lat: number }
-  | { tipo: "no"; nodeNum: number };
+Arquivos: `services/rastro_api/api/main.py`, `services/rastro_api/tests/test_clima_main.py`,
+`AGENTS.md`, `docs/native-ingest-design.md`.
 
-export interface EstadoRegua { ativa: boolean; concluida: boolean; pontos: PontoRegua[] }
-```
-
-Campo novo `regua: EstadoRegua` em `LocalState`, inicial
-`{ ativa: false, concluida: false, pontos: [] }`. Não persiste.
-
-Ações (exportadas pelo objeto `LocalState`):
-
-- `ativarRegua(nodeNum?: number)` → ativa = true, concluida = false,
-  pontos = nodeNum !== undefined ? [{tipo:"no",nodeNum}] : [].
-- `desativarRegua()` → volta ao valor inicial.
-- `adicionarPontoRegua(p: PontoRegua)` → sem efeito se não `ativa`. Se `concluida`,
-  começa caminho novo `[p]` e concluida = false; senão, acrescenta. Ignora `p` igual ao
-  último vértice (mesmo nó, ou ponto livre com lon/lat idênticos): o duplo clique emite
-  2 cliques.
-- `moverPontoRegua(i: number, lon: number, lat: number)` → vértice i vira
-  `{tipo:"livre",lon,lat}` (arrastar um vértice de nó o desancora). Índice inválido: nada.
-- `desfazerPontoRegua()` → remove o último vértice; concluida = false.
-- `concluirRegua()` → concluida = true só se pontos.length >= 2.
-- `limparRegua()` → pontos = [], concluida = false (continua ativa).
-- `resetViewerState()` também chama `desativarRegua()`.
-
-Acrescentar em `web/src/lib/regua.ts`:
-
-```ts
-export interface VerticeResolvido {
-  pos: LngLat;
-  nome: string | null;
-  nodeNum: number | null;
-  /** Índice no array `pontos` original (o arrasto precisa dele). */
-  indice: number;
-}
-
-/** Resolve vértices em coordenadas. Vértice de nó lê `nodes`; nó ausente ou com
- *  lon/lat não finitos é DESCARTADO. */
-export function resolverPontosRegua(
-  pontos: readonly PontoRegua[],
-  nodes: Readonly<Record<number, { lon: number; lat: number; nome: string }>>,
-): VerticeResolvido[];
-```
-
-`PontoRegua` importado de `../store.js` como `import type`.
-
-Testes em `web/tests/unit/regua-store.test.ts`: cada ação; o filtro de clique duplicado;
-"clique depois de concluída começa caminho novo"; `resetViewerState` desliga a régua;
-o resolvedor descarta nó ausente e acompanha um nó que muda de posição (`setNodes` 2x).
-Limpar o store no `afterEach`.
-
-## T3 — Desenho no mapa `web/src/lib/reguaMapa.ts`
-
-Módulo dono da fonte e das camadas MapLibre da régua. Sem interações ainda.
-
-```ts
-export const FONTE_REGUA = "regua";
-export const CAMADA_REGUA_LINHA = "regua-linha";
-export const CAMADA_REGUA_VERTICES = "regua-vertices";
-export const CAMADA_REGUA_ROTULOS = "regua-rotulos";
-
-/** Adiciona fonte + camadas por cima de tudo, se ausentes (idempotente). */
-export function garantirCamadasRegua(map: maplibregl.Map): void;
-
-/** FeatureCollection da medição: uma LineString com todos os vértices (só com >= 2),
- *  um Point por vértice (props: indice, ancorado: boolean) e um Point no meio de cada
- *  segmento (props: rotulo = `${rotuloDistancia(d)} · ${rotuloRumo(b)}`).
- *  FC vazia com 0 pontos. */
-export function geojsonRegua(pts: readonly VerticeResolvido[]): FeatureCollection;
-
-/** setData na fonte (sem efeito se a fonte não existir). */
-export function atualizarRegua(map: maplibregl.Map, pts: readonly VerticeResolvido[]): void;
-```
-
-Estilo: linha âmbar `#fbbf24`, largura 2.5, `line-dasharray: [2, 1.5]`; vértices
-`circle` raio 6, preenchimento `#0f172a`, contorno âmbar 2.5; vértice ancorado com
-contorno esmeralda `#34d399`; rótulos `symbol` com `text-font: ["Noto Sans Regular"]`
-(única fonte de glyphs servida), tamanho 11, texto branco, halo `#090f0b` 2.5,
-`text-allow-overlap: true`. Use `filter` por tipo de geometria / propriedade para
-separar as camadas. Meio do segmento = média simples dos 2 vértices.
-
-Ligar em `web/src/InitializeMap.tsx`:
-- Em `aoCarregar` (roda em `style.load` e `load`), chamar `garantirCamadasRegua(map)`
-  e logo depois `atualizarRegua(...)` com o estado atual.
-- Um `createEffect` que lê `LocalState.localState.regua.pontos` e os nós (para o vértice
-  ancorado seguir ao vivo) e chama `atualizarRegua(map, resolverPontosRegua(...))`.
-  Siga como os outros efeitos deste arquivo obtêm o mapa (`currentView()`) e protegem
-  contra mapa ainda não carregado.
-
-Testes `web/tests/unit/reguaMapa.test.ts`: contagens e props de `geojsonRegua` para 0, 1
-e 3 pontos (3 vértices + 1 linha + 2 rótulos); `garantirCamadasRegua` idempotente com
-um mapa falso mínimo (`getSource`, `addSource`, `getLayer`, `addLayer`).
-
-## T4 — Interações no mapa (`web/src/lib/reguaMapa.ts` + `InitializeMap.tsx`)
-
-```ts
-export interface DepsInteracoesRegua {
-  ativa: () => boolean;
-  /** Camadas de pin a consultar no encaixe (filtradas por map.getLayer na hora). */
-  camadasNos: string[];
-  /** Reusar nodeNumDoPin de InitializeMap. */
-  nodeNumDe: (props: Record<string, unknown>) => number | null;
-  adicionar: (p: PontoRegua) => void;
-  mover: (i: number, lon: number, lat: number) => void;
-  concluir: () => void;
-  sair: () => void;
-}
-
-/** Instala os handlers da régua. Devolve uma função que remove todos. */
-export function instalarInteracoesRegua(map: maplibregl.Map, deps: DepsInteracoesRegua): () => void;
-```
-
-Comportamento:
-- `click` com `ativa()`: consulta as camadas de nós numa caixa de ±10 px em torno de
-  `e.point` (encaixe amigável ao toque). Achou nodeNum → `adicionar({tipo:"no",nodeNum})`;
-  senão → `adicionar({tipo:"livre", lon, lat})`.
-- `dblclick` com régua ativa: `e.preventDefault()` (sem zoom) e `concluir()`.
-- Arrasto: `mousedown` / `touchstart` em `CAMADA_REGUA_VERTICES` com régua ativa → lê
-  `indice` da feature, `e.preventDefault()`, `map.dragPan.disable()`; no `mousemove` /
-  `touchmove` chama `mover(indice, lng, lat)`; no `mouseup` / `touchend` reabilita o
-  `dragPan`. Arrasto que moveu NÃO pode também adicionar vértice (ignore o próximo
-  `click` logo após um arrasto que moveu).
-- Cursor: `crosshair` no canvas com régua ativa; `move` sobre um vértice. A função
-  exportada `definirCursorRegua(map, ativa: boolean)` aplica `crosshair` / `""`.
-- `keydown` `Escape` em `document` com régua ativa → `sair()`.
-
-Em `InitializeMap.tsx`:
-- Instalar uma vez em `aoCarregar` (proteja contra instalação dupla: `aoCarregar` roda
-  em `style.load` e em `load`). Remover no `onCleanup` do componente.
-- Os três `map.on("click", ...)` existentes (pin do nó, pin de parada, área livre)
-  retornam cedo quando `LocalState.localState.regua.ativa` for true. O handler de
-  `mouseleave` de `nodes-circle` que zera o cursor deve restaurar `crosshair` se a régua
-  estiver ativa.
-- Efeito: `definirCursorRegua(map, regua.ativa)`.
-
-Testes `web/tests/unit/reguaMapa-interacoes.test.ts` com mapa falso mínimo (guarda
-handlers de `on`/`off`, stub de `queryRenderedFeatures`, `dragPan`, `getCanvas`):
-clique adiciona ponto livre; clique perto de nó adiciona vértice de nó; clique com régua
-inativa não faz nada; dblclick chama `concluir` + `preventDefault`; arrasto chama `mover`
-e o clique seguinte é ignorado; Escape chama `sair`; a função de limpeza remove os handlers.
-
-## T5 — Botão da barra + painel de leitura
-
-`web/src/components/viewer/MapControls.tsx`: depois do bloco do período, botão da régua
-(mesmo `btnIcone`). `aria-label="Régua: medir distâncias"`, `aria-pressed` =
-`regua.ativa`, `title="Medir distâncias"`. Ligado: ícone âmbar + `ring-2 ring-amber-400`.
-Clique alterna `ativarRegua()` / `desativarRegua()`.
-
-Novo `web/src/components/viewer/ReguaPainel.tsx`, renderizado em `web/src/MapWindow.tsx`
-dentro do overlay, embaixo ao centro (`absolute bottom-3 left-1/2 -translate-x-1/2`,
-`pointer-events-auto`, `max-w-[calc(100vw-1rem)]`), só com `regua.ativa`. Mesmo estilo
-escuro dos menus (`bg-slate-950/95 border border-slate-700/80 rounded-lg`). Conteúdo
-(derivado reativamente de `resolverPontosRegua`):
-- 0 pontos: "Toque no mapa ou num nó para começar".
-- 1 ponto: "Toque no próximo ponto".
-- >= 2: total em destaque (`rotuloDistancia`); com > 2 pontos, "Em linha reta: X · rumo"
-  (primeiro→último); lista compacta de segmentos "1→2 · 850 m · NE 47°".
-- Linha de chegada só quando o vértice 0 é de nó, `localState.movimento[nodeNum]` tem
-  `parado !== true` e `etaMs(total, velocidadeKmh)` não é null:
-  "Chegada estimada: ~1h 20min a 12 km/h" (use `duracaoLabel` de `lib/dwell.js`).
-- Botões pequenos (ícone + texto, com `aria-label`): "Desfazer" (desabilitado com 0
-  pontos), "Concluir" (só se não concluída e >= 2 pontos), "Copiar" (>= 2 pontos;
-  `navigator.clipboard.writeText(textoCompartilhar(...))`, mostra "Copiado" por 2 s; em
-  falha ou sem clipboard mostra "Não foi possível copiar"), "Fechar" (`desativarRegua`).
-- Dica sob os botões enquanto não concluída: "Duplo clique para concluir · Esc para sair".
-
-Testes: em `MapControls.test.tsx`, novo `describe` do botão (aria-pressed alterna, store
-muda); `ReguaPainel.test.tsx`: dicas com 0/1 ponto, total com 3 pontos livres, chegada só
-para nó em movimento com velocidade, "Copiar" chama o clipboard com o texto esperado
-(mock de `navigator.clipboard`), "Fechar" desliga. Limpar o store no `afterEach`.
-
-## T6 — Entradas "Medir daqui"
-
-- `web/src/components/viewer/NodeInspector.tsx`: botão ao lado de "Centralizar no mapa",
-  mesmo estilo, `RulerIcon`, texto "Medir daqui", chama `ativarRegua(node().nodeNum)`.
-  Desabilitado quando o nó não tem posição confirmada (siga como o "Centralizar" decide).
-- Popup em `InitializeMap.tsx` (`gerarHtmlPopup`): rodapé com
-  `<button type="button" data-acao="medir-daqui" ...>Medir daqui</button>` (só quando o
-  pin tem nodeNum). Em `abrirPopupDoPin`, depois do `addTo(map)`, ouvir o clique em
-  `popup.getElement().querySelector('[data-acao="medir-daqui"]')` que chama
-  `LocalState.ativarRegua(nodeNum)` e fecha o popup.
-- Testes: botão do inspector liga a régua com o vértice 0 ancorado.
-
-## T7 — Só o revisor (não é para subagente)
-
-Conferência no navegador com `pnpm dev:test`, e2e de fumaça se viável, nota no
-AGENTS.md, revisão final.
+- No `lifespan` de `main.py`: depois de abrir o pool, `cfg = clima_config.carregar(os.environ)`;
+  se `cfg.ativo`, cria `AgendaClima(pool, cfg)` e `iniciar(stop)`; log
+  `"previsão do tempo: ligada (%d barcos, %02d:%02d UTC%+d)"` ou `"previsão do tempo: desligada"`.
+  No `finally`, `stop.set()` e `join(timeout=5)` ANTES de `pool.close()`.
+- Teste: com `RASTRO_CLIMA_ENABLED` ausente a agenda não é criada (monkeypatch de
+  `AgendaClima` para detectar); com `"1"` é criada e parada no shutdown. Sem Postgres:
+  siga o padrão de testes existentes que sobem o app sem banco, ou monkeypatch do
+  `ConnectionPool`.
+- `AGENTS.md`: nova lição **12. Previsão do tempo diária** (curta, no estilo das outras):
+  onde roda (thread na API, papel viewer), envs `RASTRO_CLIMA_*` e padrões, idempotência
+  por `created_by='clima'` + advisory lock, espaçamento de 1 min, tamanho em bytes, posição
+  exata vai ao Open-Meteo por decisão do dono (2026-10-09), desligada por padrão.
+- `docs/native-ingest-design.md`: perto de `RASTRO_CHAT_TTL_SECS`, uma linha citando as
+  envs `RASTRO_CLIMA_*` e apontando para a lição 12.
