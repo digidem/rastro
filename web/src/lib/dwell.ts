@@ -228,17 +228,22 @@ const centroDe = (L: Limpa, idx: readonly number[]): LngLat =>
 const ultimoMsDe = (L: Limpa, p: Parada): number =>
   L.ts[p.membros[p.membros.length - 1]];
 
-/** Índice final da janela candidata que começa em `i`; -1 se não cobre minDuracaoMs antes de uma lacuna. */
+/**
+ * Índice final da janela candidata que começa em `i`. Estende até cobrir minDuracaoMs
+ * e ter minFixes fixes (cadência esparsa exige mais tempo); -1 se a lacuna ou o fim
+ * da lista vier antes.
+ */
 function janelaCandidata(L: Limpa, i: number, o: DwellOptions): number {
   let j = i;
   while (
     j + 1 < L.ts.length &&
-    L.ts[j] - L.ts[i] < o.minDuracaoMs &&
+    (L.ts[j] - L.ts[i] < o.minDuracaoMs || j - i + 1 < o.minFixes) &&
     !quebraEm(L.ts, j, j + 1, o.gapMs)
   ) {
     j++;
   }
-  return L.ts[j] - L.ts[i] >= o.minDuracaoMs ? j : -1;
+  const cobre = L.ts[j] - L.ts[i] >= o.minDuracaoMs && j - i + 1 >= o.minFixes;
+  return cobre ? j : -1;
 }
 
 /** Deslocamento entre o centro dos primeiros e o dos últimos 2 min da janela. */
@@ -532,6 +537,18 @@ function montarPapel(
   return papel;
 }
 
+/**
+ * Posições do último segmento contínuo (sem lacuna > gapMs): o rumo congelado não
+ * pode herdar deslocamento não observado antes de uma lacuna. Menos de 2 ⇒ null.
+ */
+function aproximacaoParada(
+  suavizados: readonly ItemLinha[],
+  gapMs: number,
+): LngLat[] | null {
+  const ultimo = segmentar(suavizados, gapMs).at(-1) ?? [];
+  return ultimo.length >= 2 ? ultimo.map((it) => it.pos) : null;
+}
+
 export function simplifyTrackDwells(
   pontos: readonly FixDwell[],
   opcoes: Partial<DwellOptions> = {},
@@ -552,7 +569,7 @@ export function simplifyTrackDwells(
     linhas,
     dwells: paradas.map((p) => paraDwell(L, p, temposSpike)),
     parado,
-    aproximacao: parado ? suavizados.map((it) => it.pos) : null,
+    aproximacao: parado ? aproximacaoParada(suavizados, o.gapMs) : null,
     velocidadeKmh: calcularVelocidade(L, parado),
     distanciaM,
     papel: montarPapel(pontos.length, entradas, spikes, L, paradas),

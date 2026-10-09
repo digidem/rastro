@@ -235,7 +235,8 @@ def qualidade_do_firmware(
 ) -> dict:
     """Crus do meshtastic.Position → unidades do domínio (chaves de PositionRecord).
 
-    PDOP/HDOP vêm em centésimos; ground_speed em m/s; ground_track em 1e-5 graus;
+    PDOP/HDOP vêm em centésimos; ground_speed em km/h inteiro (firmware 2.7.26,
+    `reader.speed.kmph()`), convertido para m/s (÷ 3,6); ground_track em 1e-5 graus;
     precision_bits é inteiro puro. Zero = ausente: proto3 não distingue 0 de campo
     não enviado, então 0 vira None (inclusive para rumo 0 graus, limitação aceita).
     """
@@ -249,7 +250,7 @@ def qualidade_do_firmware(
     return {
         "pdop": None if pdop_c is None else pdop_c / 100.0,
         "hdop": None if hdop_c is None else hdop_c / 100.0,
-        "ground_speed_ms": None if speed is None else float(speed),
+        "ground_speed_ms": None if speed is None else speed / 3.6,
         "ground_track_deg": None if track is None else track / 1e5,
         "precision_bits": bits,
     }

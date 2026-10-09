@@ -635,6 +635,9 @@ const analisarTrilha = (
 // Parada em curso sem fix há mais que isto deixa de ser "ancorada" (ms).
 const ANCORADO_MAX_MS = 30 * 60_000;
 
+// Relógio do store (reativo e controlável em teste); Date.now() só se não estiver definido.
+const relogioMs = (): number => LocalState.localState.nowMs || Date.now();
+
 const registrarMovimento = (
   nodeNum: number,
   simp: TrilhaSimplificada | null,
@@ -645,7 +648,7 @@ const registrarMovimento = (
   const ultima = simp.dwells[simp.dwells.length - 1];
   // Mesma regra do rótulo do mapa: "parado desde" só com fix recente.
   const fresca =
-    ultima !== undefined && Date.now() - ultima.ultimoFixMs < ANCORADO_MAX_MS;
+    ultima !== undefined && relogioMs() - ultima.ultimoFixMs < ANCORADO_MAX_MS;
   LocalState.setNodeMovimento(nodeNum, {
     parado: simp.parado,
     desdeMs: simp.parado && ultima && fresca ? ultima.chegadaMs : null,
@@ -665,7 +668,7 @@ const rotuloParada = (d: Dwell, agoraMs: number): string => {
 };
 
 const featuresDeParadas = (simp: TrilhaSimplificada | null) => {
-  const agoraMs = Date.now();
+  const agoraMs = relogioMs();
   return (simp?.dwells ?? []).map((d) => ({
     type: "Feature" as const,
     properties: {
@@ -807,6 +810,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   // reaplica daqui, sem novo fetch; null = nenhuma trilha analisada.
   let pontosDaTrilha: ReturnType<typeof featuresDePontos> | null = null;
   let noDaTrilha: number | null = null; // nó dono de `pontosDaTrilha`
+  // Última parada analisada e nó dono: o relógio reavalia rótulos sem nova busca.
+  let simpDaTrilha: { simp: TrilhaSimplificada; nodeNum: number } | null = null;
   // Pins reais (antes do espalhamento); reaplicados quando o zoom muda.
   let ultimosPins: Parameters<typeof espalharPinsSobrepostos>[0] | null = null;
 
@@ -846,6 +851,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   const esquecerTrilha = () => {
     pontosDaTrilha = null;
     noDaTrilha = null;
+    simpDaTrilha = null;
     LocalState.setTrilhaCarregada(false);
   };
 
@@ -1262,12 +1268,27 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         // Guarda a análise; o filtro do toggle decide o que vai ao mapa.
         pontosDaTrilha = featuresDePontos(t, simp);
         noDaTrilha = sel;
+        simpDaTrilha = simp === null ? null : { simp, nodeNum: sel };
         LocalState.setTrilhaCarregada(true);
         aplicarPontos(map);
       })
       .catch(() => {
         // 401/rede: painel e indicador já refletem; mapa fica como está.
       });
+  });
+
+  // Relógio: "Ancorado"/"Parado" e "parado desde" envelhecem sem nova busca da trilha.
+  createEffect(() => {
+    LocalState.localState.nowMs; // rastreado: gatilho do relógio do store
+    const map = currentView();
+    const cache = simpDaTrilha;
+    if (map === undefined || !carregado() || cache === null) {
+      return;
+    }
+    untrack(() => {
+      aplicarParadas(map, cache.simp);
+      registrarMovimento(cache.nodeNum, cache.simp);
+    });
   });
 
   // Reação à geração de sessão (logout/401): limpa JÁ a visualização —

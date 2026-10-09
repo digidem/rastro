@@ -393,6 +393,31 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
     expect(d.dispersaoP90M).toBeGreaterThanOrEqual(d.dispersaoP50M);
     expect(d.ultimoFixMs).toBe(fimMs(ancora));
   });
+
+  it("cadência de 5 min (10 min = 3 fixes): 50 fixes parados viram exatamente 1 dwell", () => {
+    const pts = Array.from({ length: 50 }, (_, k) =>
+      fix(5 * k, 25 * Math.sin(k * 1.7), 25 * Math.cos(k * 2.3)),
+    );
+    expect(simplifyTrackDwells(pts).dwells).toHaveLength(1);
+  });
+
+  it("cadência de 6 min: 50 fixes parados viram exatamente 1 dwell", () => {
+    const pts = Array.from({ length: 50 }, (_, k) =>
+      fix(6 * k, 25 * Math.sin(k * 1.7), 25 * Math.cos(k * 2.3)),
+    );
+    expect(simplifyTrackDwells(pts).dwells).toHaveLength(1);
+  });
+
+  it("após lacuna de 118 min só com parada, o rumo não herda deslocamento antes da lacuna", () => {
+    const antes = navegar(0, 10); // para leste, termina em x=5400
+    const depois = fundear(10 + 118, 30, 0).map((p) => ({
+      ...p,
+      pos: [p.pos[0], LAT + 3000 / GRAU_M] as LngLat,
+    })); // parado 3 km ao norte
+    const simp = simplifyTrackDwells([...antes, ...depois]);
+    expect(simp.parado).toBe(true);
+    expect(bearingComParada(simp)).toBeNull();
+  });
 });
 
 describe("velocidade", () => {

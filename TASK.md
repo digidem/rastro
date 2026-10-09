@@ -237,7 +237,7 @@ Arquivos (encontre todos os pontos com `grep -rn sats services deploy` excluindo
    nova) e num script de migração idempotente com backup como o `migrate-02`.
    Nenhum `DROP`/`RENAME`/mudança de tipo. Views que listam colunas de `positions`
    só ganham colunas novas no FIM.
-2. Decodificação: `pdop`/`hdop` vêm em centésimos (`PDOP / 100`); `ground_speed` em m/s;
+2. Decodificação: `pdop`/`hdop` vêm em centésimos (`PDOP / 100`); `ground_speed` em km/h inteiro ⇒ m/s = `/ 3.6`;
    `ground_track` em 1e-5 graus (`/ 1e5`). Valor 0 = ausente ⇒ `None`
    (o protobuf não distingue). Campo ausente nunca derruba o fix.
 3. Ingest: INSERT com as colunas novas nos DOIS pontos de `db.py` (~linhas 325 e 625).

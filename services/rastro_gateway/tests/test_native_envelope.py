@@ -448,7 +448,7 @@ def test_qualidade_do_firmware_decodificada_e_zero_vira_none() -> None:
         time=NOW - 60,
         PDOP=150,
         HDOP=90,
-        ground_speed=3,
+        ground_speed=36,
         ground_track=12_345_000,
         precision_bits=16,
     )
@@ -456,7 +456,7 @@ def test_qualidade_do_firmware_decodificada_e_zero_vira_none() -> None:
     assert dec.position is not None
     assert dec.position.pdop == pytest.approx(1.5)
     assert dec.position.hdop == pytest.approx(0.9)
-    assert dec.position.ground_speed_ms == pytest.approx(3.0)
+    assert dec.position.ground_speed_ms == pytest.approx(10.0)
     assert dec.position.ground_track_deg == pytest.approx(123.45)
     assert dec.position.precision_bits == 16
 

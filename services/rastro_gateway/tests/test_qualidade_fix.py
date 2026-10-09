@@ -25,11 +25,11 @@ from rastro_gateway.ingest import db as ingest_db
 
 def test_qualidade_converte_unidades_do_protobuf() -> None:
     q = qualidade_do_firmware(
-        pdop=150, hdop=90, ground_speed=3, ground_track=12_345_000, precision_bits=16
+        pdop=150, hdop=90, ground_speed=36, ground_track=12_345_000, precision_bits=16
     )
     assert q["pdop"] == pytest.approx(1.5)
     assert q["hdop"] == pytest.approx(0.9)
-    assert q["ground_speed_ms"] == pytest.approx(3.0)
+    assert q["ground_speed_ms"] == pytest.approx(10.0)
     assert q["ground_track_deg"] == pytest.approx(123.45)
     assert q["precision_bits"] == 16
 
@@ -57,7 +57,7 @@ def _registro_com_qualidade() -> PositionRecord:
         lat_i=-345678901,
         lon_i=-625725440,
         sats=None,
-        **qualidade_do_firmware(150, 90, 3, 12_345_000, 16),
+        **qualidade_do_firmware(150, 90, 36, 12_345_000, 16),
     )
 
 
@@ -67,7 +67,7 @@ def test_mqtt_round_trip_preserva_qualidade() -> None:
     assert isinstance(lido, PositionRecord)
     assert lido.pdop == pytest.approx(1.5)
     assert lido.hdop == pytest.approx(0.9)
-    assert lido.ground_speed_ms == pytest.approx(3.0)
+    assert lido.ground_speed_ms == pytest.approx(10.0)
     assert lido.ground_track_deg == pytest.approx(123.45)
     assert lido.precision_bits == 16
 
@@ -104,7 +104,7 @@ def test_packet_filter_converte_campos_json_do_firmware() -> None:
                 "time": 1_760_000_000,
                 "PDOP": 150,
                 "HDOP": 90,
-                "groundSpeed": 3,
+                "groundSpeed": 36,
                 "groundTrack": 12_345_000,
                 "precisionBits": 16,
             }
@@ -114,7 +114,7 @@ def test_packet_filter_converte_campos_json_do_firmware() -> None:
     assert isinstance(rec, PositionRecord)
     assert rec.pdop == pytest.approx(1.5)
     assert rec.hdop == pytest.approx(0.9)
-    assert rec.ground_speed_ms == pytest.approx(3.0)
+    assert rec.ground_speed_ms == pytest.approx(10.0)
     assert rec.ground_track_deg == pytest.approx(123.45)
     assert rec.precision_bits == 16
 
@@ -197,4 +197,4 @@ def test_insert_com_colunas_novas_grava_qualidade_no_fim() -> None:
     sql_insert, linhas = [(s, p) for s, p in conn.log if s.lstrip().startswith("INSERT")][0]
     assert "pdop, hdop, ground_speed_ms, ground_track_deg, precision_bits" in sql_insert
     assert sql_insert.count("%s") == 13 + 5
-    assert linhas[0][13:] == (1.5, 0.9, 3.0, pytest.approx(123.45), 16)
+    assert linhas[0][13:] == (1.5, 0.9, 10.0, pytest.approx(123.45), 16)

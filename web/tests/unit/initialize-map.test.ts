@@ -922,6 +922,41 @@ describe("InitializeMap — paradas com dispersão (T4)", () => {
     });
     expect((popups.at(-1) as FakePopupLike).html).not.toContain("descartados");
   });
+  it("rótulo 'Ancorado' envelhece com o relógio do store, sem nova busca da trilha", async () => {
+    const pontos = [
+      ...navegacao({
+        de: deslocar(C1, -6000, 0),
+        para: C1,
+        inicioMs: T0,
+        kmh: 20,
+      }),
+      ...parada({
+        centro: C1,
+        inicioMs: T0 + 20 * min,
+        duracaoMs: 60 * min,
+        semente: 5,
+      }),
+    ];
+    const fimMs = T0 + 80 * min; // último fix da parada em curso
+    const track = vi.fn().mockResolvedValue(respostaDe(pontos));
+    montar({ track } as unknown as DataValue["api"]);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.tickNow(fimMs + 5 * min);
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    const rotulo = () =>
+      ultimoSetData("dwell-points").features[0].properties.rotulo as string;
+    expect(rotulo().startsWith("Ancorado há ")).toBe(true);
+
+    LocalState.tickNow(fimMs + 40 * min); // passou de 30 min sem fix novo
+    expect(rotulo().startsWith("Parado 1h ")).toBe(true);
+    expect(rotulo()).toContain("· último fix há 40m");
+    expect(track).toHaveBeenCalledTimes(1);
+  });
+
   describe("fixes brutos (T5)", () => {
     // Trilha com um spike: o fix 200 sai 400 m do centro da primeira parada.
     const trilhaComSpike = (): FixDwell[] => {
