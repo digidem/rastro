@@ -71,11 +71,12 @@ export const ReguaPainel: Component = () => {
 
   // Chegada só quando o vértice 0 é um nó em movimento com velocidade conhecida.
   const chegada = createMemo(() => {
-    const primeiroBruto = localState.regua.pontos[0];
-    if (primeiroBruto?.tipo !== "no") {
+    // Vértice resolvido: nó ausente do latest não conta como origem.
+    const primeiro = vertices()[0];
+    if (primeiro?.indice !== 0 || primeiro.nodeNum === null) {
       return null;
     }
-    const mov = localState.movimento[primeiroBruto.nodeNum];
+    const mov = localState.movimento[primeiro.nodeNum];
     if (!mov || mov.parado === true) {
       return null;
     }
