@@ -3,6 +3,7 @@ import { Show } from "solid-js";
 import {
   ClockCounterClockwiseIcon,
   CrosshairSimpleIcon,
+  RulerIcon,
   XIcon,
 } from "solid-phosphor/regular";
 import { useMap } from "../../hooks/useMap.jsx";
@@ -80,7 +81,7 @@ export interface NodeInspectorProps {
 
 /** Detalhe do nó selecionado: compacto, ergonômico e de alto contraste. */
 export const NodeInspector: Component<NodeInspectorProps> = (props) => {
-  const { localState, select } = useStore();
+  const { localState, select, ativarRegua } = useStore();
   const { centerOnNode } = useMap();
 
   // Alerta ativo do nó: base dos badges (mesma fonte do NodeList).
@@ -190,6 +191,18 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
                 aria-hidden="true"
               />
               <span>Centralizar no mapa</span>
+            </button>
+
+            {/* Liga a régua com o primeiro vértice ancorado neste nó */}
+            <button
+              type="button"
+              class="w-full h-10 rounded-lg border border-slate-600 bg-slate-800/80 hover:bg-slate-700 disabled:border-slate-800 disabled:text-slate-500 text-slate-100 text-xs font-bold flex items-center justify-center gap-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+              disabled={!hasConfirmedPosition(node())}
+              aria-label="Medir distância a partir deste nó"
+              onClick={() => ativarRegua(node().nodeNum)}
+            >
+              <RulerIcon class="h-4 w-4 text-amber-400" aria-hidden="true" />
+              <span>Medir daqui</span>
             </button>
 
             <Show when={props.onOpenLog}>

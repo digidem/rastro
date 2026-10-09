@@ -121,6 +121,10 @@ vi.mock("maplibre-gl", () => {
     addTo() {
       return this;
     }
+    // Sem DOM real: o popup não tem elemento; o botão "Medir daqui" não é ligado no teste.
+    getElement() {
+      return null;
+    }
     constructor(_opts: unknown) {
       popups.push(this);
     }
@@ -694,6 +698,38 @@ describe("InitializeMap — basemap padrão OSM", () => {
     expect(popup.html).toContain("/devices/heltec_v4.svg");
     expect(popup.html).toContain("Heltec V4");
     expect(popup.html).not.toContain("Modelo não informado");
+  });
+
+  it("popup de pin de nó tem o botão 'Medir daqui'; pin sem nó não tem", async () => {
+    const api = { track: vi.fn() } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+
+    mapa().renderizados = [{}];
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: [-70.0, -5.0] },
+          properties: { nodeNum: 42, nome: "Nó Medição" },
+        },
+      ],
+    });
+    expect((popups.at(-1) as FakePopupLike).html).toContain(
+      'data-acao="medir-daqui"',
+    );
+
+    mapa().renderizados = [{}];
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: [-70.0, -5.0] },
+          properties: { nome: "Parada sem nó" },
+        },
+      ],
+    });
+    expect((popups.at(-1) as FakePopupLike).html).not.toContain(
+      'data-acao="medir-daqui"',
+    );
   });
 
   it("camada boat-tracks-line é tracejada indicando trilha coletiva", () => {

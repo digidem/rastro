@@ -520,6 +520,8 @@ const nodeNumDoPin = (props: Record<string, unknown>): number | null =>
   typeof props.nodeNum === "number" ? props.nodeNum : null;
 
 interface InfoPinPopup {
+  /** nodeNum do pin; null para pins sem nó (ex.: parada), sem botão "Medir daqui". */
+  nodeNum: number | null;
   nome: string;
   shortName: string;
   kind: NodeKind;
@@ -536,6 +538,7 @@ const extrairInfoDoPin = (props: Record<string, unknown>): InfoPinPopup => {
   const node =
     nodeNum !== null ? LocalState.localState.nodes[nodeNum] : undefined;
   return {
+    nodeNum,
     nome: node?.nome ?? (typeof props.nome === "string" ? props.nome : "nó"),
     shortName:
       node?.shortName ??
@@ -597,6 +600,12 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
     <span class="text-slate-600">·</span>
   `;
 
+  // Rodapé com a entrada da régua: só para pins de nó (ancora o vértice 0).
+  const botaoMedir =
+    info.nodeNum !== null
+      ? `<button type="button" data-acao="medir-daqui" class="mt-2 w-full rounded-md border border-amber-400/60 px-2 py-1 text-[11px] font-semibold text-amber-300 hover:bg-slate-800">Medir daqui</button>`
+      : "";
+
   return `
     <div class="p-1 text-slate-100 min-w-[260px] max-w-[340px]">
       <div class="flex items-start gap-3">
@@ -626,6 +635,7 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
         ${tagIdade}
         <span>fix: ${esc(dataFixa(info.posTime))}</span>
       </div>
+      ${botaoMedir}
     </div>
   `;
 };
@@ -637,10 +647,22 @@ const abrirPopupDoPin = (
   props: Record<string, unknown>,
 ): Popup => {
   const info = extrairInfoDoPin(props);
-  return new Popup({ offset: 16, maxWidth: "380px" })
+  const popup = new Popup({ offset: 16, maxWidth: "380px" })
     .setLngLat(pos)
     .setHTML(gerarHtmlPopup(info))
     .addTo(map);
+  // Clique em "Medir daqui" liga a régua ancorada neste nó e fecha o popup.
+  const { nodeNum } = info;
+  if (nodeNum !== null) {
+    popup
+      .getElement()
+      ?.querySelector<HTMLButtonElement>('[data-acao="medir-daqui"]')
+      ?.addEventListener("click", () => {
+        LocalState.ativarRegua(nodeNum);
+        popup.remove();
+      });
+  }
+  return popup;
 };
 
 type TrilhaApi = {

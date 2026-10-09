@@ -110,3 +110,32 @@ describe("NodeInspector — Fixes brutos (T5)", () => {
     LocalState.setMostrarFixesBrutos(false);
   });
 });
+
+describe("NodeInspector — Medir daqui (T6)", () => {
+  beforeEach(() => {
+    LocalState.resetViewerState();
+    LocalState.setNodes([
+      { ...NODE, posTime: "2026-10-08T12:00:00Z", lon: -70.0, lat: -5.0 },
+    ]);
+  });
+
+  afterEach(() => LocalState.desativarRegua());
+
+  it("clicar em Medir daqui liga a régua com o vértice 0 ancorado no nó", () => {
+    render(() => (
+      <MapContext.Provider value={{ centerOnNode: vi.fn() } as never}>
+        <LocalStateContext.Provider value={LocalState}>
+          <NodeInspector node={() => NODE} nowMs={() => Date.now()} />
+        </LocalStateContext.Provider>
+      </MapContext.Provider>
+    ));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Medir distância a partir deste nó" }),
+    );
+    expect(LocalState.localState.regua).toEqual({
+      ativa: true,
+      concluida: false,
+      pontos: [{ tipo: "no", nodeNum: NODE.nodeNum }],
+    });
+  });
+});
