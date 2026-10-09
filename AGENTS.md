@@ -39,11 +39,11 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 
 | Tarefa | Comando |
 |---|---|
-| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 425 testes) |
-| Servidor dev com dados reais da API | `cd web && pnpm dev` (proxy para `VITE_API_TARGET`, definido em `web/.env.development`) |
+| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 430 testes) |
+| Servidor dev com dados reais da API | `cd web && pnpm dev` (proxy para `VITE_API_TARGET`, definido em `web/.env.development`, não versionado: num worktree novo, copie do checkout principal e apague antes de remover o worktree, pois guarda o token da API) |
 | Servidor dev com dados de teste (fixtures) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:test` (acessível via LAN/VPN; `dev:mock` é alias) |
 | Lint / Formatação do frontend | `cd web && pnpm biome check` |
-| Typecheck do frontend | `cd web && pnpm typecheck` — não concluiu em 400 s no ambiente de desenvolvimento de 2026-10-08 (memória limitada); não use como gate sem verificar |
+| Typecheck do frontend | `cd web && timeout 400 npx tsc --noEmit -p .` — conclui em ~4,3 min (2026-10-09) e é gate: inclua nos briefs de subagente por tarefa (na régua, pulá-lo deixou 3 erros de tipo para o fim) |
 | Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (314 testes) |
 | Simulação de deploy CapRover | `deploy/sim/run.sh <template.yml>` |
 | Script de limpeza de banco legado | `python3 scripts/rastro_cleanup_legacy_db.py --dry-run` |
