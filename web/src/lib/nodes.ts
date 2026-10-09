@@ -4,6 +4,7 @@ import type {
   NodeInfo,
   NodeKind,
 } from "../store.js";
+import type { PinCollection } from "./overlap.js";
 
 /**
  * Regras puras de apresentação da malha: posição confirmada, busca, filtros,
@@ -337,11 +338,7 @@ export function formatDateTimeJavari(iso: string | null): string {
  * FeatureCollection dos pins: apenas nós com posição confirmada, com as
  * propriedades que pintam por categoria e sinalizam fix antigo.
  */
-export function nodesGeoJson(
-  nos: NodeInfo[],
-  nowMs: number,
-): // biome-ignore lint/correctness/noUndeclaredVariables: GeoJSON é o namespace global dos tipos de @types/geojson (transitivo do maplibre-gl); o Biome só conhece globais de browser/Node.
-GeoJSON.FeatureCollection {
+export function nodesGeoJson(nos: NodeInfo[], nowMs: number): PinCollection {
   const features = nos.filter(hasConfirmedPosition).map((n) => {
     const properties: Record<string, unknown> = {
       id: n.nodeNum,
@@ -461,7 +458,9 @@ export function inferHardwareFromName(nome?: string): string | null {
  * Rótulo amigável do modelo de hardware para exibição textual na sidebar.
  * Normaliza nomes técnicos e infere do nome do nó quando hwModel estiver ausente.
  */
-export function hardwareModelLabel(node: NodeInfo): string | null {
+export function hardwareModelLabel(
+  node: Pick<NodeInfo, "nome" | "hwModel">,
+): string | null {
   const raw = node.hwModel || inferHardwareFromName(node.nome);
   if (!raw) {
     return null;

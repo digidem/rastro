@@ -485,7 +485,7 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
     hardwareModelLabel({
       nome: info.nome,
       hwModel: info.hwModel || null,
-    } as { nome: string; hwModel?: string | null }) ??
+    }) ??
     (info.hwModel || "Modelo não informado");
 
   const svgUrl = deviceModelSvgUrl(

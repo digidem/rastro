@@ -14,7 +14,7 @@ interface PinFeature {
   geometry: { type: "Point"; coordinates: number[] };
 }
 
-interface PinCollection {
+export interface PinCollection {
   type: "FeatureCollection";
   features: PinFeature[];
 }
