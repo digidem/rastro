@@ -47,7 +47,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [x] H8 Dump com coordenadas reais apagado em 2026-10-09 (decisão do dono). Pasta `~/rastro-backups/` ficou vazia.
 - [ ] H9 `RASTRO_NATIVE_SECRET` guardado em cofre.
 - [ ] H11/H12 Aprovar commits e pushes: `rastro` (`7ef9e81` à frente de `origin/main`), `univaja-lora` (sem upstream, docs misturadas com rename FLEET→EVU), `caprover-one-click-apps`, `.agents/`; apagar `deploy/sim.nonexistent_placeholder`.
-- [ ] H1 Caminho TLS para o app iOS (baixa prioridade; só se o app vier).
+- [x] H1 App iOS: não planejado (decidido 2026-10-09). Certificado TLS confiável para iOS fica fora do escopo por ora.
 - [ ] H14 Atalaia: adicionar `univaja-atalaia-barco-1` ao inventário quando houver rádio.
 - [ ] H16 **Vazamento do chat (adiado pelo dono em 2026-10-09):** mensagem enviada a qualquer destino (inclusive "cidade") é broadcast no canal EVU e chega a todos os barcos no alcance. Decidir depois: pausar envios aos barcos, manter com aviso na UI, ou planejar endereçamento privado por barco (exige chave por dispositivo; fora da v1). Detalhes: seção «Tarefa 4/5» → achado de 2026-10-09.
 
