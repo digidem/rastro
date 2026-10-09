@@ -871,6 +871,9 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   let pontosDaTrilha: ReturnType<typeof featuresDePontos> | null = null;
   let noDaTrilha: number | null = null; // nó dono de `pontosDaTrilha`
   let noEnquadrado: number | null = null; // nó para onde a câmera já voou
+  let janelaDaTrilha: number | null = null; // período de `pontosDaTrilha`
+  const trilhaNaoSeAplica = (sel: number, horas: number) =>
+    noDaTrilha !== sel || janelaDaTrilha !== horas;
   // Só na troca de seleção: poll e troca de período não puxam a câmera de volta.
   const enquadrarSeNovo = (map: maplibregl, sel: number, node: NodeInfo) => {
     if (noEnquadrado === sel || !hasConfirmedPosition(node)) {
@@ -923,6 +926,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   const esquecerTrilha = () => {
     pontosDaTrilha = null;
     noDaTrilha = null;
+    janelaDaTrilha = null;
     simpDaTrilha = null;
     LocalState.setTrilhaCarregada(false);
   };
@@ -1277,6 +1281,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       // Seleção órfã (nó sumiu do reconcile): trilha congelada do nó velho
       // não pode ficar no mapa quando a lista some.
       trackReq++;
+      noEnquadrado = null;
       esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
       pointsSrc.setData(EMPTY_FC);
@@ -1287,9 +1292,11 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     // a trilha é buscada de qualquer forma.
     enquadrarSeNovo(map, sel, node);
     const req = ++trackReq;
-    // Troca de seleção: a análise anterior sai já. Refetch do mesmo nó (polling)
-    // mantém a análise e o toggle até a resposta nova chegar.
-    if (noDaTrilha !== sel) {
+    const horas = LocalState.localState.janelaTrilhaH; // tracked: trocar a janela rebusca
+    // Troca de seleção ou de período: a análise anterior sai já (se a busca
+    // nova falhar, o mapa não mostra 14 dias sob o rótulo "24 h"). Refetch do
+    // mesmo nó e período (polling) mantém a análise até a resposta nova chegar.
+    if (trilhaNaoSeAplica(sel, horas)) {
       // a trilha, os fixes e o círculo do nó anterior saem do mapa já
       esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
@@ -1297,7 +1304,6 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       limparParadas(map);
     }
     const target = node.nodeId || String(node.nodeNum);
-    const horas = LocalState.localState.janelaTrilhaH; // tracked: trocar a janela rebusca
     buscarTrilhaJanela(api, target, horas)
       .then((t) => {
         if (req !== trackReq) {
@@ -1337,6 +1343,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         // Guarda a análise; o filtro do toggle decide o que vai ao mapa.
         pontosDaTrilha = featuresDePontos(t, simp);
         noDaTrilha = sel;
+        janelaDaTrilha = horas;
         simpDaTrilha = simp === null ? null : { simp, nodeNum: sel };
         LocalState.setTrilhaCarregada(true);
         aplicarPontos(map);

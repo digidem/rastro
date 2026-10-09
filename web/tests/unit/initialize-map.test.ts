@@ -261,6 +261,49 @@ describe("InitializeMap — trilha", () => {
     LocalState.setShowInactive(false);
   });
 
+  it("troca de período tira a trilha antiga já, mesmo se a busca nova falhar", async () => {
+    let chamadas = 0;
+    const api = {
+      // Só a primeira busca (14 dias) responde; as seguintes falham.
+      track: vi.fn().mockImplementation(() =>
+        chamadas++ === 0
+          ? Promise.resolve({
+              line: null,
+              lines: [
+                [
+                  [-30.02, -4.22],
+                  [-30.03, -4.23],
+                ],
+              ],
+              points: [],
+            })
+          : Promise.reject(new Error("503")),
+      ),
+    } as unknown as DataValue["api"];
+    LocalState.setJanelaTrilhaH(336);
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    const trilha = mapa().getSource("track").setData;
+    expect(trilha).toHaveBeenLastCalledWith(
+      expect.objectContaining({ features: [expect.anything()] }),
+    );
+
+    LocalState.setJanelaTrilhaH(24);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+
+    expect(trilha).toHaveBeenLastCalledWith(
+      expect.objectContaining({ features: [] }),
+    );
+    LocalState.setJanelaTrilhaH(336);
+  });
+
   it("poll e troca de período não puxam a câmera de volta ao nó", async () => {
     const api = {
       track: vi.fn().mockResolvedValue({ line: null, lines: [], points: [] }),
