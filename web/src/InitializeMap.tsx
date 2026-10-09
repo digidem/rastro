@@ -31,6 +31,8 @@ import {
 } from "./lib/nodes.js";
 import { espalharPinsSobrepostos } from "./lib/overlap.js";
 import { adicionarOverlays, fetchOverlays } from "./lib/overlays.js";
+import { resolverPontosRegua } from "./lib/regua.js";
+import { atualizarRegua, garantirCamadasRegua } from "./lib/reguaMapa.js";
 import { buscarTrilhaJanela } from "./lib/trilhaJanela.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
@@ -1012,6 +1014,16 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         return;
       }
       iniciado = true;
+      // Camadas da régua antes de setCarregado: os efeitos disparados por ele já
+      // encontram a fonte. Sem beforeId, ficam por cima de pins e trilhas.
+      garantirCamadasRegua(map);
+      atualizarRegua(
+        map,
+        resolverPontosRegua(
+          LocalState.localState.regua.pontos,
+          LocalState.localState.nodes,
+        ),
+      );
       setCarregado(true);
       // Camadas GeoJSON extras (RASTRO_OVERLAYS_URL na API), sob pins e trilhas
       fetchOverlays().then((camadas) =>
@@ -1405,6 +1417,21 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       return;
     }
     aplicarPontos(map);
+  });
+
+  // Régua: reage a pontos e às posições dos nós ancorados (resolvidos ao vivo aqui dentro)
+  createEffect(() => {
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    atualizarRegua(
+      map,
+      resolverPontosRegua(
+        LocalState.localState.regua.pontos,
+        LocalState.localState.nodes,
+      ),
+    );
   });
 
   // Mapa base: reage a mudanças em localState.basemapMode

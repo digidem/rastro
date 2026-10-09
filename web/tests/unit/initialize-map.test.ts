@@ -580,16 +580,22 @@ describe("InitializeMap — basemap padrão OSM", () => {
   it("sem basemap próprio (HEAD falha) mantém o OSM e não adiciona pmtiles", async () => {
     const m = prepara(false);
     await new Promise((r) => setTimeout(r, 10));
-    expect(m.addSource).not.toHaveBeenCalled();
+    // A fonte da régua entra sempre; o basemap próprio, não.
+    expect(m.addSource).not.toHaveBeenCalledWith("basemap", expect.anything());
   });
 
   it("com basemap próprio (HEAD ok) adiciona o pmtiles e esconde o OSM", async () => {
     const m = prepara(true);
-    await vi.waitFor(() => expect(m.addSource).toHaveBeenCalledTimes(1));
-    const [nome, def] = m.addSource.mock.calls[0] as [string, { type: string }];
-    expect(nome).toBe("basemap");
+    const chamadasBasemap = () =>
+      m.addSource.mock.calls.filter(([nome]) => nome === "basemap");
+    await vi.waitFor(() => expect(chamadasBasemap()).toHaveLength(1));
+    const [, def] = chamadasBasemap()[0] as [string, { type: string }];
     expect(def.type).toBe("vector");
-    expect(m.addLayer).toHaveBeenCalledTimes(4);
+    // Só as camadas do basemap (as da régua, "regua-*", entram à parte).
+    const camadasBasemap = m.addLayer.mock.calls.filter(
+      ([camada]) => !String((camada as { id: string }).id).startsWith("regua"),
+    );
+    expect(camadasBasemap).toHaveLength(4);
     expect(m.setLayoutProperty).toHaveBeenCalledWith(
       "osm-base",
       "visibility",
