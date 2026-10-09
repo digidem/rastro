@@ -72,23 +72,7 @@ export const MapControls: Component<MapControlsProps> = (props) => {
       if (e.key === "Escape") {
         setMenuJanelaAberto(false);
         menuJanelaTriggerRef?.focus();
-        return;
       }
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
-        return;
-      }
-      const opcoes = [
-        ...(menuJanelaRef?.querySelectorAll<HTMLButtonElement>(
-          '[role="menuitemradio"]',
-        ) ?? []),
-      ];
-      if (opcoes.length === 0) {
-        return;
-      }
-      e.preventDefault();
-      const atual = opcoes.indexOf(document.activeElement as HTMLButtonElement);
-      const passo = e.key === "ArrowDown" ? 1 : -1;
-      opcoes[(atual + passo + opcoes.length) % opcoes.length].focus();
     };
     document.addEventListener("pointerdown", aoClicarFora);
     document.addEventListener("keydown", aoTeclar);
@@ -136,6 +120,37 @@ export const MapControls: Component<MapControlsProps> = (props) => {
   const selecionarModo = (modo: BasemapMode) => {
     setBasemapMode(modo);
     setMenuCamadasAberto(false);
+  };
+
+  // Setas só dentro do menu: não roubam teclas de outros controles.
+  const aoTeclarNoMenuJanela = (e: KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+      return;
+    }
+    const opcoes = [
+      ...(menuJanelaRef?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitemradio"]',
+      ) ?? []),
+    ];
+    if (opcoes.length === 0) {
+      return;
+    }
+    e.preventDefault();
+    const atual = opcoes.indexOf(document.activeElement as HTMLButtonElement);
+    const passo = e.key === "ArrowDown" ? 1 : -1;
+    opcoes[(atual + passo + opcoes.length) % opcoes.length].focus();
+  };
+
+  // Tab para fora do menu fecha (o foco foi para outro lugar, não para o botão).
+  const aoPerderFocoMenuJanela = (e: FocusEvent) => {
+    const destino = e.relatedTarget as Node | null;
+    if (
+      destino !== null &&
+      !menuJanelaRef?.contains(destino) &&
+      !menuJanelaTriggerRef?.contains(destino)
+    ) {
+      setMenuJanelaAberto(false);
+    }
   };
 
   const selecionarJanela = (h: JanelaTrilhaH) => {
@@ -394,6 +409,8 @@ export const MapControls: Component<MapControlsProps> = (props) => {
               id="menu-janela-trilha"
               role="menu"
               aria-label="Período da trilha"
+              onKeyDown={aoTeclarNoMenuJanela}
+              onFocusOut={aoPerderFocoMenuJanela}
               class="absolute right-0 top-full mt-1.5 w-40 rounded-lg bg-slate-950/95 border border-slate-700/80 shadow-2xl backdrop-blur-md p-1 z-30 flex flex-col gap-0.5 text-xs"
             >
               <div class="px-2.5 pt-1 pb-0.5 text-[10px] uppercase tracking-wide text-slate-500">
