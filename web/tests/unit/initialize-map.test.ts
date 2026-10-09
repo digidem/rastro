@@ -838,6 +838,21 @@ describe("InitializeMap — paradas com dispersão (T4)", () => {
     expect(fundo).toBeLessThan(ids.indexOf("track-line"));
   });
 
+  it("halo mínimo de parada fica abaixo de track-line, logo após dwell-spread-line", () => {
+    montar({} as DataValue["api"]);
+    const camadas = (
+      mapa().opts as {
+        style: { layers: Array<{ id: string; source?: string }> };
+      }
+    ).style.layers;
+    const ids = camadas.map((l) => l.id);
+    const halo = ids.indexOf("dwell-points-halo");
+    expect(halo).toBeGreaterThanOrEqual(0);
+    expect(halo).toBeLessThan(ids.indexOf("track-line"));
+    expect(halo).toBe(ids.indexOf("dwell-spread-line") + 1);
+    expect(camadas[halo].source).toBe("dwell-points");
+  });
+
   it("linhas cruas da API só entram sem simplificação (menos de 2 fixes)", async () => {
     const cruas: [number, number][][] = [
       [
@@ -955,6 +970,53 @@ describe("InitializeMap — paradas com dispersão (T4)", () => {
     expect(rotulo().startsWith("Parado 1h ")).toBe(true);
     expect(rotulo()).toContain("· último fix há 40m");
     expect(track).toHaveBeenCalledTimes(1);
+  });
+
+  it("parada mesclada após lacuna sem sinal: rótulo cita o tempo sem sinal", async () => {
+    const pontos = [
+      ...parada({ centro: C1, inicioMs: T0, duracaoMs: 60 * min, semente: 3 }),
+      ...parada({
+        centro: C1,
+        inicioMs: T0 + 60 * min + 7 * 60 * min,
+        duracaoMs: 60 * min,
+        semente: 4,
+      }),
+    ];
+    const fimMs = T0 + 60 * min + 7 * 60 * min + 60 * min;
+    const track = vi.fn().mockResolvedValue(respostaDe(pontos));
+    montar({ track } as unknown as DataValue["api"]);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.tickNow(fimMs + 5 * min);
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+    const rotulo = ultimoSetData("dwell-points").features[0].properties
+      .rotulo as string;
+    expect(rotulo).toContain("sem sinal");
+    expect(rotulo.endsWith(" sem sinal")).toBe(true);
+    expect(rotulo).toContain(" · 7h ");
+  });
+
+  it("popup de parada com lacuna mostra a linha 'Sem sinal por ... durante a parada'", () => {
+    montar({} as DataValue["api"]);
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: C1 },
+          properties: {
+            rotulo: "Parada de 1h 0m · 7h 0m sem sinal",
+            duracaoMs: 8 * 60 * min,
+            lacunaMs: 7 * 60 * min,
+            fixes: 240,
+            excluidos: 0,
+          },
+        },
+      ],
+    });
+    const html = (popups.at(-1) as FakePopupLike).html;
+    expect(html).toContain("Sem sinal por 7h 0m durante a parada");
   });
 
   it("parada após lacuna zera o rumo antigo do nó (sem rumo novo)", async () => {

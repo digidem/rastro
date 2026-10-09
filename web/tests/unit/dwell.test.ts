@@ -159,14 +159,14 @@ describe("simplifyTrackDwells", () => {
     expect(r.velocidadeKmh).toBe(0);
   });
 
-  it("cluster não atravessa lacuna de tempo > gapMs", () => {
-    // 10 fixes no ponto A (18 min), depois 2 horas sem sinal, depois 10 fixes
+  it("mesmo ponto após lacuna > gapMs: mescla em 1 dwell e conta o tempo sem sinal", () => {
+    // 10 fixes no ponto A (18 min), depois 2 horas sem sinal, depois 10 fixes no mesmo ponto
     const pts = [...fundear(0, 10, 0), ...fundear(150, 10, 0)];
     const r = simplifyTrackDwells(pts, { gapMs: 60 * M });
-    expect(r.dwells).toHaveLength(2);
-    expect(r.dwells[0].partidaMs).not.toBeNull();
-    expect(r.dwells[1].chegadaMs).toBeGreaterThan(r.dwells[0].chegadaMs);
+    expect(r.dwells).toHaveLength(1);
+    expect(r.dwells[0].lacunaMs).toBe((150 - 18) * M);
     expect(r.parado).toBe(true);
+    expect(r.dwells[0].partidaMs).toBeNull();
   });
 
   it("trilha vazia ou de 1 ponto", () => {
@@ -322,7 +322,7 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
     expect(r.aproximacao).not.toBeNull();
   });
 
-  it("parada atravessando lacuna de 40 min vira dois dwells", () => {
+  it("parada atravessando lacuna de 40 min no mesmo ponto vira um dwell com lacunaMs ≈ 40 min", () => {
     const base = parada({
       centro: C,
       inicioMs: T0,
@@ -331,9 +331,9 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
     });
     const trilha = comLacuna(base, T0 + 30 * M, 40 * M);
     const r = simplifyTrackDwells(trilha);
-    expect(r.dwells).toHaveLength(2);
-    expect(r.dwells[0].partidaMs).not.toBeNull();
-    expect(r.dwells[1].chegadaMs).toBeGreaterThan(r.dwells[0].chegadaMs);
+    expect(r.dwells).toHaveLength(1);
+    expect(r.dwells[0].lacunaMs).toBeGreaterThan(39 * M);
+    expect(r.dwells[0].lacunaMs).toBeLessThan(41 * M);
   });
 
   it("2 a 3 fixes não formam parada", () => {
@@ -441,6 +441,75 @@ describe("simplifyTrackDwells com trilha sintética (T2)", () => {
     expect(simp.parado).toBe(false);
     expect(simp.ultimaLinha).toBeNull();
     expect(bearingComParada(simp)).toBeNull();
+  });
+});
+
+describe("mescla de paradas across lacuna sem sinal", () => {
+  const C: LngLat = [-70.0, -5.0];
+  const H = 3_600_000;
+  // Parada de 1 h (fixes a cada 30 s) no centro dado, a partir de `inicioMs`.
+  const estadia = (centro: LngLat, inicioMs: number, semente: number) =>
+    parada({ centro, inicioMs, duracaoMs: 60 * M, semente });
+  const fimPrimeira = T0 + 60 * M;
+  const retomada = fimPrimeira + 7 * H; // 7 h sem nenhum fix
+
+  it("mesma posição (≤ 10 m) após 7 h sem fixes: 1 dwell, lacunaMs ≈ 7 h, parado e sem partida", () => {
+    const trilha = [
+      ...estadia(C, T0, 1),
+      ...estadia(deslocar(C, 6, 4), retomada, 2),
+    ];
+    const r = simplifyTrackDwells(trilha);
+    expect(r.dwells).toHaveLength(1);
+    expect(r.dwells[0].lacunaMs).toBeGreaterThan(7 * H - 2 * M);
+    expect(r.dwells[0].lacunaMs).toBeLessThan(7 * H + 2 * M);
+    expect(r.parado).toBe(true);
+    expect(r.dwells[0].partidaMs).toBeNull();
+  });
+
+  it("mesma posição após 7 h: a parada mesclada vira um único vértice na linha", () => {
+    // Navega até o ponto, para 7 h sem sinal no mesmo lugar e sai para leste.
+    const trilha = [
+      ...navegar(0, 5),
+      ...fundear(10, 30, 3000),
+      ...fundear(488, 30, 3000),
+      ...navegar(550, 5, 3600),
+    ];
+    const r = simplifyTrackDwells(trilha);
+    expect(r.dwells).toHaveLength(1);
+    expect(r.dwells[0].lacunaMs).toBe(7 * H);
+    expect(r.linhas).toHaveLength(1);
+    expect(r.linhas[0]).toHaveLength(3);
+    expect(r.parado).toBe(false);
+  });
+
+  it("segundo ponto a 500 m após 7 h sem fixes: 2 dwells e lacunaMs 0", () => {
+    const trilha = [
+      ...estadia(C, T0, 1),
+      ...estadia(deslocar(C, 500, 0), retomada, 2),
+    ];
+    const r = simplifyTrackDwells(trilha);
+    expect(r.dwells).toHaveLength(2);
+    expect(r.dwells[0].lacunaMs).toBe(0);
+    expect(r.dwells[1].lacunaMs).toBe(0);
+  });
+
+  it("parada, lacuna e depois movimento: não mescla e lacunaMs fica 0", () => {
+    const trilha = [...fundear(10, 30, 3000), ...navegar(488, 10, 3000)];
+    const r = simplifyTrackDwells(trilha);
+    expect(r.dwells).toHaveLength(1);
+    expect(r.dwells[0].lacunaMs).toBe(0);
+    expect(r.dwells[0].partidaMs).not.toBeNull();
+  });
+
+  it("três partes no mesmo ponto, duas lacunas de 7 h: lacunaMs acumula 14 h", () => {
+    const trilha = [
+      ...fundear(10, 30, 3000),
+      ...fundear(488, 30, 3000),
+      ...fundear(966, 30, 3000),
+    ];
+    const r = simplifyTrackDwells(trilha);
+    expect(r.dwells).toHaveLength(1);
+    expect(r.dwells[0].lacunaMs).toBe(14 * H);
   });
 });
 

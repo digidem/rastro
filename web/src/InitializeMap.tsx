@@ -294,6 +294,36 @@ const estilo: StyleSpecification = {
       },
     },
     {
+      // Anel mínimo visível: some quando o polígono p90 real já é maior (zoom alto).
+      id: "dwell-points-halo",
+      type: "circle",
+      source: "dwell-points",
+      paint: {
+        "circle-radius": 22,
+        "circle-color": "#0ea5e9",
+        "circle-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          15,
+          0.15,
+          16.5,
+          0,
+        ],
+        "circle-stroke-color": "#0ea5e9",
+        "circle-stroke-width": 1,
+        "circle-stroke-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          15,
+          0.6,
+          16.5,
+          0,
+        ],
+      },
+    },
+    {
       id: "track-line",
       type: "line",
       source: "track",
@@ -654,7 +684,7 @@ const registrarMovimento = (
 };
 
 /** Rótulo da parada: em curso, sem inventar permanência além do último fix. */
-const rotuloParada = (d: Dwell, agoraMs: number): string => {
+const rotuloBaseParada = (d: Dwell, agoraMs: number): string => {
   if (d.partidaMs !== null) {
     return `Parada de ${duracaoLabel(d.duracaoMs)}`;
   }
@@ -663,6 +693,13 @@ const rotuloParada = (d: Dwell, agoraMs: number): string => {
     ? `Ancorado há ${duracaoLabel(agoraMs - d.chegadaMs)}`
     : `Parado ${duracaoLabel(d.duracaoMs)} · último fix há ${duracaoLabel(semFixMs)}`;
 };
+
+/** Tempo sem sinal dentro da parada, quando houve lacuna mesclada. */
+const sufixoLacuna = (lacunaMs: number): string =>
+  lacunaMs > 0 ? ` · ${duracaoLabel(lacunaMs)} sem sinal` : "";
+
+const rotuloParada = (d: Dwell, agoraMs: number): string =>
+  `${rotuloBaseParada(d, agoraMs)}${sufixoLacuna(d.lacunaMs)}`;
 
 const featuresDeParadas = (simp: TrilhaSimplificada | null) => {
   const agoraMs = relogioMs();
@@ -673,6 +710,7 @@ const featuresDeParadas = (simp: TrilhaSimplificada | null) => {
       chegadaMs: d.chegadaMs,
       emCurso: d.partidaMs === null,
       duracaoMs: d.duracaoMs,
+      lacunaMs: d.lacunaMs,
       fixes: d.fixes,
       dispersaoP50M: d.dispersaoP50M,
       dispersaoP90M: d.dispersaoP90M,
@@ -727,6 +765,10 @@ const htmlPopupParada = (p: Record<string, unknown>): string => {
     `${numeroOu(p.fixes)} fixes`,
     `50% dos fixes em ${Math.round(numeroOu(p.dispersaoP50M))} m · 90% em ${Math.round(numeroOu(p.dispersaoP90M))} m`,
   ];
+  const lacunaMs = numeroOu(p.lacunaMs);
+  if (lacunaMs > 0) {
+    linhas.push(`Sem sinal por ${duracaoLabel(lacunaMs)} durante a parada`);
+  }
   const excluidos = numeroOu(p.excluidos);
   if (excluidos > 0) {
     linhas.push(`${excluidos} fixes descartados (ruído)`);

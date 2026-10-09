@@ -90,6 +90,8 @@ export interface Dwell {
   partidaMs: number | null;
   /** Do primeiro ao último membro da parada, ms. */
   duracaoMs: number;
+  /** Tempo sem sinal dentro da parada (soma dos intervalos > gapMs entre partes mescladas), ms. */
+  lacunaMs: number;
   /** Fixes da parada (membros e cauda de saída), sem spikes. */
   fixes: number;
   /** Distância radial dos membros ao centróide (sem spikes nem fixes de partida), m. */
@@ -333,6 +335,8 @@ interface Parada {
   emCurso: boolean;
   membros: number[];
   centro: LngLat;
+  /** Tempo sem sinal acumulado pelas mesclagens, ms. */
+  lacunaMs: number;
 }
 
 function fecharParada(
@@ -342,7 +346,14 @@ function fecharParada(
   emCurso: boolean,
   membros: number[],
 ): Parada {
-  return { iniL, fimL, emCurso, membros, centro: centroDe(L, membros) };
+  return {
+    iniL,
+    fimL,
+    emCurso,
+    membros,
+    centro: centroDe(L, membros),
+    lacunaMs: 0,
+  };
 }
 
 /** Cresce a parada a partir da janela [i..j]; encerra na partida, lacuna ou fim da lista. */
@@ -388,20 +399,54 @@ function detectarParadas(L: Limpa, o: DwellOptions): Parada[] {
   return paradas;
 }
 
-function podeMesclar(L: Limpa, a: Parada, b: Parada, o: DwellOptions): boolean {
-  const intervalo = L.ts[b.iniL] - ultimoMsDe(L, a);
+/** Intervalo entre o último membro de `a` e o primeiro fix de `b`, ms. */
+const intervaloEntre = (L: Limpa, a: Parada, b: Parada): number =>
+  L.ts[b.iniL] - ultimoMsDe(L, a);
+
+/** Mesma parada com intervalo curto, sem lacuna de sinal. */
+function mesmaParadaCurta(
+  L: Limpa,
+  a: Parada,
+  b: Parada,
+  o: DwellOptions,
+): boolean {
+  const intervalo = intervaloEntre(L, a, b);
   return (
-    distanciaM(a.centro, b.centro) <= o.mesclarDistM &&
-    intervalo <= o.mesclarIntervaloMs &&
-    (o.gapMs <= 0 || intervalo <= o.gapMs)
+    intervalo <= o.mesclarIntervaloMs && (o.gapMs <= 0 || intervalo <= o.gapMs)
   );
 }
 
-function unirParadas(L: Limpa, a: Parada, b: Parada): Parada {
-  return fecharParada(L, a.iniL, b.fimL, b.emCurso, [
-    ...a.membros,
-    ...b.membros,
-  ]);
+/**
+ * Mesma parada retomada após lacuna sem sinal: `b` começa onde `a` terminou
+ * (sem fixes entre elas) e o intervalo passa de gapMs.
+ */
+function mesmaParadaComLacuna(
+  L: Limpa,
+  a: Parada,
+  b: Parada,
+  o: DwellOptions,
+): boolean {
+  return o.gapMs > 0 && b.iniL === a.fimL && intervaloEntre(L, a, b) > o.gapMs;
+}
+
+function podeMesclar(L: Limpa, a: Parada, b: Parada, o: DwellOptions): boolean {
+  return (
+    distanciaM(a.centro, b.centro) <= o.mesclarDistM &&
+    (mesmaParadaCurta(L, a, b, o) || mesmaParadaComLacuna(L, a, b, o))
+  );
+}
+
+/** Soma o tempo sem sinal do intervalo entre `a` e `b` (só se passa de gapMs). */
+function lacunaAoUnir(L: Limpa, a: Parada, b: Parada, o: DwellOptions): number {
+  const intervalo = intervaloEntre(L, a, b);
+  return o.gapMs > 0 && intervalo > o.gapMs ? intervalo : 0;
+}
+
+function unirParadas(L: Limpa, a: Parada, b: Parada, o: DwellOptions): Parada {
+  return {
+    ...fecharParada(L, a.iniL, b.fimL, b.emCurso, [...a.membros, ...b.membros]),
+    lacunaMs: a.lacunaMs + b.lacunaMs + lacunaAoUnir(L, a, b, o),
+  };
 }
 
 /** Mescla paradas vizinhas próximas e em curto intervalo; recalcula o centro. */
@@ -414,7 +459,7 @@ function mesclarParadas(
   for (const p of paradas) {
     const ultima = saida[saida.length - 1];
     if (ultima !== undefined && podeMesclar(L, ultima, p, o)) {
-      saida[saida.length - 1] = unirParadas(L, ultima, p);
+      saida[saida.length - 1] = unirParadas(L, ultima, p, o);
     } else {
       saida.push(p);
     }
@@ -441,6 +486,7 @@ function paraDwell(L: Limpa, p: Parada, temposSpike: readonly number[]): Dwell {
     chegadaMs,
     partidaMs,
     duracaoMs: ultimoFixMs - chegadaMs,
+    lacunaMs: p.lacunaMs,
     fixes: p.fimL - p.iniL,
     dispersaoP50M: quantil(raios, 0.5),
     dispersaoP90M: quantil(raios, 0.9),
