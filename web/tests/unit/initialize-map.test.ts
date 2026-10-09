@@ -5,10 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InitializeMap } from "../../src/InitializeMap.jsx";
 import { useMap } from "../../src/hooks/useMap.jsx";
 import {
+  type FixDwell,
+  type LngLat,
+  simplifyTrackDwells,
+} from "../../src/lib/dwell.js";
+import {
   DataContext,
   type DataValue,
 } from "../../src/providers/DataProvider.jsx";
 import { LocalState } from "../../src/store.js";
+import {
+  concat,
+  deslocar,
+  navegacao,
+  parada,
+} from "./fixtures/trilhaSintetica.js";
 
 // InitializeMap importa maplibre-gl (Map/Popup/addProtocol) e pmtiles
 // (Protocol) no escopo do módulo; mockamos tudo — o teste cobre a lógica de
@@ -40,6 +51,7 @@ vi.mock("maplibre-gl", () => {
         "track-points",
         "boat-tracks",
         "dwell-points",
+        "dwell-spread",
       ]) {
         this.sources.set(nome, { setData: vi.fn() });
       }
@@ -724,5 +736,190 @@ describe("InitializeMap — enquadramento automático", () => {
       "visibility",
       "visible",
     );
+  });
+});
+
+describe("InitializeMap — paradas com dispersão (T4)", () => {
+  const C1: LngLat = [-70.0, -5.0];
+  const C2: LngLat = [-69.95, -5.0];
+  const T0 = Date.parse("2026-10-01T12:00:00Z");
+  const min = 60_000;
+
+  // Duas paradas de 1 h separadas por deslocamento de ~5 km.
+  const trilhaComDuasParadas = (): FixDwell[] =>
+    concat(
+      navegacao({
+        de: deslocar(C1, -6000, 0),
+        para: C1,
+        inicioMs: T0,
+        kmh: 20,
+      }),
+      parada({
+        centro: C1,
+        inicioMs: T0 + 20 * min,
+        duracaoMs: 60 * min,
+        semente: 3,
+      }),
+      navegacao({ de: C1, para: C2, inicioMs: T0 + 80 * min, kmh: 20 }),
+      parada({
+        centro: C2,
+        inicioMs: T0 + 100 * min,
+        duracaoMs: 60 * min,
+        semente: 4,
+      }),
+    );
+
+  const respostaDe = (fixes: FixDwell[]) => ({
+    line: null,
+    lines: [] as [number, number][][],
+    points: fixes.map((f) => ({ pos: f.pos, posTime: f.posTime, sats: null })),
+  });
+
+  // Seleciona o nó e responde a trilha com os pontos dados.
+  const selecionarComResposta = async (resposta: unknown) => {
+    const api = {
+      track: vi.fn().mockResolvedValue(resposta),
+    } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+  };
+
+  const ultimoSetData = (fonte: string) =>
+    mapa().getSource(fonte).setData.mock.lastCall?.[0] as {
+      features: Array<{
+        properties: Record<string, unknown>;
+        geometry: { type: string; coordinates: unknown };
+      }>;
+    };
+
+  it("track-points por padrão não recebe fixes de parada nem spikes", async () => {
+    const fixes = trilhaComDuasParadas();
+    await selecionarComResposta(respostaDe(fixes));
+
+    const simp = simplifyTrackDwells(fixes);
+    const movimento = simp.papel.filter((p) => p === "movimento").length;
+    const features = ultimoSetData("track-points").features;
+    expect(features).toHaveLength(movimento);
+    expect(features.length).toBeLessThan(fixes.length);
+    expect(features.every((f) => f.properties.papel === "movimento")).toBe(
+      true,
+    );
+  });
+
+  it("dwell-spread tem um polígono fechado por parada", async () => {
+    const fixes = trilhaComDuasParadas();
+    await selecionarComResposta(respostaDe(fixes));
+
+    const paradas = simplifyTrackDwells(fixes).dwells;
+    expect(paradas).toHaveLength(2);
+    const features = ultimoSetData("dwell-spread").features;
+    expect(features).toHaveLength(paradas.length);
+    for (const f of features) {
+      expect(f.geometry.type).toBe("Polygon");
+      const anel = (f.geometry.coordinates as LngLat[][])[0];
+      expect(anel).toHaveLength(49);
+      expect(anel[0]).toEqual(anel[48]);
+    }
+  });
+
+  it("camadas de dispersão ficam abaixo de track-line", () => {
+    montar({} as DataValue["api"]);
+    const ids = (
+      mapa().opts as { style: { layers: Array<{ id: string }> } }
+    ).style.layers.map((l) => l.id);
+    const fundo = ids.indexOf("dwell-spread-fill");
+    expect(fundo).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf("dwell-spread-line")).toBeGreaterThan(fundo);
+    expect(fundo).toBeLessThan(ids.indexOf("track-line"));
+  });
+
+  it("linhas cruas da API só entram sem simplificação (menos de 2 fixes)", async () => {
+    const cruas: [number, number][][] = [
+      [
+        [-70, -5],
+        [-69.9, -5],
+      ],
+    ];
+    await selecionarComResposta({
+      line: null,
+      lines: cruas,
+      points: [{ pos: [-70, -5], posTime: null, sats: null }],
+    });
+    expect(ultimoSetData("track").features).toEqual([
+      expect.objectContaining({
+        geometry: { type: "LineString", coordinates: cruas[0] },
+      }),
+    ]);
+  });
+
+  it("com simplificação e 0 linhas, a trilha fica vazia (não usa linhas cruas)", async () => {
+    // Só parada: a simplificação devolve nenhuma linha de movimento.
+    const pontos = parada({
+      centro: C1,
+      inicioMs: T0,
+      duracaoMs: 2 * 60 * min,
+      semente: 5,
+    });
+    expect(simplifyTrackDwells(pontos).linhas).toHaveLength(0);
+    await selecionarComResposta({
+      line: null,
+      lines: [
+        [
+          [-70, -5],
+          [-69.9, -5],
+        ],
+      ],
+      points: respostaDe(pontos).points,
+    });
+    expect(ultimoSetData("track").features).toEqual([]);
+  });
+
+  it("popup da parada mostra duração, fixes, dispersão e ruído descartado", () => {
+    montar({} as DataValue["api"]);
+    const propriedades = {
+      rotulo: "Parada de 1h 0m",
+      chegadaMs: T0,
+      duracaoMs: 60 * min,
+      fixes: 120,
+      dispersaoP50M: 14.4,
+      dispersaoP90M: 52.6,
+      excluidos: 3,
+    };
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: C1 },
+          properties: propriedades,
+        },
+      ],
+    });
+    const html = (popups.at(-1) as FakePopupLike).html;
+    expect(html).toContain("Duração: 1h 0m");
+    expect(html).toContain("120 fixes");
+    expect(html).toContain("50% dos fixes em 14 m · 90% em 53 m");
+    expect(html).toContain("3 fixes descartados (ruído)");
+  });
+
+  it("popup omite a linha de ruído quando nada foi descartado", () => {
+    montar({} as DataValue["api"]);
+    mapa().emit("click", {
+      features: [
+        {
+          geometry: { type: "Point", coordinates: C1 },
+          properties: {
+            rotulo: "Parada",
+            duracaoMs: min,
+            fixes: 5,
+            excluidos: 0,
+          },
+        },
+      ],
+    });
+    expect((popups.at(-1) as FakePopupLike).html).not.toContain("descartados");
   });
 });

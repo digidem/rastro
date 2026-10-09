@@ -8,7 +8,9 @@ import { Protocol } from "pmtiles";
 import type { Component, JSXElement } from "solid-js";
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import { bearingComParada, bearingDaTrilha } from "./lib/bearing.js";
+import { circuloGeo } from "./lib/circulo.js";
 import {
+  type Dwell,
   type TrilhaSimplificada,
   duracaoLabel,
   simplifyTrackDwells,
@@ -236,6 +238,7 @@ const estilo: StyleSpecification = {
     track: { type: "geojson", data: EMPTY_FC },
     "track-points": { type: "geojson", data: EMPTY_FC },
     "dwell-points": { type: "geojson", data: EMPTY_FC },
+    "dwell-spread": { type: "geojson", data: EMPTY_FC },
   },
   layers: [
     {
@@ -271,6 +274,22 @@ const estilo: StyleSpecification = {
         "line-width": 1.5,
         "line-opacity": 0.55,
         "line-dasharray": [3, 2],
+      },
+    },
+    {
+      id: "dwell-spread-fill",
+      type: "fill",
+      source: "dwell-spread",
+      paint: { "fill-color": "#0ea5e9", "fill-opacity": 0.15 },
+    },
+    {
+      id: "dwell-spread-line",
+      type: "line",
+      source: "dwell-spread",
+      paint: {
+        "line-color": "#0ea5e9",
+        "line-width": 1,
+        "line-opacity": 0.5,
       },
     },
     {
@@ -564,11 +583,16 @@ const abrirPopupDoPin = (
 type TrilhaApi = {
   line: [number, number][] | null;
   lines: [number, number][][];
-  points: { pos: [number, number]; posTime: string | null }[];
+  points: {
+    pos: [number, number];
+    posTime: string | null;
+    sats?: number | null;
+  }[];
 };
 
-// Segmentos da trilha sem o "novelo" de GPS (ST-DAH); sem fixes suficientes
-// (ou sem horário), cai nas linhas cruas da API.
+// Segmentos da trilha sem o "novelo" de GPS (ST-DAH). Sem simplificação
+// (menos de 2 fixes ou sem horário), cai nas linhas cruas da API. Com
+// simplificação, só as linhas dela: 0 linhas significa trilha vazia.
 const analisarTrilha = (
   t: TrilhaApi,
 ): {
@@ -581,11 +605,11 @@ const analisarTrilha = (
     return { segments: cruas, simp: null };
   }
   const simp = simplifyTrackDwells(t.points);
-  return {
-    segments: simp.linhas.length > 0 ? simp.linhas : cruas,
-    simp,
-  };
+  return { segments: simp.linhas, simp };
 };
+
+// Parada em curso sem fix há mais que isto deixa de ser "ancorada" (ms).
+const ANCORADO_MAX_MS = 30 * 60_000;
 
 const registrarMovimento = (
   nodeNum: number,
@@ -595,26 +619,98 @@ const registrarMovimento = (
     return;
   }
   const ultima = simp.dwells[simp.dwells.length - 1];
+  // Mesma regra do rótulo do mapa: "parado desde" só com fix recente.
+  const fresca =
+    ultima !== undefined && Date.now() - ultima.ultimoFixMs < ANCORADO_MAX_MS;
   LocalState.setNodeMovimento(nodeNum, {
     parado: simp.parado,
-    desdeMs: simp.parado && ultima ? ultima.chegadaMs : null,
+    desdeMs: simp.parado && ultima && fresca ? ultima.chegadaMs : null,
     velocidadeKmh: simp.velocidadeKmh,
   });
 };
 
-const featuresDeParadas = (simp: TrilhaSimplificada | null) =>
-  (simp?.dwells ?? []).map((d) => ({
+/** Rótulo da parada: em curso, sem inventar permanência além do último fix. */
+const rotuloParada = (d: Dwell, agoraMs: number): string => {
+  if (d.partidaMs !== null) {
+    return `Parada de ${duracaoLabel(d.duracaoMs)}`;
+  }
+  const semFixMs = agoraMs - d.ultimoFixMs;
+  return semFixMs < ANCORADO_MAX_MS
+    ? `Ancorado há ${duracaoLabel(agoraMs - d.chegadaMs)}`
+    : `Parado ${duracaoLabel(d.duracaoMs)} · último fix há ${duracaoLabel(semFixMs)}`;
+};
+
+const featuresDeParadas = (simp: TrilhaSimplificada | null) => {
+  const agoraMs = Date.now();
+  return (simp?.dwells ?? []).map((d) => ({
     type: "Feature" as const,
     properties: {
-      rotulo:
-        d.partidaMs === null
-          ? `Ancorado há ${duracaoLabel(Date.now() - d.chegadaMs)}`
-          : `Parada de ${duracaoLabel(d.duracaoMs)}`,
+      rotulo: rotuloParada(d, agoraMs),
       chegadaMs: d.chegadaMs,
       emCurso: d.partidaMs === null,
+      duracaoMs: d.duracaoMs,
+      fixes: d.fixes,
+      dispersaoP50M: d.dispersaoP50M,
+      dispersaoP90M: d.dispersaoP90M,
+      excluidos: d.excluidos,
     },
     geometry: { type: "Point" as const, coordinates: d.centroide },
   }));
+};
+
+/** Um círculo de dispersão (raio P90) por parada. */
+const featuresDeDispersao = (simp: TrilhaSimplificada | null) =>
+  (simp?.dwells ?? []).map((d) => ({
+    type: "Feature" as const,
+    properties: { chegadaMs: d.chegadaMs },
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [circuloGeo(d.centroide, d.dispersaoP90M)],
+    },
+  }));
+
+/**
+ * Pontos brutos da trilha com o papel de cada fix (índice original). Sem
+ * simplificação, todos são "movimento" (comportamento anterior).
+ */
+const featuresDePontos = (t: TrilhaApi, simp: TrilhaSimplificada | null) =>
+  t.points.map((p, i) => ({
+    type: "Feature" as const,
+    properties: {
+      posTime: p.posTime,
+      sats: p.sats,
+      papel: simp?.papel[i] ?? "movimento",
+    },
+    geometry: { type: "Point" as const, coordinates: p.pos },
+  }));
+
+const numeroOu = (v: unknown, padrao = 0): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : padrao;
+
+/** Popup da parada: chegada, duração, fixes e dispersão. Texto sempre escapado. */
+const htmlPopupParada = (p: Record<string, unknown>): string => {
+  const chegada =
+    typeof p.chegadaMs === "number"
+      ? new Date(p.chegadaMs).toLocaleString("pt-BR", {
+          dateStyle: "short",
+          timeStyle: "short",
+        })
+      : "—";
+  const linhas = [
+    `Chegada: ${chegada}`,
+    `Duração: ${duracaoLabel(numeroOu(p.duracaoMs))}`,
+    `${numeroOu(p.fixes)} fixes`,
+    `50% dos fixes em ${Math.round(numeroOu(p.dispersaoP50M))} m · 90% em ${Math.round(numeroOu(p.dispersaoP90M))} m`,
+  ];
+  const excluidos = numeroOu(p.excluidos);
+  if (excluidos > 0) {
+    linhas.push(`${excluidos} fixes descartados (ruído)`);
+  }
+  const corpo = linhas
+    .map((l) => `<div class="text-slate-400">${esc(l)}</div>`)
+    .join("");
+  return `<div class="px-3 py-2 text-slate-100 text-xs"><div class="font-bold">${esc(String(p.rotulo ?? "Parada"))}</div>${corpo}</div>`;
+};
 
 const registrarIconeBarco = (
   map: maplibregl,
@@ -689,6 +785,20 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     (map.getSource("dwell-points") as GeoJSONSource | undefined)?.setData(
       EMPTY_FC,
     );
+    (map.getSource("dwell-spread") as GeoJSONSource | undefined)?.setData(
+      EMPTY_FC,
+    );
+  };
+
+  const aplicarParadas = (map: maplibregl, simp: TrilhaSimplificada | null) => {
+    (map.getSource("dwell-points") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: featuresDeParadas(simp),
+    });
+    (map.getSource("dwell-spread") as GeoJSONSource | undefined)?.setData({
+      type: "FeatureCollection",
+      features: featuresDeDispersao(simp),
+    });
   };
 
   const aplicarPins = (map: maplibregl) => {
@@ -824,19 +934,10 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         if (typeof p.rotulo !== "string") {
           return;
         }
-        const chegada =
-          typeof p.chegadaMs === "number"
-            ? new Date(p.chegadaMs).toLocaleString("pt-BR", {
-                dateStyle: "short",
-                timeStyle: "short",
-              })
-            : "—";
         popup?.remove();
         popup = new Popup({ offset: 12 })
           .setLngLat([f.geometry.coordinates[0], f.geometry.coordinates[1]])
-          .setHTML(
-            `<div class="px-3 py-2 text-slate-100 text-xs"><div class="font-bold">${esc(String(p.rotulo ?? "Parada"))}</div><div class="text-slate-400">Chegada: ${esc(chegada)}</div></div>`,
-          )
+          .setHTML(htmlPopupParada(p))
           .addTo(map);
       });
 
@@ -1083,10 +1184,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
           LocalState.setNodeBearing(sel, bearing);
         }
         registrarMovimento(sel, simp);
-        (map.getSource("dwell-points") as GeoJSONSource | undefined)?.setData({
-          type: "FeatureCollection",
-          features: featuresDeParadas(simp),
-        });
+        aplicarParadas(map, simp);
 
         const lineFeatures = segments.map((seg, idx) => ({
           type: "Feature" as const,
@@ -1102,13 +1200,12 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
                 features: lineFeatures,
               },
         );
+        // Por padrão, só fixes em movimento; paradas e spikes ficam fora.
         pointsSrc.setData({
           type: "FeatureCollection",
-          features: t.points.map((p) => ({
-            type: "Feature",
-            properties: { posTime: p.posTime, sats: p.sats },
-            geometry: { type: "Point", coordinates: p.pos },
-          })),
+          features: featuresDePontos(t, simp).filter(
+            (f) => f.properties.papel === "movimento",
+          ),
         });
       })
       .catch(() => {
