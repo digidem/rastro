@@ -353,3 +353,101 @@ def alerts_ativos(conn: Any) -> list[dict]:
     para ``node_id``; gateway ausente de ``nodes`` vira id ``!hex`` na rota.
     """
     return conn.execute(_SQL_ALERTS).fetchall()
+
+
+# --- Previsão do tempo diária (clima) --------------------------------------------------
+# Usadas por api/clima_agenda.py. Cada chamada recebe a PRÓPRIA conexão do pool: a leitura
+# abre transação read-only e a escrita precisa de conexão nova (psycopg não troca read_only
+# com transação aberta). Ver lição 12 do AGENTS.md.
+
+_SQL_ULTIMA_POSICAO_BARCO = """
+    SELECT v.lat, v.lon, v.pos_time
+    FROM boat_devices bd
+    JOIN vw_ultima_posicao v ON v.node_num = bd.node_num
+    WHERE bd.boat_id = %s AND bd.valid_to IS NULL AND v.pos_time IS NOT NULL
+    ORDER BY v.pos_time DESC
+    LIMIT 1
+"""
+
+_SQL_CLIMA_JA_ENFILEIRADO = """
+    SELECT EXISTS (
+        SELECT 1 FROM chat_outbox
+        WHERE boat_id = %s AND created_by = 'clima' AND created_at >= %s
+    ) AS enfileirado
+"""
+
+_SQL_CLIMA_LOCK = "SELECT pg_advisory_xact_lock(hashtext('rastro-clima'))"
+
+# clock_timestamp(): hora real depois do lock (now() seria o início da transação).
+_SQL_CLIMA_ESPACADO = """
+    SELECT coalesce(max(created_at) > clock_timestamp() - make_interval(secs => %s), false) AS cedo
+    FROM chat_outbox
+    WHERE created_by = 'clima'
+"""
+
+_SQL_CLIMA_INSERT = """
+    INSERT INTO chat_outbox (boat_id, text, created_by, expires_at)
+    VALUES (%s, %s, 'clima', %s)
+    RETURNING id
+"""
+
+
+def ultima_posicao_barco(conn: Any, boat_id: str) -> dict | None:
+    """Último fix do barco ({lat, lon, pos_time}); None se o barco não tem posição. Só leitura."""
+    row = conn.execute(_SQL_ULTIMA_POSICAO_BARCO, (boat_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def clima_ja_enfileirado(conn: Any, boat_id: str, desde: dt.datetime) -> bool:
+    """True se o barco já tem previsão do clima enfileirada desde ``desde``. Só leitura."""
+    row = conn.execute(_SQL_CLIMA_JA_ENFILEIRADO, (boat_id, desde)).fetchone()
+    return bool(row and row["enfileirado"])
+
+
+def _enfileirar_clima_tx(
+    conn: Any,
+    boat_id: str,
+    texto: str,
+    expires_at: dt.datetime,
+    desde: dt.datetime,
+    intervalo_s: int,
+) -> int | None:
+    conn.execute(_SQL_CLIMA_LOCK)
+    if clima_ja_enfileirado(conn, boat_id, desde):
+        return None
+    row = conn.execute(_SQL_CLIMA_ESPACADO, (intervalo_s,)).fetchone()
+    if row and row["cedo"]:
+        return None
+    row = conn.execute(_SQL_CLIMA_INSERT, (boat_id, texto, expires_at)).fetchone()
+    return int(row["id"])
+
+
+def enfileirar_clima(
+    conn: Any,
+    boat_id: str,
+    texto: str,
+    expires_at: dt.datetime,
+    desde: dt.datetime,
+    intervalo_s: int,
+) -> int | None:
+    """Enfileira a previsão do clima em chat_outbox (created_by='clima'); id ou None.
+
+    None quando o barco já tem previsão desde ``desde`` ou quando o último envio do clima
+    ainda não venceu o espaçamento de ``intervalo_s``. Lock advisory + checagens + INSERT
+    numa transação READ WRITE, mesmo padrão de insert_outbox_message. Use conexão nova.
+    """
+    is_ro_conn = hasattr(conn, "read_only")
+    prev_ro = getattr(conn, "read_only", None)
+    if is_ro_conn:
+        conn.read_only = False
+    try:
+        if hasattr(conn, "transaction"):
+            with conn.transaction():
+                return _enfileirar_clima_tx(conn, boat_id, texto, expires_at, desde, intervalo_s)
+        resultado = _enfileirar_clima_tx(conn, boat_id, texto, expires_at, desde, intervalo_s)
+        if hasattr(conn, "commit"):
+            conn.commit()
+        return resultado
+    finally:
+        if is_ro_conn:
+            conn.read_only = prev_ro
