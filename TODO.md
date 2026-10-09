@@ -46,7 +46,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [ ] H7 Confirmar limiares de bateria por classe.
 - [x] H8 Dump com coordenadas reais apagado em 2026-10-09 (decisão do dono). Pasta `~/rastro-backups/` ficou vazia.
 - [ ] H9 `RASTRO_NATIVE_SECRET` guardado em cofre.
-- [ ] H11/H12 Aprovar commits e pushes: `rastro` (`7ef9e81` à frente de `origin/main`), `univaja-lora` (sem upstream, docs misturadas com rename FLEET→EVU), `caprover-one-click-apps`, `.agents/`; apagar `deploy/sim.nonexistent_placeholder`.
+- [x] H11/H12 (aprovado 2026-10-09): `rastro` enviado ao GitHub (`7ef9e81`, `74477e3`, docs/retenção; ~main sincronizado). `caprover-one-click-apps` já sincronizado. `univaja-lora`: commits locais apenas (`7f2d1ee`, `ce3b5a3`), **sem remoto GitHub configurado** — não há o que enviar até existir um. `.agents/` segue não versionado (decisão pendente, baixa prioridade). `deploy/sim.nonexistent_placeholder` apagado.
 - [x] H1 App iOS: não planejado (decidido 2026-10-09). Certificado TLS confiável para iOS fica fora do escopo por ora.
 - [ ] H14 Atalaia: adicionar `univaja-atalaia-barco-1` ao inventário quando houver rádio. Decidido 2026-10-09: rádio ainda não está pronto; manter fora do mapa.
 - [ ] H16 **Vazamento do chat (adiado pelo dono em 2026-10-09):** mensagem enviada a qualquer destino (inclusive "cidade") é broadcast no canal EVU e chega a todos os barcos no alcance. Decidir depois: pausar envios aos barcos, manter com aviso na UI, ou planejar endereçamento privado por barco (exige chave por dispositivo; fora da v1). Detalhes: seção «Tarefa 4/5» → achado de 2026-10-09.
@@ -58,9 +58,16 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [x] M9 Derivação de senha idêntica nas cópias (`broker/derive.py`, `native/derive.py`, `rastro_derive.py`).
 - [ ] M2 Reiniciar/desligar remoto: bloqueado por H6.
 - [x] M3 Entrega de alertas: descartado (decisão H5: só selos no mapa).
-- [ ] M11/M12 Commit e push: bloqueados por H11/H12.
+- [x] M11/M12 Commit e push feitos onde havia remoto (ver H11/H12). `univaja-lora` aguarda remoto.
 
 **Descartados**: M1 (retenção: histórico eterno, decidido), M4 (alerta preditivo, especulativo), M6 (absorvido em H4), M7 (rotação de chave EVU: trava todos os barcos sem visita USB), H3 (usuários reais de chat: só após o 1º rádio), H13 (nome curto: cosmético, chave vem do `long_name`), H15 (absorvido em H11/H12), H10 (absorvido em H11/H12).
+
+**Novos desde a última atualização (2026-10-09):**
+- [x] Deploy `rastro-ingest:0.8.8` (fix de logs) aprovado e enfileirado no CapRover. Conferir: pontos do mapa seguem atualizando.
+- [x] M14 Testes de ramos do provisionamento: `test_mtool_branches.py` (30) e `test_status_branches.py` (26) em `univaja-lora` (commit `ce3b5a3`, local). Suíte modeA: 315 passam. Revisados por Sonnet e Opus.
+- [ ] M15 Bugs achados na revisão (não corrigidos, em `univaja-lora/scripts/provision/modeA/mtool.py`): (a) `reopen()` captura `BaseException`, então Ctrl-C é engolido e repetido até o prazo (~linha 366-369); (b) `cmd_showpin()` deixa `/dev/tty` aberto nos caminhos de recusa (~linha 916-923). Corrigir só com aprovação, pois é ferramenta de provisionamento.
+- [ ] H17 Cofre de segredos (item 7): instruções entregues; falta confirmar que as entradas existem (`RASTRO_NATIVE_SECRET`, `UNIVAJA_MQTT_SECRET`, `RASTRO_EVU_PSK_B64`, `RASTRO_API_TOKEN`, senhas do Postgres, `CAP_PASS`).
+- [ ] H18 Timer antigo no host: rodar `sudo systemctl disable --now rastro-retention.timer` (o repo já não tem o arquivo; o timer no servidor pode continuar instalado).
 
 **Concluído nesta triagem**: M13 (esta atualização do TODO).
 
