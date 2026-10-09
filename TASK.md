@@ -1,272 +1,287 @@
-# TASK — Trilha sem "novelo" de GPS em barco parado
+# TASK — Régua: medir distâncias no mapa
 
-Branch `feat/parada-jitter` (worktree `../rastro-parada-jitter`). Cada tarefa abaixo é
-implementada por um subagente, revisada e commitada antes da próxima.
-
-## Problema
-
-Barco ancorado sob dossel gera multipath: o mapa vira uma estrela de spikes e a
-parada se fragmenta em várias "Parada de 22m". Causas medidas numa trilha real
-(39 h, 2000 fixes, dados NÃO versionados):
-
-1. `web/src/lib/dwell.ts` encerra a parada com 2 fixes seguidos fora de 50 m, ou com
-   1 fix a >100 m e ≥4 km/h. No barco parado, 23% dos fixes caem fora de 50 m, em
-   sequências de 2 a 6; um salto de 100 m em 30 s "vale" 12 km/h. Resultado: 11
-   paradas fragmentadas e 1579 de 2000 fixes viram vértices da linha; odômetro 122 km.
-2. A camada `track-points` (`web/src/InitializeMap.tsx`, ~linha 1105) desenha TODOS os
-   fixes crus, mesmo com a linha simplificada.
-3. `sats_in_view` é sempre 0 nos dados atuais; não há HDOP/PDOP no banco. Nenhum
-   campo de qualidade está disponível para filtrar hoje.
-
-Estatística da parada real de 15 h (521 fixes, distância à mediana): p50 23 m,
-p75 39 m, p90 74–110 m (cauda inclui chegada/partida). Ruído branco: distância entre
-fixes consecutivos (40 m) ≈ entre pares aleatórios (41 m). Intervalo típico 30 s,
-p90 120 s.
-
-Protótipo do algoritmo novo (abaixo) na mesma trilha: a parada de 15 h vira UMA
-parada (p90 59 m, p50 20 m); a parada esparsa de 4 h (fix a cada ~4 min) é
-preservada (p90 35 m).
+Branch `feat/regua` (worktree `../rastro-regua`). Cada tarefa abaixo é implementada
+por um subagente, revisada e commitada antes da próxima. Todo o trabalho fica em `web/`.
 
 ## Decisões do dono (2026-10-09)
 
-- Fixes crus dentro da parada: ocultos por padrão; botão "Fixes brutos" no inspector
-  mostra todos, esmaecidos e sem linha.
-- Parada mostra marcador único + círculo translúcido de dispersão (p90).
-- Fase final inclui guardar HDOP/PDOP/velocidade do firmware (migração aditiva),
-  sem deploy.
+- Botão da régua (ícone `RulerIcon` de `solid-phosphor/regular`) na coluna da direita
+  do `MapControls`, **logo abaixo do botão de período (relógio)**.
+- **Caminho de vários pontos.** Cada clique adiciona um vértice. O painel mostra o total
+  e cada segmento. Duplo clique ou "Concluir" fecha o caminho; um clique depois de
+  concluído começa uma medição nova. Dois pontos é só o caso mais simples.
+- **Encaixe em nós.** Na régua, clicar sobre/perto de um pin adiciona um vértice
+  ancorado no nó (`{ tipo: "no", nodeNum }`). Vértice ancorado **segue o nó ao vivo**:
+  a coordenada vem sempre de `localState.nodes[nodeNum]`, então a distância se atualiza
+  a cada rodada de polling.
+- **Painel:** distância por segmento e total; rumo por segmento e em linha reta
+  (primeiro→último); chegada estimada quando o PRIMEIRO vértice é um nó em movimento com
+  velocidade conhecida; vértices arrastáveis (mouse e toque); "Copiar" copia coordenadas
+  + distância como texto.
+- **Entrada pelo nó:** botão "Medir daqui" no popup do pin e no `NodeInspector`. Liga a
+  régua com o vértice 0 ancorado no nó.
+- Com a régua ligada, cliques NÃO selecionam nó, não abrem popup e não desselecionam.
+- `Escape` sai da régua. Sair apaga a medição.
 
-## Regras para todos os subagentes
+## Convenções (ler antes de codar)
 
-- Não comitar dados reais nem coordenadas reais. Testes usam dados sintéticos com
-  gerador determinístico (PRNG com semente), coordenadas fictícias.
-- Funções de algoritmo são puras, sem DOM/mapa, em `web/src/lib/`.
-- Comentários e nomes em português, no estilo dos arquivos vizinhos.
-- Gates de cada tarefa web: `cd web && pnpm test` e `cd web && pnpm biome check`.
-  `pnpm typecheck` pode não terminar nesta máquina; rode com `timeout 400` e relate
-  o resultado, sem tratá-lo como bloqueante se estourar o tempo.
-- Gates Python: `cd services/rastro_gateway && .venv/bin/pytest -q` e os testes de
-  `services/rastro_api`.
-- Não alterar nada do contrato congelado (AGENTS.md §5). Esquema: só
-  `ADD COLUMN IF NOT EXISTS` anulável.
-- Não comitar; o revisor commita.
+- Identificadores, comentários e textos de UI em **português** (veja o código vizinho).
+- Imports com sufixo `.js`/`.jsx` (como nos arquivos existentes).
+- Testes de libs puras em `web/tests/unit/*.test.ts`; testes de componente ao lado do
+  componente (`*.test.tsx`, ver `MapControls.test.tsx`).
+- Gates de cada tarefa, rodados em `web/`: `pnpm test` (base: 329 passando) e
+  `pnpm biome check src tests`. NÃO rode `pnpm typecheck` (não termina neste ambiente).
+- Não mexa em arquivos fora dos listados na tarefa, exceto imports.
+- Não faça commit. O revisor commita.
+- Dados de teste: só coordenadas fictícias (ex.: perto de lon -70.0, lat -5.0).
 
-## Tarefas
+---
 
-### T1 — Gerador sintético de trilha + filtro de spike
+## T1 — Lib pura de geometria `web/src/lib/regua.ts`
 
-Arquivos: `web/tests/unit/fixtures/trilhaSintetica.ts` (novo),
-`web/src/lib/gpsSpike.ts` (novo), `web/tests/unit/gps-spike.test.ts` (novo).
+Criar `web/src/lib/regua.ts` e `web/tests/unit/regua.test.ts`.
 
-1. Gerador determinístico (`mulberry32(seed)`), saída `FixDwell[]` (tipo de `dwell.ts`):
-   - `parada({ centro, inicioMs, duracaoMs, intervaloS = 30 })`: ruído branco em
-     metros: 80% gaussiano σ 15 m, 15% gaussiano σ 50 m, 5% spikes de 100–300 m;
-     além disso, 3 sequências de 2–6 fixes seguidos a 60–120 m em direção aleatória.
-   - `navegacao({ de, para, inicioMs, kmh, intervaloS = 30, ruidoM = 10 })`: linha reta.
-   - `deriva({ de, rumoGraus, kmh, inicioMs, duracaoMs })`: deslocamento lento (2–3 km/h)
-     com o mesmo ruído da parada.
-   - `concat(...)` e `comLacuna(trilha, aposMs, lacunaMs)`.
-   Use projeção local metros↔graus (mesma de `distanciaM`). Centro fictício
-   (ex.: `[-70.0, -5.0]`).
-2. `marcarSpikes(fixes: FixDwell[], o?): boolean[]` — teste A–B–C, avaliado UMA vez
-   sobre os triplos originais (sem passes repetidos):
-   ```text
-   para cada B com vizinhos A e C, ambos com horário válido:
-     exige t(B)-t(A) <= 120 s e t(C)-t(B) <= 120 s
-     Bhat = interpolação linear de A→C no tempo de B
-     residual = dist(B, Bhat)
-     excesso  = dist(A,B) + dist(B,C) - dist(A,C)
-     spike se residual > 100 m E excesso > 150 m E dist(A,C) <= 100 m
-   ```
-   Opções com esses defaults (`SPIKE_PADRAO`). Primeiro e último fix nunca são spike.
-   Velocidade sozinha NUNCA marca spike.
-3. Testes: spike isolado numa parada é marcado; partida rápida real (A→B→C seguindo
-   em frente a 40 km/h) não é marcada; ida-e-volta com A–C > 100 m não é marcada;
-   lacuna > 120 s entre vizinhos desliga o teste; gerador é determinístico (mesma
-   semente ⇒ mesma saída).
+```ts
+export type LngLat = [number, number];
 
-### T2 — Detecção de parada robusta (reescrita de `processarClusters`)
+/** Distância geodésica em metros (haversine, R = 6_371_008.8). */
+export function haversineM(a: LngLat, b: LngLat): number;
 
-Arquivos: `web/src/lib/dwell.ts`, `web/tests/unit/dwell.test.ts`.
+/** Distância de cada segmento (tamanho n-1). */
+export function distanciasSegmentos(pts: readonly LngLat[]): number[];
 
-Mantenha a API pública `simplifyTrackDwells(pontos, opcoes)` e os campos atuais de
-`TrilhaSimplificada`/`Dwell` (consumidos por `InitializeMap.tsx` e `bearing.ts`).
-Novas opções em `DWELL_PADRAO` (substituem `raioM`, `kSaida`, `saidaImediataM`,
-`velNavMinKmh`, que devem sair):
+/** Soma dos segmentos; 0 com menos de 2 pontos. */
+export function distanciaTotalM(pts: readonly LngLat[]): number;
 
-| Opção | Default | Papel |
-|---|---:|---|
-| `raioEntradaM` | 100 | ocupância para entrar em parada |
-| `raioSaidaM` | 150 | fora disso o fix conta como evidência de saída |
-| `minDuracaoMs` | 10 min | janela candidata mínima |
-| `minFixes` | 4 | fixes mínimos na janela (cadência esparsa ~4 min existe) |
-| `ocupanciaMin` | 0.8 | fração da janela dentro de `raioEntradaM` |
-| `derivaMaxM` | 75 | veto de tendência (deriva lenta não é parada) |
-| `saidaK` / `saidaN` | 5 / 6 | 5 dos últimos 6 fixes fora de `raioSaidaM` |
-| `saidaSpanMinMs` | 2 min | a evidência de saída cobre ao menos isso |
-| `mesclarDistM` | 100 | mescla paradas vizinhas |
-| `mesclarIntervaloMs` | 5 min | intervalo máximo entre paradas mescladas |
-| `gapMs` | 30 min | quebra de segmento (igual hoje) |
+/** "850 m" (< 1000 m, inteiro); "1,2 km" (< 100 km, 1 casa, vírgula);
+ *  "134 km" (>= 100 km, inteiro). Separador decimal "," (pt-BR).
+ *  Arredonde ANTES de escolher a faixa: 999,6 m vira "1,0 km", não "1000 m";
+ *  99 960 m vira "100 km", não "100,0 km". */
+export function rotuloDistancia(m: number): string;
 
-Algoritmo (fixes marcados por `marcarSpikes` ficam FORA de tudo isto, mas são
-contados em `Dwell.excluidos`):
+/** Rosa de 8 pontos em PT + graus inteiros: "NE 47°", "L 90°", "SO 225°".
+ *  Pontos: N, NE, L, SE, S, SO, O, NO (setores de 45° centrados em cada um).
+ *  Graus arredondados; 359,6 vira "N 0°". null → "—". */
+export function rotuloRumo(graus: number | null): string;
 
-```text
-centro(pontos) = mediana por eixo em metros locais (não média)
-i = 0
-enquanto i < n:
-  janela = fixes de i até cobrir minDuracaoMs (para em lacuna > gapMs)
-  se janela.dur >= minDuracaoMs e len >= minFixes
-     e ocupância(janela, centro(janela), raioEntradaM) >= ocupanciaMin
-     e dist(centro(primeiros 2 min), centro(últimos 2 min)) <= derivaMaxM:
-       PARADA: membros = janela; c = centro(membros)
-       para cada fix seguinte k:
-         lacuna > gapMs ⇒ encerra (parada termina no último membro)
-         se dist(k, c) <= raioSaidaM: membros += k
-         últimos saidaN fixes: se >= saidaK fora de raioSaidaM
-            e span(primeiro..último fora) >= saidaSpanMinMs:
-              partida = primeiro fix fora dessa sequência; encerra
-         recalcula c a cada 20 membros (c fica fixo durante a avaliação de saída)
-       registra Dwell; i = índice da partida
-  senão: fix i é movimento; i++
-depois: mescla dwells consecutivos com centros <= mesclarDistM e intervalo
-<= mesclarIntervaloMs, sem lacuna > gapMs entre eles; recalcula estatísticas.
+/** Rumo inicial de a para b (reusa calcularBearing). */
+export function rumo(a: LngLat, b: LngLat): number | null;
+
+/** Abaixo disso o "deslocamento" é ruído de multipath (AGENTS.md, lição 9). */
+export const VELOCIDADE_MIN_ETA_KMH = 2;
+
+/** Tempo em ms para `distanciaM` a `velocidadeKmh`. null se a velocidade for null,
+ *  não finita ou menor que VELOCIDADE_MIN_ETA_KMH. */
+export function etaMs(distanciaM: number, velocidadeKmh: number | null): number | null;
+
+/** Texto para a área de transferência: uma linha por vértice
+ *  "1. -5.00000, -70.00000 (Nome do nó)" (lat, lon, 5 casas; nome só em vértice de nó),
+ *  depois "Total: 1,2 km". */
+export function textoCompartilhar(
+  pts: readonly { pos: LngLat; nome?: string | null }[],
+): string;
 ```
 
-Novos campos em `Dwell`: `dispersaoP50M`, `dispersaoP90M` (distância radial dos
-membros ao centro; exclui spikes e fixes de partida), `excluidos` (spikes dentro do
-intervalo da parada), `ultimoFixMs` (último membro). Novo campo em
-`TrilhaSimplificada`: `spikes: boolean[]` alinhado com `pontos` de entrada (índice
-original), para a camada de fixes brutos.
+- Reusar `calcularBearing` de `./bearing.js` (não reimplementar).
+- NÃO reusar `distanciaM` de `dwell.ts`: é aproximação equirretangular local; a régua
+  pode cobrir centenas de km.
 
-Linha simplificada: parada contribui UM vértice (o centro), sem o vértice de
-"chegada" (que vira raio da estrela). Odômetro não soma nada dentro da parada.
+Testes (mínimo): haversine de 1° de latitude ≈ 111 195 m ± 1 m; distância zero;
+caminho de 3 pontos soma os segmentos; `rotuloDistancia` em 0, 999.4, 999.6, 1000, 1234,
+99_949, 99_960, 100_000, 134_400; `rotuloRumo` em 0, 22.4, 22.6, 90, 180, 225, 315, 359.6,
+null; `etaMs` com null/0/1.9/2/10 km/h; formato de `textoCompartilhar`.
 
-Testes (gerador da T1): parada sintética de 15 h ⇒ exatamente 1 dwell e linha com
-≤ 3 vértices nela; parada de 4 h com fix a cada 4 min ⇒ 1 dwell; deriva a 2.5 km/h
-por 1 h ⇒ 0 dwells; pausa de 5 min ⇒ 0 dwells; partida logo após sequência de
-spikes ⇒ partida detectada até 3 min depois do início real; parada até o último fix
-⇒ `parado = true` e `partidaMs = null`; parada atravessando lacuna de 40 min ⇒ dois
-dwells; 2–3 fixes ⇒ sem dwell. Reescreva os testes antigos que dependiam de
-`kSaida`/`saidaImediataM`; mantenha os que ainda valem.
+## T2 — Estado no store `web/src/store.ts`
 
-### T3 — Linha em movimento sem zigue-zague + odômetro
+Em `web/src/store.ts`:
 
-Arquivos: `web/src/lib/suavizar.ts` (novo), `web/tests/unit/suavizar.test.ts` (novo),
-`web/src/lib/dwell.ts` (só a montagem de `linhas`/`distanciaM`).
+```ts
+/** Vértice da régua: ponto livre ou ancorado num nó (segue o nó ao vivo). */
+export type PontoRegua =
+  | { tipo: "livre"; lon: number; lat: number }
+  | { tipo: "no"; nodeNum: number };
 
-1. `suavizarLocal(itens, janelaMs = 60_000, minFixes = 5)`: para cada fix em movimento,
-   ajuste linear robusto (posição × tempo, por eixo, em metros) sobre os vizinhos em
-   ±`janelaMs`; usa o valor ajustado no tempo do fix. Menos de `minFixes` na janela ⇒
-   mantém o fix. Não atravessa lacuna > `gapMs` nem a fronteira de uma parada (o
-   centro da parada é âncora fixa). "Robusto" = um passe de mínimos quadrados, descarta
-   resíduos > 3× a mediana dos resíduos, reajusta uma vez.
-2. `douglasPeucker(linha, toleranciaM = 30)`: em metros locais; preserva o primeiro e o
-   último vértice de cada segmento e os centros de parada.
-3. `distanciaM` (odômetro) = soma sobre a linha suavizada ANTES do Douglas–Peucker.
-   `linhas` = linha suavizada DEPOIS do Douglas–Peucker.
-4. `aproximacao` (rumo congelado) continua vindo dos vértices até o centro da parada
-   em curso.
-5. Testes: navegação reta com ruído de 10 m ⇒ odômetro dentro de ±5% da distância real
-   e linha com ≤ 5% dos vértices originais; curva de 90° preservada (vértice a < 40 m
-   do canto); deriva lenta continua visível (deslocamento final > 80% do real);
-   lacuna > 30 min mantém dois segmentos.
+export interface EstadoRegua { ativa: boolean; concluida: boolean; pontos: PontoRegua[] }
+```
 
-Kalman/RTS fica fora (custo de calibragem; ganho pequeno sobre isto).
+Campo novo `regua: EstadoRegua` em `LocalState`, inicial
+`{ ativa: false, concluida: false, pontos: [] }`. Não persiste.
 
-### T4 — Mapa: parada com círculo de dispersão, sem nuvem crua
+Ações (exportadas pelo objeto `LocalState`):
 
-Arquivos: `web/src/InitializeMap.tsx`, `web/tests/unit/initialize-map.test.ts`,
-`web/src/lib/circulo.ts` (novo, puro, com teste).
+- `ativarRegua(nodeNum?: number)` → ativa = true, concluida = false,
+  pontos = nodeNum !== undefined ? [{tipo:"no",nodeNum}] : [].
+- `desativarRegua()` → volta ao valor inicial.
+- `adicionarPontoRegua(p: PontoRegua)` → sem efeito se não `ativa`. Se `concluida`,
+  começa caminho novo `[p]` e concluida = false; senão, acrescenta. Ignora `p` igual ao
+  último vértice (mesmo nó, ou ponto livre com lon/lat idênticos): o duplo clique emite
+  2 cliques.
+- `moverPontoRegua(i: number, lon: number, lat: number)` → vértice i vira
+  `{tipo:"livre",lon,lat}` (arrastar um vértice de nó o desancora). Índice inválido: nada.
+- `desfazerPontoRegua()` → remove o último vértice; concluida = false.
+- `concluirRegua()` → concluida = true só se pontos.length >= 2.
+- `limparRegua()` → pontos = [], concluida = false (continua ativa).
+- `resetViewerState()` também chama `desativarRegua()`.
 
-1. `circuloGeo(centro, raioM, passos = 48): LngLat[]` — polígono fechado em graus.
-2. Nova fonte `dwell-spread` (Polygon por parada, raio = `dispersaoP90M`) e camada
-   `dwell-spread-fill` (fill `#0ea5e9`, opacidade 0.15) + `dwell-spread-line`
-   (linha 1 px, opacidade 0.5), ambas ABAIXO de `track-line`.
-3. `track-points` deixa de receber todos os fixes. Por padrão recebe só os fixes em
-   movimento (fora de qualquer parada e não spike). Precisa de um jeito de saber,
-   por índice original, se o fix é membro de parada: adicione em
-   `TrilhaSimplificada` um `papel: ("movimento" | "parada" | "spike")[]` alinhado com a
-   entrada (substitui ou complementa `spikes` da T2).
-4. `analisarTrilha`: cair nas linhas cruas da API SÓ quando `simp === null`. Se `simp`
-   existe e tem 0 linhas, a trilha fica vazia (não ressuscita o novelo).
-5. Rótulo da parada em curso: usar `ultimoFixMs`. Se o último fix tem menos de 30 min:
-   `Ancorado há <duração até agora>`; senão `Parado <duração observada> · último fix
-   há <tempo>` (não inventa permanência sem observação).
-6. Popup da parada (clique em `dwell-points-circle`): chegada, duração, nº de fixes,
-   `50% dos fixes em X m · 90% em Y m`, e `N fixes descartados (ruído)` quando
-   `excluidos > 0`. Escape HTML como hoje (`esc`).
-7. Limpar as novas fontes onde as atuais são limpas (`limparParadas`, logout, troca de
-   seleção).
-8. Testes no `initialize-map.test.ts` cobrindo: fonte `track-points` sem fixes de
-   parada por padrão; `dwell-spread` com um polígono por parada; fallback cru só sem
-   `simp`.
+Acrescentar em `web/src/lib/regua.ts`:
 
-### T5 — Botão "Fixes brutos"
+```ts
+export interface VerticeResolvido {
+  pos: LngLat;
+  nome: string | null;
+  nodeNum: number | null;
+  /** Índice no array `pontos` original (o arrasto precisa dele). */
+  indice: number;
+}
 
-Arquivos: `web/src/store.ts`, `web/src/components/viewer/NodeInspector.tsx`,
-`web/src/InitializeMap.tsx`, testes do inspector e do mapa.
+/** Resolve vértices em coordenadas. Vértice de nó lê `nodes`; nó ausente ou com
+ *  lon/lat não finitos é DESCARTADO. */
+export function resolverPontosRegua(
+  pontos: readonly PontoRegua[],
+  nodes: Readonly<Record<number, { lon: number; lat: number; nome: string }>>,
+): VerticeResolvido[];
+```
 
-1. Estado `mostrarFixesBrutos: boolean` (padrão `false`) + setter, no padrão de
-   `showInactive`. Persistir em `localStorage` com try/catch (é conveniência local).
-2. Toggle no `NodeInspector` (componente `switch` de `components/ui`), rótulo
-   "Fixes brutos", visível só com trilha carregada.
-3. Ligado: `track-points` recebe TODOS os fixes com a propriedade `papel`; paint por
-   expressão: movimento = como hoje; parada = raio 2, opacidade 0.35; spike = raio 2,
-   cor `#ef4444`, sem preenchimento (só contorno). Nenhuma linha liga esses pontos.
-   Desligado: comportamento da T4.
-4. Alternar o toggle NÃO refaz o fetch da trilha: guarde a última análise e só
-   reaplique o `setData`.
+`PontoRegua` importado de `../store.js` como `import type`.
 
-### T6 — Guardar qualidade do fix do firmware (sem deploy)
+Testes em `web/tests/unit/regua-store.test.ts`: cada ação; o filtro de clique duplicado;
+"clique depois de concluída começa caminho novo"; `resetViewerState` desliga a régua;
+o resolvedor descarta nó ausente e acompanha um nó que muda de posição (`setNodes` 2x).
+Limpar o store no `afterEach`.
 
-Objetivo: quando o rádio mandar, guardar `PDOP`, `HDOP`, `ground_speed`,
-`ground_track` e `precision_bits` de `meshtastic.Position`, e expor na trilha. Hoje os
-rádios não mandam (sats = 0 sempre): os campos só terão valor depois de ajustar
-`position.position_flags` no provisionamento (`../univaja-lora`), FORA desta tarefa.
+## T3 — Desenho no mapa `web/src/lib/reguaMapa.ts`
 
-Arquivos (encontre todos os pontos com `grep -rn sats services deploy` excluindo
-`.venv`): `deploy/postgres/init/01-schema.sql`, `deploy/postgres/migrate-02-native.sh`
-(ou novo `migrate-03-qualidade.sh` no mesmo estilo), `services/rastro_gateway/native/model.py`,
-`native/envelope.py`, `common/records.py`, `bridge/packet_filter.py`,
-`bridge/geojson_in.py`, `ingest/db.py`, `services/rastro_api/api/queries.py`,
-`api/geojson.py`, `web/src/providers/api.ts` (`TrackPoint`), testes de cada pacote.
+Módulo dono da fonte e das camadas MapLibre da régua. Sem interações ainda.
 
-1. Esquema: `ALTER TABLE rastro.positions ADD COLUMN IF NOT EXISTS pdop REAL,
-   hdop REAL, ground_speed_ms REAL, ground_track_deg REAL, precision_bits SMALLINT`
-   — todos anuláveis, sem default, sem índice. Mesmo bloco no `01-schema.sql` (instalação
-   nova) e num script de migração idempotente com backup como o `migrate-02`.
-   Nenhum `DROP`/`RENAME`/mudança de tipo. Views que listam colunas de `positions`
-   só ganham colunas novas no FIM.
-2. Decodificação: `pdop`/`hdop` vêm em centésimos (`PDOP / 100`); `ground_speed` em km/h inteiro ⇒ m/s = `/ 3.6`;
-   `ground_track` em 1e-5 graus (`/ 1e5`). Valor 0 = ausente ⇒ `None`
-   (o protobuf não distingue). Campo ausente nunca derruba o fix.
-3. Ingest: INSERT com as colunas novas nos DOIS pontos de `db.py` (~linhas 325 e 625).
-   O ingest tem de continuar funcionando contra um banco SEM as colunas (deploy em
-   ordem errada): detecte as colunas uma vez na conexão
-   (`information_schema.columns`) e só inclua as que existem.
-4. API: `track` devolve `pdop`, `hdop`, `speed_ms`, `track_deg` nas propriedades do
-   ponto quando não nulos. Web: `TrackPoint` ganha os campos opcionais.
-5. Web (uso opcional): `marcarSpikes` aceita `hdop`; se presente e > 5, o limite de
-   resíduo cai para 60 m. Sem `hdop`, comportamento idêntico à T1.
-6. Testes: decodificação com e sem os campos; ingest contra esquema sem as colunas;
-   API serializa os campos; migração idempotente (rodar duas vezes) se houver teste de
-   SQL no repo.
-7. Atenção: `main` tem mudanças não comitadas em `ingest/db.py` e `native/service.py`
-   (outro trabalho). Edite só a branch; o revisor resolve conflito no merge.
+```ts
+export const FONTE_REGUA = "regua";
+export const CAMADA_REGUA_LINHA = "regua-linha";
+export const CAMADA_REGUA_VERTICES = "regua-vertices";
+export const CAMADA_REGUA_ROTULOS = "regua-rotulos";
 
-### T7 — Documentação
+/** Adiciona fonte + camadas por cima de tudo, se ausentes (idempotente). */
+export function garantirCamadasRegua(map: maplibregl.Map): void;
 
-1. `AGENTS.md` §3: nova lição "Parada de barco sob multipath" (números medidos,
-   regra de saída 5/6 a 150 m, mediana em vez de média, spike A–B–C, velocidade
-   sozinha não serve como sinal de saída nem de spike).
-2. `TODO.md`: item para ajustar `position_flags` (PDOP/HDOP/SATINVIEW/SPEED) no
-   provisionamento do `univaja-lora` + aplicar `migrate-03` no deploy.
-3. Contagem de testes em `AGENTS.md` §2 atualizada.
+/** FeatureCollection da medição: uma LineString com todos os vértices (só com >= 2),
+ *  um Point por vértice (props: indice, ancorado: boolean) e um Point no meio de cada
+ *  segmento (props: rotulo = `${rotuloDistancia(d)} · ${rotuloRumo(b)}`).
+ *  FC vazia com 0 pontos. */
+export function geojsonRegua(pts: readonly VerticeResolvido[]): FeatureCollection;
 
-## Verificação final (revisor)
+/** setData na fonte (sem efeito se a fonte não existir). */
+export function atualizarRegua(map: maplibregl.Map, pts: readonly VerticeResolvido[]): void;
+```
 
-- Rodar o protótipo/harness de calibragem contra a trilha real guardada no scratchpad
-  (nunca no repo) e conferir: parada de 15 h = 1 dwell, p90 ≈ 60 m; parada esparsa de
-  4 h preservada; vértices da linha muito abaixo de 1579; odômetro plausível.
-- `pnpm dev` contra a API e conferir visualmente o barco de Ituí parado.
-- Dupla revisão (sonnet + Codex) antes do merge.
+Estilo: linha âmbar `#fbbf24`, largura 2.5, `line-dasharray: [2, 1.5]`; vértices
+`circle` raio 6, preenchimento `#0f172a`, contorno âmbar 2.5; vértice ancorado com
+contorno esmeralda `#34d399`; rótulos `symbol` com `text-font: ["Noto Sans Regular"]`
+(única fonte de glyphs servida), tamanho 11, texto branco, halo `#090f0b` 2.5,
+`text-allow-overlap: true`. Use `filter` por tipo de geometria / propriedade para
+separar as camadas. Meio do segmento = média simples dos 2 vértices.
+
+Ligar em `web/src/InitializeMap.tsx`:
+- Em `aoCarregar` (roda em `style.load` e `load`), chamar `garantirCamadasRegua(map)`
+  e logo depois `atualizarRegua(...)` com o estado atual.
+- Um `createEffect` que lê `LocalState.localState.regua.pontos` e os nós (para o vértice
+  ancorado seguir ao vivo) e chama `atualizarRegua(map, resolverPontosRegua(...))`.
+  Siga como os outros efeitos deste arquivo obtêm o mapa (`currentView()`) e protegem
+  contra mapa ainda não carregado.
+
+Testes `web/tests/unit/reguaMapa.test.ts`: contagens e props de `geojsonRegua` para 0, 1
+e 3 pontos (3 vértices + 1 linha + 2 rótulos); `garantirCamadasRegua` idempotente com
+um mapa falso mínimo (`getSource`, `addSource`, `getLayer`, `addLayer`).
+
+## T4 — Interações no mapa (`web/src/lib/reguaMapa.ts` + `InitializeMap.tsx`)
+
+```ts
+export interface DepsInteracoesRegua {
+  ativa: () => boolean;
+  /** Camadas de pin a consultar no encaixe (filtradas por map.getLayer na hora). */
+  camadasNos: string[];
+  /** Reusar nodeNumDoPin de InitializeMap. */
+  nodeNumDe: (props: Record<string, unknown>) => number | null;
+  adicionar: (p: PontoRegua) => void;
+  mover: (i: number, lon: number, lat: number) => void;
+  concluir: () => void;
+  sair: () => void;
+}
+
+/** Instala os handlers da régua. Devolve uma função que remove todos. */
+export function instalarInteracoesRegua(map: maplibregl.Map, deps: DepsInteracoesRegua): () => void;
+```
+
+Comportamento:
+- `click` com `ativa()`: consulta as camadas de nós numa caixa de ±10 px em torno de
+  `e.point` (encaixe amigável ao toque). Achou nodeNum → `adicionar({tipo:"no",nodeNum})`;
+  senão → `adicionar({tipo:"livre", lon, lat})`.
+- `dblclick` com régua ativa: `e.preventDefault()` (sem zoom) e `concluir()`.
+- Arrasto: `mousedown` / `touchstart` em `CAMADA_REGUA_VERTICES` com régua ativa → lê
+  `indice` da feature, `e.preventDefault()`, `map.dragPan.disable()`; no `mousemove` /
+  `touchmove` chama `mover(indice, lng, lat)`; no `mouseup` / `touchend` reabilita o
+  `dragPan`. Arrasto que moveu NÃO pode também adicionar vértice (ignore o próximo
+  `click` logo após um arrasto que moveu).
+- Cursor: `crosshair` no canvas com régua ativa; `move` sobre um vértice. A função
+  exportada `definirCursorRegua(map, ativa: boolean)` aplica `crosshair` / `""`.
+- `keydown` `Escape` em `document` com régua ativa → `sair()`.
+
+Em `InitializeMap.tsx`:
+- Instalar uma vez em `aoCarregar` (proteja contra instalação dupla: `aoCarregar` roda
+  em `style.load` e em `load`). Remover no `onCleanup` do componente.
+- Os três `map.on("click", ...)` existentes (pin do nó, pin de parada, área livre)
+  retornam cedo quando `LocalState.localState.regua.ativa` for true. O handler de
+  `mouseleave` de `nodes-circle` que zera o cursor deve restaurar `crosshair` se a régua
+  estiver ativa.
+- Efeito: `definirCursorRegua(map, regua.ativa)`.
+
+Testes `web/tests/unit/reguaMapa-interacoes.test.ts` com mapa falso mínimo (guarda
+handlers de `on`/`off`, stub de `queryRenderedFeatures`, `dragPan`, `getCanvas`):
+clique adiciona ponto livre; clique perto de nó adiciona vértice de nó; clique com régua
+inativa não faz nada; dblclick chama `concluir` + `preventDefault`; arrasto chama `mover`
+e o clique seguinte é ignorado; Escape chama `sair`; a função de limpeza remove os handlers.
+
+## T5 — Botão da barra + painel de leitura
+
+`web/src/components/viewer/MapControls.tsx`: depois do bloco do período, botão da régua
+(mesmo `btnIcone`). `aria-label="Régua: medir distâncias"`, `aria-pressed` =
+`regua.ativa`, `title="Medir distâncias"`. Ligado: ícone âmbar + `ring-2 ring-amber-400`.
+Clique alterna `ativarRegua()` / `desativarRegua()`.
+
+Novo `web/src/components/viewer/ReguaPainel.tsx`, renderizado em `web/src/MapWindow.tsx`
+dentro do overlay, embaixo ao centro (`absolute bottom-3 left-1/2 -translate-x-1/2`,
+`pointer-events-auto`, `max-w-[calc(100vw-1rem)]`), só com `regua.ativa`. Mesmo estilo
+escuro dos menus (`bg-slate-950/95 border border-slate-700/80 rounded-lg`). Conteúdo
+(derivado reativamente de `resolverPontosRegua`):
+- 0 pontos: "Toque no mapa ou num nó para começar".
+- 1 ponto: "Toque no próximo ponto".
+- >= 2: total em destaque (`rotuloDistancia`); com > 2 pontos, "Em linha reta: X · rumo"
+  (primeiro→último); lista compacta de segmentos "1→2 · 850 m · NE 47°".
+- Linha de chegada só quando o vértice 0 é de nó, `localState.movimento[nodeNum]` tem
+  `parado !== true` e `etaMs(total, velocidadeKmh)` não é null:
+  "Chegada estimada: ~1h 20min a 12 km/h" (use `duracaoLabel` de `lib/dwell.js`).
+- Botões pequenos (ícone + texto, com `aria-label`): "Desfazer" (desabilitado com 0
+  pontos), "Concluir" (só se não concluída e >= 2 pontos), "Copiar" (>= 2 pontos;
+  `navigator.clipboard.writeText(textoCompartilhar(...))`, mostra "Copiado" por 2 s; em
+  falha ou sem clipboard mostra "Não foi possível copiar"), "Fechar" (`desativarRegua`).
+- Dica sob os botões enquanto não concluída: "Duplo clique para concluir · Esc para sair".
+
+Testes: em `MapControls.test.tsx`, novo `describe` do botão (aria-pressed alterna, store
+muda); `ReguaPainel.test.tsx`: dicas com 0/1 ponto, total com 3 pontos livres, chegada só
+para nó em movimento com velocidade, "Copiar" chama o clipboard com o texto esperado
+(mock de `navigator.clipboard`), "Fechar" desliga. Limpar o store no `afterEach`.
+
+## T6 — Entradas "Medir daqui"
+
+- `web/src/components/viewer/NodeInspector.tsx`: botão ao lado de "Centralizar no mapa",
+  mesmo estilo, `RulerIcon`, texto "Medir daqui", chama `ativarRegua(node().nodeNum)`.
+  Desabilitado quando o nó não tem posição confirmada (siga como o "Centralizar" decide).
+- Popup em `InitializeMap.tsx` (`gerarHtmlPopup`): rodapé com
+  `<button type="button" data-acao="medir-daqui" ...>Medir daqui</button>` (só quando o
+  pin tem nodeNum). Em `abrirPopupDoPin`, depois do `addTo(map)`, ouvir o clique em
+  `popup.getElement().querySelector('[data-acao="medir-daqui"]')` que chama
+  `LocalState.ativarRegua(nodeNum)` e fecha o popup.
+- Testes: botão do inspector liga a régua com o vértice 0 ancorado.
+
+## T7 — Só o revisor (não é para subagente)
+
+Conferência no navegador com `pnpm dev:test`, e2e de fumaça se viável, nota no
+AGENTS.md, revisão final.
