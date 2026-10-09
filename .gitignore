@@ -33,3 +33,6 @@ __pycache__/
 graft/
 uv.lock
 .ignore
+
+# agent symlink dir (AGENTS.md link), local tooling only
+.agents/

@@ -1,6 +1,6 @@
 # Ingest nativo Meshtastic + chat — desenho de implementação (Tarefas 4 e 5)
 
-Fonte de verdade dos requisitos: `TODO.md` (Tarefas 4/5). Este arquivo fixa interfaces e
+Fonte de verdade dos requisitos: `tsk list --all` (pendências) e `docs/historico/rastro-todo-2026.md` (decisões e evidência das Tarefas 4/5). Este arquivo fixa interfaces e
 responsabilidades de arquivos para implementação em paralelo. Sem produção, sem rádio: tudo
 testável localmente (pytest + rig Docker). Dados de teste: PSK descartável e nomes fake.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Inspetor READ-ONLY do banco legado 'mqtt' no PostgreSQL.
 
-A remoção do banco 'mqtt' foi executada em 2026-10-01 (Tarefa 1 do TODO.md) e o código
+A remoção do banco 'mqtt' foi executada em 2026-10-01 (Tarefa 1 de docs/historico/rastro-todo-2026.md) e o código
 destrutivo (DROP/ALTER, token, confirmação) foi removido do script em seguida.
 O script apenas confere o estado da instância e NUNCA escreve:
 

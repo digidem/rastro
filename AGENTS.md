@@ -55,7 +55,7 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 1. **Separação Estrita de Bancos de Dados:**
    - O Rastro opera **exclusivamente no banco `rastro`**.
    - O banco específico `mqtt` contendo a tabela `_prisma_migrations` e modelos do protótipo legado `meshtastic-map` (Node/Prisma) não é utilizado pelo Rastro atual e é alvo de limpeza após verificação de procedência e backup preventivo.
-   - O endpoint de conexão de manutenção deve ser `/postgres`, nunca bancos de aplicações terceiras (como `/superset_metastore`). Ver [TODO.md](file:///home/luandro/Dev/digidem/rastro/TODO.md).
+   - O endpoint de conexão de manutenção deve ser `/postgres`, nunca bancos de aplicações terceiras (como `/superset_metastore`). Ver [docs/historico/rastro-todo-2026.md](docs/historico/rastro-todo-2026.md); pendências em `tsk list --all`.
 2. **Auto-Framing de Câmera no Mapa (`fitBounds`):**
    - O enquadramento automático da câmera deve ser desacoplado de ticks reativos do relógio, buscas textuais ou filtros de condição.
    - Em `web/src/InitializeMap.tsx`, o `fitBounds` observa unicamente a lista de nós com fix confirmado (`posicionados = todos.filter(hasConfirmedPosition)`), evitando saltos indesejados de zoom enquanto o usuário navega.
@@ -109,7 +109,7 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 ---
 
 ## 4. Tarefas Pendentes
-Consulte [TODO.md](file:///home/luandro/Dev/digidem/rastro/TODO.md) para pendências imediatas de infraestrutura, manutenção de banco de dados e diagramas visuais.
+As pendências ficam no quadro tsk (`tsk list --all`); o histórico de decisões e evidências está em [docs/historico/rastro-todo-2026.md](docs/historico/rastro-todo-2026.md).
 
 ---
 
