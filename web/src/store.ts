@@ -162,7 +162,12 @@ const setAlerts = (list: NodeAlert[]) => {
     if (a.nodeNum === null) {
       continue;
     }
-    (mapa[a.nodeNum] ??= []).push(a);
+    const fila = mapa[a.nodeNum];
+    if (fila) {
+      fila.push(a);
+    } else {
+      mapa[a.nodeNum] = [a];
+    }
   }
   setLocalState("alerts", reconcile(mapa));
 };

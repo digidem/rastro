@@ -8,6 +8,11 @@ import {
 import { useMap } from "../../hooks/useMap.jsx";
 import { useStore } from "../../hooks/useStore.jsx";
 import {
+  sufixoLeitura,
+  tituloBateriaCritica,
+  tituloGatewayMudo,
+} from "../../lib/alertas.js";
+import {
   type BatteryLevel,
   batteryLevel,
   formatDateTimeJavari,
@@ -18,11 +23,6 @@ import {
   nodeKind,
   nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
-import {
-  sufixoLeitura,
-  tituloBateriaCritica,
-  tituloGatewayMudo,
-} from "../../lib/alertas.js";
 import type { NodeAlertType, NodeInfo, NodeKind } from "../../store.js";
 
 const ROTULO_CATEGORIA = new Map<NodeKind, string>([
@@ -130,7 +130,12 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
             </div>
 
             {/* Alertas de campo ativos (gateway_mudo / bateria_critica) */}
-            <Show when={alertaDe(node().nodeNum, "gateway_mudo") || alertaDe(node().nodeNum, "bateria_critica")}>
+            <Show
+              when={
+                alertaDe(node().nodeNum, "gateway_mudo") ||
+                alertaDe(node().nodeNum, "bateria_critica")
+              }
+            >
               <div class="flex flex-wrap gap-1.5">
                 <Show when={alertaDe(node().nodeNum, "gateway_mudo")}>
                   {(alerta) => (

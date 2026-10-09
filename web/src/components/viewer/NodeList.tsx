@@ -292,7 +292,10 @@ export const NodeList: Component<NodeListProps> = (props) => {
                         {(alerta) => (
                           <span
                             class="rounded border border-red-600/80 bg-red-950/40 px-1 text-[10px] text-red-300 font-semibold"
-                            title={tituloBateriaCritica(alerta(), props.nowMs())}
+                            title={tituloBateriaCritica(
+                              alerta(),
+                              props.nowMs(),
+                            )}
                           >
                             🪫 Bateria crítica
                             {sufixoLeitura(alerta(), props.nowMs())}
