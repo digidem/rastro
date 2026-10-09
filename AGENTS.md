@@ -94,6 +94,13 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - Com a régua ligada, os handlers de clique de pin/parada/área livre em `InitializeMap.tsx` retornam cedo; os cliques são da régua (`instalarInteracoesRegua` em `web/src/lib/reguaMapa.ts`). Encaixe em nó numa caixa de ±10 px (toque).
    - Chegada estimada só com vértice 0 num nó não parado e velocidade ≥ 2 km/h (lição 9: multipath gera velocidade falsa). `movimento` só existe para nós cuja trilha já foi analisada.
    - `navigator.clipboard` exige contexto seguro: em `http://` pela LAN/ZeroTier o "Copiar" mostra "Não foi possível copiar".
+12. **Previsão do tempo diária:**
+   - Roda como thread dentro da API (`api/clima_agenda.py`), com o papel `viewer`: lê a última posição do barco e insere em `chat_outbox` (`created_by='clima'`). Desligada por padrão (`RASTRO_CLIMA_ENABLED=1` liga).
+   - Envs `RASTRO_CLIMA_*`: `BARCOS` (JSON; padrão os 5 barcos regionais, barco 1 de cada), `HORA` (padrão `08:00`), `UTC_OFFSET_H` (padrão -5), `INTERVALO_S` (60), `TTL_H` (6), `MAX_IDADE_H` (48; fix mais velho usa o ponto `lat`/`lon` reserva do barco, se houver), `API_URL` (Open-Meteo). Inválida → loga erro e fica desligada.
+   - Idempotência e espaçamento de 1 min valem no banco: advisory lock + checagem de `created_by='clima'` dentro da transação. Uma tentativa enfileirada por barco por dia; não há garantia de recebimento.
+   - Tamanho medido em bytes UTF-8 (acento = 2 bytes); meta 150–180, teto 200. Log só com o tamanho, nunca o texto nem coordenadas.
+   - Posição exata vai ao Open-Meteo por decisão do dono (2026-10-09).
+   - Limitação: se o `rastro-chat` estiver fora do ar, as mensagens acumulam e saem juntas quando ele volta.
 
 ---
 

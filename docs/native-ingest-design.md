@@ -135,3 +135,4 @@ canal `PKI` → `Opaque`. Cifra com chave errada produz protobuf inválido → `
   estado "enviado ao gateway do barco" / "expirada (não entregue)" — nunca "lido". `GET /api/nodes/latest` passa a trazer
   `age_s`, `time_flag`; trilha quebra em lacunas > `RASTRO_TRACK_GAP_SECS` (default 1800) — `GET /api/nodes/{n}/track`
   devolve múltiplos LineStrings por padrão (MultiLineString somente com ?format=multi).
+  Previsão diária por barco (envs `RASTRO_CLIMA_*`, insere em `chat_outbox` com `created_by='clima'`): ver lição 12 do `AGENTS.md`.

@@ -47,7 +47,8 @@ try:  # psycopg >= 3.2: pool embutido; versões antigas usam o pacote psycopg_po
 except ImportError:  # pragma: no cover
     from psycopg_pool import ConnectionPool, PoolTimeout  # type: ignore[no-redef]
 
-from rastro_api.api import chat, geojson, queries
+from rastro_api.api import chat, clima_config, geojson, queries
+from rastro_api.api.clima_agenda import AgendaClima
 from rastro_api.api.osm import OsmTiles, TileIndisponivel
 from rastro_api.api.overlays import Overlays, OverlaysIndisponiveis
 
@@ -250,11 +251,35 @@ def create_app() -> FastAPI:
             _env("RASTRO_PG_DB", "rastro"),
             _pg_user(),
         )
+        agenda = None
+        thread = None
         try:
+            cfg = clima_config.carregar(os.environ)
+            if cfg.ativo:
+                agenda = AgendaClima(pool, cfg)
+                thread = agenda.iniciar()
+                LOGGER.info(
+                    "previsão do tempo: ligada (%d barcos, %s, UTC%+d)",
+                    len(cfg.barcos),
+                    cfg.rotulo_hora,
+                    cfg.utc_offset_h,
+                )
+            else:
+                LOGGER.info("previsão do tempo: desligada")
             yield
         finally:
-            pool.close()
-            LOGGER.info("pool de conexões encerrado")
+            try:
+                if agenda is not None:
+                    agenda.parar.set()
+                if thread is not None:
+                    thread.join(timeout=20)
+                    if thread.is_alive():
+                        LOGGER.warning(
+                            "previsão do tempo: thread ainda ativa após 20 s no encerramento"
+                        )
+            finally:
+                pool.close()
+                LOGGER.info("pool de conexões encerrado")
 
     def _is_local(request: Request) -> bool:
         """Sem credencial SÓ localmente (navegador do monitor no caddy local)."""
