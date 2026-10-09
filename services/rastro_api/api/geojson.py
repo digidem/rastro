@@ -59,6 +59,28 @@ def _pos_timestamp(val: Any) -> float:
     return 0.0
 
 
+# Qualidade do fix (migração 03): só entra nas propriedades quando não é nula.
+_QUALIDADE_PONTO = (
+    ("pdop", "pdop"),
+    ("hdop", "hdop"),
+    ("ground_speed_ms", "speed_ms"),
+    ("ground_track_deg", "track_deg"),
+)
+
+
+def _propriedades_ponto(r: dict) -> dict:
+    props = {
+        "pos_time": iso_utc(r["pos_time"]),
+        "time_source": r["time_source"],
+        "sats": r["sats_in_view"],
+    }
+    for coluna, chave in _QUALIDADE_PONTO:
+        valor = r.get(coluna)
+        if valor is not None:
+            props[chave] = float(valor)
+    return props
+
+
 def track_features(
     rows: list[dict],
     node_meta: dict,
@@ -125,11 +147,7 @@ def track_features(
             })
 
     points = [
-        point_feature(r["lon"], r["lat"], {
-            "pos_time": iso_utc(r["pos_time"]),
-            "time_source": r["time_source"],
-            "sats": r["sats_in_view"],
-        })
+        point_feature(r["lon"], r["lat"], _propriedades_ponto(r))
         for r in rows
     ]
     return [*line_features, *points]

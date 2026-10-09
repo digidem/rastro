@@ -90,6 +90,11 @@ def _position(feature: dict, common: dict) -> PositionRecord | None:
         hop_limit=_opt_int(props, "hop_limit"),
         snr=_opt_float(props, "snr"),
         rssi=_opt_int(props, "rssi"),
+        pdop=_opt_float(props, "pdop"),
+        hdop=_opt_float(props, "hdop"),
+        ground_speed_ms=_opt_float(props, "ground_speed_ms"),
+        ground_track_deg=_opt_float(props, "ground_track_deg"),
+        precision_bits=_opt_int(props, "precision_bits"),
     )
 
 

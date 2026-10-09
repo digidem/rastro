@@ -37,6 +37,43 @@ OUTBOX_LEASE_SECS = 60
 STARTUP_TIMEOUT_PADRAO_SECS = 120.0
 
 
+# Colunas de qualidade do fix (migração 03, aditiva). O ingest grava só as que
+# EXISTEM no banco: deploy do ingest antes da migração não pode derrubar a gravação.
+QUALIDADE_COLUNAS = (
+    "pdop",
+    "hdop",
+    "ground_speed_ms",
+    "ground_track_deg",
+    "precision_bits",
+)
+_SQL_COLUNAS_QUALIDADE = """
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = 'positions'
+      AND table_schema = ANY (current_schemas(false))
+      AND column_name = ANY (%s)
+"""
+# Nome do atributo que guarda o resultado da detecção na própria conexão psycopg.
+_ATRIBUTO_COLUNAS_QUALIDADE = "_rastro_colunas_qualidade"
+
+
+def _colunas_qualidade(conn) -> tuple[str, ...]:
+    """Colunas de QUALIDADE_COLUNAS presentes em ``positions``, detectadas UMA vez por conexão.
+
+    Consulta ``information_schema`` na primeira gravação da conexão e guarda o
+    resultado nela; conexão nova (pool recicla) refaz a detecção. Migração aplicada
+    com o ingest já rodando só vale depois da reconexão.
+    """
+    existentes = getattr(conn, _ATRIBUTO_COLUNAS_QUALIDADE, None)
+    if existentes is None:
+        with conn.cursor() as cur:
+            cur.execute(_SQL_COLUNAS_QUALIDADE, (list(QUALIDADE_COLUNAS),))
+            presentes = {linha[0] for linha in cur.fetchall()}
+        existentes = tuple(c for c in QUALIDADE_COLUNAS if c in presentes)
+        setattr(conn, _ATRIBUTO_COLUNAS_QUALIDADE, existentes)
+    return existentes
+
+
 def _limpa_texto(valor: str | None) -> str | None:
     """Remove ``\\x00`` — Postgres TEXT rejeita NUL e nomes/texto vêm da malha."""
     if valor is None:
@@ -320,16 +357,17 @@ class Db:
         with conn.cursor() as cur:
             cur.executemany(sql, list(seen.values()))
 
+    # {colunas_extra}/{valores_extra}: colunas de QUALIDADE_COLUNAS presentes (ver _colunas_qualidade)
     _SQL_POSITION = """
         INSERT INTO positions (node_num, pos_time, time_source, lat_i, lon_i,
                                altitude_m, sats_in_view, hop_limit, snr, rssi,
-                               received_at)
+                               received_at{colunas_extra})
         VALUES (%s,
                 CASE WHEN %s::double precision IS NULL THEN clock_timestamp()
                      ELSE to_timestamp(%s::double precision) END,
                 %s, %s, %s, %s, %s, %s, %s, %s,
                 CASE WHEN %s::double precision IS NULL THEN now()
-                     ELSE to_timestamp(%s::double precision) END)
+                     ELSE to_timestamp(%s::double precision) END{valores_extra})
         ON CONFLICT (node_num, pos_time) DO NOTHING
     """
 
@@ -357,6 +395,7 @@ class Db:
                 "o produtor preencha (hora do gateway se o dispositivo não mandou); "
                 "usando clock_timestamp() como pos_time (reentrega pode duplicar)"
             )
+        extras = _colunas_qualidade(conn)
         rows = [
             (
                 r.node_num,
@@ -372,11 +411,16 @@ class Db:
                 r.rssi,
                 r.rx_time,
                 r.rx_time,
+                *(getattr(r, c) for c in extras),
             )
             for r in records
         ]
+        sql_pos = cls._SQL_POSITION.format(
+            colunas_extra="".join(f", {c}" for c in extras),
+            valores_extra="".join(", %s" for _ in extras),
+        )
         with conn.cursor() as cur:
-            cur.executemany(cls._SQL_POSITION, rows)
+            cur.executemany(sql_pos, rows)
             return cur.rowcount  # psycopg3: soma dos rowcounts do executemany
 
     @classmethod
@@ -617,21 +661,25 @@ class Db:
                 (env.from_num, node_id),
             )
             if not (pos.lat_i == 0 and pos.lon_i == 0):
+                extras = _colunas_qualidade(cur.connection)
                 cur.execute(
                     """
                     INSERT INTO positions (
                         node_num, pos_time, time_source, lat_i, lon_i,
                         altitude_m, sats_in_view, hop_limit, snr, rssi,
-                        received_at, packet_id, gateway_num, time_flag, observed_at
+                        received_at, packet_id, gateway_num, time_flag, observed_at{colunas_extra}
                     ) VALUES (
                         %s, to_timestamp(%s::double precision), %s, %s, %s,
                         %s, %s, %s, %s, %s,
                         now(),
                         %s, %s, %s,
-                        CASE WHEN %s::double precision IS NULL THEN NULL ELSE to_timestamp(%s::double precision) END
+                        CASE WHEN %s::double precision IS NULL THEN NULL ELSE to_timestamp(%s::double precision) END{valores_extra}
                     )
                     ON CONFLICT (node_num, pos_time) DO NOTHING
-                    """,
+                    """.format(
+                        colunas_extra="".join(f", {c}" for c in extras),
+                        valores_extra="".join(", %s" for _ in extras),
+                    ),
                     (
                         env.from_num,
                         pos.time,
@@ -648,6 +696,7 @@ class Db:
                         pos.time_flag,
                         env.rx_time,
                         env.rx_time,
+                        *(getattr(pos, c) for c in extras),
                     ),
                 )
                 if cur.rowcount > 0:

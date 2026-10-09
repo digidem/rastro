@@ -27,6 +27,8 @@ export type LngLat = [number, number];
 export interface FixDwell {
   pos: LngLat;
   posTime: string | null;
+  /** HDOP do firmware (migração 03); ausente = sem informação de qualidade. */
+  hdop?: number;
 }
 
 export interface DwellOptions {

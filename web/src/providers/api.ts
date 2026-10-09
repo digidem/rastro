@@ -21,6 +21,11 @@ export interface TrackPoint {
   pos: LngLat;
   posTime: string | null;
   sats: number | null;
+  /** Qualidade do fix (migração 03); ausente quando a API não a enviou. */
+  pdop?: number;
+  hdop?: number;
+  speedMs?: number;
+  trackDeg?: number;
 }
 
 export type NodeEventKind = "pos" | "telem" | "msg";
@@ -270,6 +275,28 @@ const adicionarSegmento = (
   }
 };
 
+/** Qualidade do fix (migração 03): só as chaves presentes; campo ausente não vira null. */
+const qualidadeDoPonto = (p: Record<string, unknown>): Partial<TrackPoint> => {
+  const q: Partial<TrackPoint> = {};
+  const pdop = num(p.pdop);
+  const hdop = num(p.hdop);
+  const speedMs = num(p.speed_ms);
+  const trackDeg = num(p.track_deg);
+  if (pdop !== null) {
+    q.pdop = pdop;
+  }
+  if (hdop !== null) {
+    q.hdop = hdop;
+  }
+  if (speedMs !== null) {
+    q.speedMs = speedMs;
+  }
+  if (trackDeg !== null) {
+    q.trackDeg = trackDeg;
+  }
+  return q;
+};
+
 const trackFromFeature = (
   f: ApiFeature,
   acc: { line: LngLat[] | null; lines: LngLat[][]; points: TrackPoint[] },
@@ -291,6 +318,7 @@ const trackFromFeature = (
         pos,
         posTime: str(p.pos_time),
         sats: num(p.sats),
+        ...qualidadeDoPonto(p),
       });
     }
   }

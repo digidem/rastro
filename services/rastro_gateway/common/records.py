@@ -36,6 +36,12 @@ class PositionRecord:
     # Produtor preenche sempre; None só em payload antigo (db cai para now() com AVISO).
     rx_time: int | None = None
     friendly_name: str | None = None
+    # qualidade do fix (meshtastic.Position); None = ausente (ver qualidade_do_firmware)
+    pdop: float | None = None
+    hdop: float | None = None
+    ground_speed_ms: float | None = None
+    ground_track_deg: float | None = None
+    precision_bits: int | None = None
 
     def to_mqtt_payload(self) -> str:
         return json.dumps(
@@ -62,6 +68,11 @@ class PositionRecord:
                 "snr": self.snr,
                 "rssi": self.rssi,
                 "rx_time": self.rx_time,
+                "pdop": self.pdop,
+                "hdop": self.hdop,
+                "ground_speed_ms": self.ground_speed_ms,
+                "ground_track_deg": self.ground_track_deg,
+                "precision_bits": self.precision_bits,
             },
         }
 
@@ -215,6 +226,35 @@ def _opt_float(obj: dict, key: str) -> float | None:
     return float(value)
 
 
+def qualidade_do_firmware(
+    pdop: int | None,
+    hdop: int | None,
+    ground_speed: int | None,
+    ground_track: int | None,
+    precision_bits: int | None,
+) -> dict:
+    """Crus do meshtastic.Position → unidades do domínio (chaves de PositionRecord).
+
+    PDOP/HDOP vêm em centésimos; ground_speed em m/s; ground_track em 1e-5 graus;
+    precision_bits é inteiro puro. Zero = ausente: proto3 não distingue 0 de campo
+    não enviado, então 0 vira None (inclusive para rumo 0 graus, limitação aceita).
+    """
+
+    def ausente(v: int | None) -> int | None:
+        return v if v else None
+
+    pdop_c, hdop_c = ausente(pdop), ausente(hdop)
+    speed, track = ausente(ground_speed), ausente(ground_track)
+    bits = ausente(precision_bits)
+    return {
+        "pdop": None if pdop_c is None else pdop_c / 100.0,
+        "hdop": None if hdop_c is None else hdop_c / 100.0,
+        "ground_speed_ms": None if speed is None else float(speed),
+        "ground_track_deg": None if track is None else track / 1e5,
+        "precision_bits": bits,
+    }
+
+
 def _opt_time(obj: dict) -> int | None:
     return _opt_int(obj, "time")
 
@@ -242,6 +282,11 @@ def _parse_position(obj: dict) -> PositionRecord:
         rssi=_opt_int(obj, "rssi"),
         rx_time=_opt_int(obj, "rx_time"),
         friendly_name=_opt_str(obj, "friendly_name"),
+        pdop=_opt_float(obj, "pdop"),
+        hdop=_opt_float(obj, "hdop"),
+        ground_speed_ms=_opt_float(obj, "ground_speed_ms"),
+        ground_track_deg=_opt_float(obj, "ground_track_deg"),
+        precision_bits=_opt_int(obj, "precision_bits"),
     )
 
 

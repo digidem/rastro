@@ -17,7 +17,11 @@ variantes snake_case (``device_metrics`` etc.) são aceitas também.
 """
 from __future__ import annotations
 
-from rastro_gateway.common.records import PositionRecord, TelemetryRecord
+from rastro_gateway.common.records import (
+    PositionRecord,
+    TelemetryRecord,
+    qualidade_do_firmware,
+)
 
 Record = PositionRecord | TelemetryRecord
 
@@ -81,6 +85,13 @@ def _position(packet: dict, decoded: dict) -> PositionRecord | None:
     if node_num is None:
         return None
     t = _int(pos.get("time"))
+    qualidade = qualidade_do_firmware(
+        _int(pos.get("PDOP")),
+        _int(pos.get("HDOP")),
+        _int(pos.get("groundSpeed")),
+        _int(pos.get("groundTrack")),
+        _int(pos.get("precisionBits")),
+    )
     return PositionRecord(
         node_num=node_num,
         node_id=_node_id(packet, node_num),
@@ -93,6 +104,7 @@ def _position(packet: dict, decoded: dict) -> PositionRecord | None:
         snr=_float(packet.get("snr")),
         rssi=_int(packet.get("rssi")),
         hop_limit=_int(packet.get("hopLimit")),  # hopLimit do topo (gate F3 NIT)
+        **qualidade,
         # friendly_name fica None — quem resolve é o gateway.py (fleet.json)
     )
 

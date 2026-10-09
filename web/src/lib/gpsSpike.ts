@@ -29,6 +29,10 @@ export const SPIKE_PADRAO: SpikeOpcoes = {
 
 const R_TERRA = 6_371_008.8;
 
+/** HDOP acima disto: fix de qualidade ruim, limite de resíduo cai para RESIDUO_HDOP_RUIM_M. */
+const HDOP_RUIM = 5;
+const RESIDUO_HDOP_RUIM_M = 60;
+
 /** Metros locais (leste, norte) de `p` em relação a `origem`. */
 function emMetros(
   origem: FixDwell["pos"],
@@ -75,7 +79,12 @@ function ehSpike(
   const ac = distanciaM(a.pos, c.pos);
   const excesso = ab + bc - ac;
 
-  return residual > o.residualM && excesso > o.excessoM && ac <= o.cordaMaxM;
+  // Com HDOP ruim no próprio B, o resíduo que basta para spike cai (nunca sobe).
+  const residualMax =
+    b.hdop !== undefined && b.hdop > HDOP_RUIM
+      ? Math.min(o.residualM, RESIDUO_HDOP_RUIM_M)
+      : o.residualM;
+  return residual > residualMax && excesso > o.excessoM && ac <= o.cordaMaxM;
 }
 
 /**

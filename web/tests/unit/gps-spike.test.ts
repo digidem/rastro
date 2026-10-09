@@ -115,3 +115,22 @@ describe("marcarSpikes", () => {
     ]);
   });
 });
+
+describe("marcarSpikes com HDOP", () => {
+  // B a 80 m da corda A–C (resíduo 80 m, excesso 160 m, A–C 0 m).
+  const base = [fixM(0, 0, 0), fixM(30, 80, 0), fixM(60, 0, 0)];
+
+  it("sem HDOP o resíduo de 80 m não basta", () => {
+    expect(marcarSpikes(base)[1]).toBe(false);
+  });
+
+  it("HDOP > 5 no B baixa o limite de resíduo para 60 m", () => {
+    const ruim = [base[0], { ...base[1], hdop: 8 }, base[2]];
+    expect(marcarSpikes(ruim)[1]).toBe(true);
+  });
+
+  it("HDOP <= 5 não altera o limite", () => {
+    const bom = [base[0], { ...base[1], hdop: 3 }, base[2]];
+    expect(marcarSpikes(bom)[1]).toBe(false);
+  });
+});

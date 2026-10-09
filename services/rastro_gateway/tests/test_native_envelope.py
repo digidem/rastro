@@ -436,3 +436,35 @@ def test_fuzz_decode_nunca_levanta_e_kind_valido() -> None:
         dec = _decodificar(dados)
         assert isinstance(dec, DecodedEnvelope)
         assert dec.kind in permitidos
+
+
+# ------------------------------------------------------- qualidade do fix (migração 03)
+
+
+def test_qualidade_do_firmware_decodificada_e_zero_vira_none() -> None:
+    pos = mesh_pb2.Position(
+        latitude_i=-23_540_000,
+        longitude_i=-46_630_000,
+        time=NOW - 60,
+        PDOP=150,
+        HDOP=90,
+        ground_speed=3,
+        ground_track=12_345_000,
+        precision_bits=16,
+    )
+    dec = _decodificar(_montar_envelope(mesh_pb2.Data(portnum=3, payload=pos.SerializeToString())))
+    assert dec.position is not None
+    assert dec.position.pdop == pytest.approx(1.5)
+    assert dec.position.hdop == pytest.approx(0.9)
+    assert dec.position.ground_speed_ms == pytest.approx(3.0)
+    assert dec.position.ground_track_deg == pytest.approx(123.45)
+    assert dec.position.precision_bits == 16
+
+    dec_sem = _decodificar(_envelope_posicao(NOW - 60))  # campos de qualidade ausentes (0)
+    assert dec_sem.position is not None
+    assert dec_sem.position.pdop is None
+    assert dec_sem.position.hdop is None
+    assert dec_sem.position.ground_speed_ms is None
+    assert dec_sem.position.ground_track_deg is None
+    assert dec_sem.position.precision_bits is None
+    assert dec_sem.position.sats == 8  # campos antigos seguem intactos

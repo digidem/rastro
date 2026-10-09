@@ -12,6 +12,7 @@ import unicodedata
 from google.protobuf.message import DecodeError
 from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2
 
+from rastro_gateway.common.records import qualidade_do_firmware
 from rastro_gateway.native import crypto
 from rastro_gateway.native.model import (
     DecodedEnvelope,
@@ -158,6 +159,9 @@ def _decodificar_conteudo(
             return
         tempo, origem, flag = _resolver_tempo(pos.time, dec.rx_time, now)
         dec.kind = "position"
+        qualidade = qualidade_do_firmware(
+            pos.PDOP, pos.HDOP, pos.ground_speed, pos.ground_track, pos.precision_bits
+        )
         dec.position = PositionFix(
             lat_i=pos.latitude_i,
             lon_i=pos.longitude_i,
@@ -166,6 +170,7 @@ def _decodificar_conteudo(
             time=tempo,
             time_source=origem,
             time_flag=flag,
+            **qualidade,
         )
         return
 

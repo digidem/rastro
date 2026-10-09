@@ -26,7 +26,13 @@ _SQL_LATEST = """
 _SQL_TRACK = """
     SELECT * FROM (
         SELECT p.pos_time, p.time_source, p.lat, p.lon, p.altitude_m, p.sats_in_view,
-               n.node_id, COALESCE(n.friendly_name, n.node_id) AS nome
+               n.node_id, COALESCE(n.friendly_name, n.node_id) AS nome,
+               -- Colunas da migração 03 via jsonb: ausentes viram NULL, então a API
+               -- funciona antes e depois da migração (ordem de deploy indiferente).
+               (to_jsonb(p) ->> 'pdop')::real AS pdop,
+               (to_jsonb(p) ->> 'hdop')::real AS hdop,
+               (to_jsonb(p) ->> 'ground_speed_ms')::real AS ground_speed_ms,
+               (to_jsonb(p) ->> 'ground_track_deg')::real AS ground_track_deg
         FROM positions p
         JOIN nodes n ON n.node_num = p.node_num
         WHERE p.node_num = %s
