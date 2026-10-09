@@ -8,6 +8,7 @@ import {
   ListIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
+  RulerIcon,
   StackSimpleIcon,
 } from "solid-phosphor/regular";
 import { useMap } from "../../hooks/useMap.jsx";
@@ -37,6 +38,8 @@ export const MapControls: Component<MapControlsProps> = (props) => {
     resetFilters,
     setBasemapMode,
     setJanelaTrilhaH,
+    ativarRegua,
+    desativarRegua,
   } = useStore();
   const { fitAllNodes, zoomIn, zoomOut } = useMap();
   const [menuCamadasAberto, setMenuCamadasAberto] = createSignal(false);
@@ -442,6 +445,25 @@ export const MapControls: Component<MapControlsProps> = (props) => {
             </div>
           </Show>
         </div>
+
+        {/* Régua: medir distâncias no mapa (logo abaixo do período) */}
+        <button
+          type="button"
+          aria-label="Régua: medir distâncias"
+          aria-pressed={localState.regua.ativa}
+          class={`${btnIcone} ${localState.regua.ativa ? "ring-2 ring-amber-400" : ""}`}
+          title="Medir distâncias"
+          onClick={() =>
+            localState.regua.ativa ? desativarRegua() : ativarRegua()
+          }
+        >
+          <RulerIcon
+            class={`h-[18px] w-[18px] md:h-4 md:w-4 shrink-0 ${
+              localState.regua.ativa ? "text-amber-400" : "text-emerald-400"
+            }`}
+            aria-hidden="true"
+          />
+        </button>
       </div>
     </div>
   );

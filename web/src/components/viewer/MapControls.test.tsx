@@ -9,6 +9,7 @@ import { MapControls } from "./MapControls.jsx";
 afterEach(() => {
   cleanup();
   LocalState.setJanelaTrilhaH(336);
+  LocalState.desativarRegua();
 });
 
 const montar = () =>
@@ -63,5 +64,24 @@ describe("MapControls — período da trilha", () => {
     expect(ev.defaultPrevented).toBe(false);
     expect(document.activeElement).toBe(fora);
     fora.remove();
+  });
+});
+
+describe("MapControls — régua", () => {
+  it("alterna aria-pressed e liga/desliga a régua no store", () => {
+    montar();
+    const botao = screen.getByRole("button", {
+      name: "Régua: medir distâncias",
+    });
+    expect(botao.getAttribute("aria-pressed")).toBe("false");
+    expect(LocalState.localState.regua.ativa).toBe(false);
+
+    fireEvent.click(botao);
+    expect(botao.getAttribute("aria-pressed")).toBe("true");
+    expect(LocalState.localState.regua.ativa).toBe(true);
+
+    fireEvent.click(botao);
+    expect(botao.getAttribute("aria-pressed")).toBe("false");
+    expect(LocalState.localState.regua.ativa).toBe(false);
   });
 });

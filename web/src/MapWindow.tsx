@@ -8,6 +8,7 @@ import { NodeFilters } from "./components/viewer/NodeFilters.jsx";
 import { NodeInspector } from "./components/viewer/NodeInspector.jsx";
 import { NodeList } from "./components/viewer/NodeList.jsx";
 import { NodeLog } from "./components/viewer/NodeLog.jsx";
+import { ReguaPainel } from "./components/viewer/ReguaPainel.jsx";
 import { useMap } from "./hooks/useMap.jsx";
 import { useStore } from "./hooks/useStore.jsx";
 import { useViewerNodes } from "./hooks/useViewerNodes.js";
@@ -93,6 +94,10 @@ export const MapWindow: Component = () => {
             onToggleSidebar={() => setSidebarAberta((v) => !v)}
           />
         </div>
+
+        <Show when={localState.regua.ativa}>
+          <ReguaPainel />
+        </Show>
 
         <Show when={sidebarAberta()}>
           <aside class="pointer-events-auto absolute right-0 top-0 flex h-full w-[368px] max-w-[calc(100vw-1rem)] flex-col p-2 z-20">
