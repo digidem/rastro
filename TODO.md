@@ -37,7 +37,7 @@ Lista revisada por Opus e executada onde possível. Itens riscados foram descart
 - [x] H5 Canal de alerta: decidido 2026-10-09 — só os selos no mapa (📡/🪫), sem push nem e-mail. M3 descartado.
 - [x] H6 Regras de reiniciar/desligar aprovadas 2026-10-09: nós solares/fixos só reiniciam; desligar só com tripulação por perto; nunca factory reset remoto. Construção (M2) continua bloqueada pelo caminho de comando pela malha (tarefa 4/5).
 - [ ] H7 Confirmar limiares de bateria por classe.
-- [ ] H8 Destino do dump com coordenadas reais `~/rastro-backups/rastro_pre_0.8.5_2026-10-08_154519.dump`.
+- [x] H8 Dump com coordenadas reais apagado em 2026-10-09 (decisão do dono). Pasta `~/rastro-backups/` ficou vazia.
 - [ ] H9 `RASTRO_NATIVE_SECRET` guardado em cofre.
 - [ ] H11/H12 Aprovar commits e pushes: `rastro` (`7ef9e81` à frente de `origin/main`), `univaja-lora` (sem upstream, docs misturadas com rename FLEET→EVU), `caprover-one-click-apps`, `.agents/`; apagar `deploy/sim.nonexistent_placeholder`.
 - [ ] H1 Caminho TLS para o app iOS (baixa prioridade; só se o app vier).
