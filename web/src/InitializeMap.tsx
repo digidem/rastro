@@ -34,7 +34,7 @@ import { adicionarOverlays, fetchOverlays } from "./lib/overlays.js";
 import { buscarTrilhaJanela } from "./lib/trilhaJanela.js";
 import { useData } from "./providers/DataProvider.jsx";
 import { MapContext } from "./providers/MapProvider.jsx";
-import { LocalState, type NodeKind } from "./store.js";
+import { LocalState, type NodeInfo, type NodeKind } from "./store.js";
 
 export interface InitializeMapProps {
   children?: JSXElement;
@@ -842,6 +842,26 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   const [carregado, setCarregado] = createSignal(false);
   let trackReq = 0; // descarta resposta de trilha de seleção anterior
   let boatTrackReq = 0; // descarta resposta de trilhas coletivas anterior
+  // Última análise por nó: poll sem fix novo não re-simplifica a trilha inteira.
+  const analisesPorNo = new Map<
+    number,
+    { chave: string; res: ReturnType<typeof analisarTrilha> }
+  >();
+  const analisarComCache = (
+    nodeNum: number,
+    horas: number,
+    t: TrilhaApi,
+  ): ReturnType<typeof analisarTrilha> => {
+    const pts = t.points ?? [];
+    const chave = `${horas}|${pts.length}|${pts[0]?.posTime}|${pts.at(-1)?.posTime}|${t.lines?.length ?? 0}`;
+    const guardada = analisesPorNo.get(nodeNum);
+    if (guardada !== undefined && guardada.chave === chave) {
+      return guardada.res;
+    }
+    const res = analisarTrilha(t);
+    analisesPorNo.set(nodeNum, { chave, res });
+    return res;
+  };
   let interagiu = false; // o usuário mexeu no mapa: para de recentralizar sozinho
   let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
@@ -850,6 +870,18 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   // reaplica daqui, sem novo fetch; null = nenhuma trilha analisada.
   let pontosDaTrilha: ReturnType<typeof featuresDePontos> | null = null;
   let noDaTrilha: number | null = null; // nó dono de `pontosDaTrilha`
+  let noEnquadrado: number | null = null; // nó para onde a câmera já voou
+  // Só na troca de seleção: poll e troca de período não puxam a câmera de volta.
+  const enquadrarSeNovo = (map: maplibregl, sel: number, node: NodeInfo) => {
+    if (noEnquadrado === sel || !hasConfirmedPosition(node)) {
+      return;
+    }
+    noEnquadrado = sel;
+    map.flyTo({
+      center: [node.lon, node.lat],
+      zoom: Math.max(map.getZoom(), 12),
+    });
+  };
   // Última parada analisada e nó dono: o relógio reavalia rótulos sem nova busca.
   let simpDaTrilha: { simp: TrilhaSimplificada; nodeNum: number } | null = null;
   // Pins reais (antes do espalhamento); reaplicados quando o zoom muda.
@@ -1230,6 +1262,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     if (sel === null) {
       // Desseleção também deve matar a resposta em voo (mesma corrida da troca).
       trackReq++;
+      noEnquadrado = null; // selecionar de novo volta a enquadrar o nó
       esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
       pointsSrc.setData(EMPTY_FC);
@@ -1252,12 +1285,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     }
     // Só desloca a câmera para coordenada confirmada (nunca inventa posição);
     // a trilha é buscada de qualquer forma.
-    if (hasConfirmedPosition(node)) {
-      map.flyTo({
-        center: [node.lon, node.lat],
-        zoom: Math.max(map.getZoom(), 12),
-      });
-    }
+    enquadrarSeNovo(map, sel, node);
     const req = ++trackReq;
     // Troca de seleção: a análise anterior sai já. Refetch do mesmo nó (polling)
     // mantém a análise e o toggle até a resposta nova chegar.
@@ -1275,7 +1303,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
         if (req !== trackReq) {
           return; // seleção mudou durante o fetch
         }
-        const { segments, simp } = analisarTrilha(t);
+        const { segments, simp } = analisarComCache(sel, horas, t);
 
         // Rumo estável: parado congela no último rumo de aproximação.
         let bearing: number | null = null;
@@ -1337,6 +1365,8 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   createEffect(() => {
     LocalState.localState.pollingGeracao;
     trackReq++;
+    boatTrackReq++; // trilhas coletivas em voo também são da sessão velha
+    analisesPorNo.clear();
     esquecerTrilha();
     popup?.remove();
     popup = null;
@@ -1354,6 +1384,9 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       | undefined;
     lineSrc?.setData(EMPTY_FC);
     pointsSrc?.setData(EMPTY_FC);
+    (map.getSource("boat-tracks") as GeoJSONSource | undefined)?.setData(
+      EMPTY_FC,
+    );
     limparParadas(map);
   });
 
@@ -1419,6 +1452,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     });
 
     if (barcos.length === 0) {
+      boatTrackReq++; // resposta em voo não redesenha barcos que sumiram
       boatSrc.setData(EMPTY_FC);
       return;
     }
@@ -1451,7 +1485,11 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       resultados.forEach((res, idx) => {
         if (res.status === "fulfilled") {
           const t = res.value;
-          const { segments, simp } = analisarTrilha(t);
+          const { segments, simp } = analisarComCache(
+            barcos[idx].nodeNum,
+            horas,
+            t,
+          );
           registrarMovimento(barcos[idx].nodeNum, simp);
           for (const seg of segments) {
             if (seg.length >= 2) {

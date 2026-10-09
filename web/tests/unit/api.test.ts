@@ -593,6 +593,25 @@ describe("ping()", () => {
   });
 });
 
+describe("track() com janela", () => {
+  it("envia from, to e limit=2000 em ISO", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({ type: "FeatureCollection", features: [] }),
+    );
+    const api = createApiClient();
+    const from = Date.UTC(2026, 9, 1);
+    const to = Date.UTC(2026, 9, 2);
+
+    await api.track("!abcd1234", { fromMs: from, toMs: to });
+
+    const [url] = fetchMock.mock.calls.at(-1) as [string];
+    const q = new URL(url, "http://x").searchParams;
+    expect(q.get("from")).toBe("2026-10-01T00:00:00.000Z");
+    expect(q.get("to")).toBe("2026-10-02T00:00:00.000Z");
+    expect(q.get("limit")).toBe("2000");
+  });
+});
+
 describe("track() com qualidade do fix", () => {
   it("copia pdop/hdop/speed_ms/track_deg só quando presentes", async () => {
     fetchMock.mockResolvedValue(

@@ -227,6 +227,61 @@ afterEach(() => {
 });
 
 describe("InitializeMap — trilha", () => {
+  it("trilhas coletivas em voo não voltam ao mapa depois do logout", async () => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const api = {
+      track: vi.fn().mockReturnValue(promise),
+    } as unknown as DataValue["api"];
+    LocalState.setShowInactive(true); // no(n) tem fix de 1970
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([{ ...no(1), kind: "boat" as const }]);
+    expect(api.track).toHaveBeenCalled();
+
+    // Logout: geração avança e a lista de nós esvazia.
+    LocalState.bumpPollingGeracao();
+    LocalState.setNodes([]);
+    resolve({
+      line: null,
+      lines: [
+        [
+          [-30.02, -4.22],
+          [-30.03, -4.23],
+        ],
+      ],
+      points: [],
+    });
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
+
+    expect(mapa().getSource("boat-tracks").setData).toHaveBeenLastCalledWith(
+      expect.objectContaining({ features: [] }),
+    );
+    LocalState.setShowInactive(false);
+  });
+
+  it("poll e troca de período não puxam a câmera de volta ao nó", async () => {
+    const api = {
+      track: vi.fn().mockResolvedValue({ line: null, lines: [], points: [] }),
+    } as unknown as DataValue["api"];
+    montar(api);
+    await new Promise((r) => setTimeout(r, 0));
+    LocalState.setNodes([no(1)]);
+    LocalState.select(1);
+    expect(mapa().flyTo).toHaveBeenCalledTimes(1);
+
+    LocalState.setNodes([no(1)]); // poll
+    LocalState.setJanelaTrilhaH(72);
+    expect(mapa().flyTo).toHaveBeenCalledTimes(1);
+
+    // Selecionar de novo volta a enquadrar.
+    LocalState.select(null);
+    LocalState.select(1);
+    expect(mapa().flyTo).toHaveBeenCalledTimes(2);
+    LocalState.setJanelaTrilhaH(336);
+  });
+
   it("trocar o período da trilha busca de novo com a janela nova", async () => {
     const api = {
       track: vi.fn().mockResolvedValue({ line: null, lines: [], points: [] }),

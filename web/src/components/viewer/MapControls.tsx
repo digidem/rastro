@@ -51,6 +51,12 @@ export const MapControls: Component<MapControlsProps> = (props) => {
     if (!menuJanelaAberto()) {
       return;
     }
+    // Ao abrir, o foco vai para o período marcado; setas percorrem as opções.
+    queueMicrotask(() =>
+      menuJanelaRef
+        ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
+        ?.focus(),
+    );
     const aoClicarFora = (e: PointerEvent) => {
       const target = e.target as Node | null;
       if (
@@ -66,7 +72,23 @@ export const MapControls: Component<MapControlsProps> = (props) => {
       if (e.key === "Escape") {
         setMenuJanelaAberto(false);
         menuJanelaTriggerRef?.focus();
+        return;
       }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
+        return;
+      }
+      const opcoes = [
+        ...(menuJanelaRef?.querySelectorAll<HTMLButtonElement>(
+          '[role="menuitemradio"]',
+        ) ?? []),
+      ];
+      if (opcoes.length === 0) {
+        return;
+      }
+      e.preventDefault();
+      const atual = opcoes.indexOf(document.activeElement as HTMLButtonElement);
+      const passo = e.key === "ArrowDown" ? 1 : -1;
+      opcoes[(atual + passo + opcoes.length) % opcoes.length].focus();
     };
     document.addEventListener("pointerdown", aoClicarFora);
     document.addEventListener("keydown", aoTeclar);
@@ -119,6 +141,7 @@ export const MapControls: Component<MapControlsProps> = (props) => {
   const selecionarJanela = (h: JanelaTrilhaH) => {
     setJanelaTrilhaH(h);
     setMenuJanelaAberto(false);
+    menuJanelaTriggerRef?.focus(); // a opção some com o menu: foco volta ao botão
   };
 
   const btnVisual =

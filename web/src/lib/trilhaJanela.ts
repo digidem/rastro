@@ -21,8 +21,10 @@ const HORA_MS = 3_600_000;
 const DIA_MS = 24 * HORA_MS;
 // Dia já fechado ainda pode receber fix atrasado do spool do gateway.
 const FECHADA_TTL_MS = 15 * 60_000;
-// Fatia que bate no teto da API é dividida ao meio até esta profundidade.
-const PROFUNDIDADE_MAX = 5;
+// Espalha a expiração: os dias de todos os barcos não vencem juntos.
+const FECHADA_TTL_JITTER_MS = 5 * 60_000;
+// Fatia que bate no teto da API é dividida ao meio até ficar menor que isto.
+const FATIA_MIN_MS = 60_000;
 
 /**
  * Fatias de um dia UTC cobrindo a janela. O início desce até a meia-noite
@@ -40,7 +42,7 @@ export const fatiasDaJanela = (
   return fatias;
 };
 
-type Entrada = { p: Promise<Trilha>; em: number };
+type Entrada = { p: Promise<Trilha>; venceMs: number };
 const cache = new Map<string, Entrada>();
 
 /** Esquece as fatias guardadas (logout/401: dado da sessão velha não volta). */
@@ -82,17 +84,18 @@ const buscarFatia = async (
   node: string,
   a: number,
   b: number,
-  profundidade: number,
 ): Promise<Trilha> => {
   const t = await api.track(node, { fromMs: a, toMs: b });
   // No teto a API corta os fixes mais velhos: divide a fatia e busca de novo.
-  if (t.points.length < TRACK_LIMITE || profundidade >= PROFUNDIDADE_MAX) {
+  // Abaixo de FATIA_MIN_MS aceita o corte (mais de 2000 fixes por minuto).
+  if (t.points.length < TRACK_LIMITE || b - a < FATIA_MIN_MS) {
     return t;
   }
   const meio = Math.floor((a + b) / 2);
+  // from/to da API são inclusivos: as metades não se sobrepõem.
   const [antes, depois] = await Promise.all([
-    buscarFatia(api, node, a, meio, profundidade + 1),
-    buscarFatia(api, node, meio, b, profundidade + 1),
+    buscarFatia(api, node, a, meio),
+    buscarFatia(api, node, meio + 1, b),
   ]);
   return juntarTrilhas([antes, depois]);
 };
@@ -107,16 +110,14 @@ const fatiaEmCache = (
   const chave = `${node}|${a}|${b}`;
   const fechada = b - a === DIA_MS && b <= agoraMs;
   const guardada = cache.get(chave);
-  if (
-    fechada &&
-    guardada !== undefined &&
-    agoraMs - guardada.em < FECHADA_TTL_MS
-  ) {
+  if (fechada && guardada !== undefined && agoraMs < guardada.venceMs) {
     return guardada.p;
   }
-  const p = buscarFatia(api, node, a, b, 0);
+  const p = buscarFatia(api, node, a, b);
   if (fechada) {
-    cache.set(chave, { p, em: agoraMs });
+    const venceMs =
+      agoraMs + FECHADA_TTL_MS + Math.random() * FECHADA_TTL_JITTER_MS;
+    cache.set(chave, { p, venceMs });
     // Falha não fica guardada: a próxima busca tenta de novo.
     p.catch(() => {
       if (cache.get(chave)?.p === p) {
@@ -148,13 +149,20 @@ export const buscarTrilhaJanela = async (
     }
   }
   const inicioJanela = agoraMs - horas * HORA_MS;
+  const fatias = fatiasDaJanela(agoraMs, horas);
   const partes = await Promise.all(
-    fatiasDaJanela(agoraMs, horas).map(([a, b]) =>
-      fatiaEmCache(api, node, a, b, agoraMs),
+    fatias.map(([a, b]) => fatiaEmCache(api, node, a, b, agoraMs)),
+  );
+  // A primeira fatia começa na meia-noite: corta o que é anterior à janela.
+  // Linhas cruas não têm horário, então as da primeira fatia saem inteiras
+  // quando ela começa antes da janela (senão o fallback mostraria trilha velha).
+  const t = juntarTrilhas(
+    partes.map((parte, i) =>
+      i === 0 && fatias[0][0] < inicioJanela
+        ? { ...parte, line: null, lines: [] }
+        : parte,
     ),
   );
-  const t = juntarTrilhas(partes);
-  // A primeira fatia começa na meia-noite: corta o que é anterior à janela.
   return {
     ...t,
     points: t.points.filter((p) => !(tempoMs(p) < inicioJanela)),

@@ -130,4 +130,47 @@ describe("buscarTrilhaJanela", () => {
       buscarTrilhaJanela({ track }, "!n", 24, AGORA),
     ).resolves.toBeDefined();
   });
+
+  it("fixes no mesmo segundo acima do teto: divisão termina e não repete fatias", async () => {
+    // 2500 fixes num único segundo: nenhuma divisão fica abaixo do teto.
+    const t0 = AGORA - 2 * HORA;
+    const fixes = Array.from({ length: 2500 }, (_, k) =>
+      ponto(t0, -70 + k * 1e-6),
+    );
+    const api = apiFalsa(fixes);
+    await buscarTrilhaJanela(api, "!n", 24, AGORA);
+    const janelas = api.track.mock.calls.map(([, j]) => j as JanelaTrack);
+    // Metades disjuntas: fora da meia-noite, nenhuma janela começa onde outra termina.
+    const bordas = new Set(janelas.map((j) => j.toMs));
+    expect(
+      janelas.filter((j) => j.fromMs % DIA !== 0 && bordas.has(j.fromMs)),
+    ).toEqual([]);
+    expect(api.track.mock.calls.length).toBeLessThan(80);
+  });
+
+  it("linhas cruas da primeira fatia (antes da janela) não entram", async () => {
+    const track = vi.fn(async (_n: string, j?: JanelaTrack) => ({
+      line: null,
+      lines:
+        j !== undefined && j.fromMs < AGORA - 24 * HORA
+          ? [
+              [
+                [-70, -5],
+                [-70.1, -5.1],
+              ] as [number, number][],
+            ]
+          : [],
+      points: [],
+    }));
+    const t = await buscarTrilhaJanela({ track }, "!n", 24, AGORA);
+    expect(t.lines).toEqual([]);
+  });
+
+  it("dia fechado vence no cache e é buscado de novo", async () => {
+    const api = apiFalsa([ponto(AGORA - 30 * HORA)]);
+    await buscarTrilhaJanela(api, "!n", 72, AGORA);
+    const primeira = api.track.mock.calls.length;
+    await buscarTrilhaJanela(api, "!n", 72, AGORA + 21 * 60_000);
+    expect(api.track.mock.calls.length).toBe(2 * primeira);
+  });
 });
