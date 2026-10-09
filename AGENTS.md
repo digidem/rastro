@@ -84,6 +84,10 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - Velocidade sozinha nunca é sinal de saída nem de spike: o multipath gera velocidade falsa; partida real aparece como deriva e segue em frente.
    - Linha em movimento: suavizada ±60 s (`web/src/lib/suavizar.ts`); odômetro soma a linha antes do Douglas–Peucker (30 m); o DP sempre mantém os centros de parada.
    - Mapa: parada = um marcador no centro + círculo translúcido de dispersão (p90). Fixes crus só no botão "Fixes brutos" do inspector, esmaecidos e sem linha.
+10. **Período da trilha e teto da API:**
+   - `GET /api/nodes/:id/track` sem `from`/`to` devolve só as últimas 24 h, e no máximo 2000 fixes por chamada (os MAIS NOVOS: `ORDER BY pos_time DESC LIMIT`). Barco parado o dia inteiro ficava sem trilha nenhuma.
+   - A web busca o período escolhido no botão do mapa (24 h a 14 dias, padrão 14) em fatias de um dia UTC (`web/src/lib/trilhaJanela.ts`); fatia que bate no teto é dividida em metades disjuntas (`from`/`to` são inclusivos) até 1 min. Dias fechados ficam em cache (15 min + jitter); o dia corrente é sempre buscado; logout limpa o cache e invalida as respostas em voo, inclusive as das trilhas coletivas.
+   - Custo medido em dados reais (2026-10-09): 3066 fixes de 3,5 dias simplificam em ~51 ms; 10 mil fixes parados com jitter real, ~200 ms. Jitter sintético aleatório superestima em ~15×: meça desempenho com trilha real antes de mudar a arquitetura.
 
 ---
 
