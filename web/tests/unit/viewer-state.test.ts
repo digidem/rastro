@@ -144,3 +144,74 @@ describe("LocalState — seleção e inativos", () => {
     expect(LocalState.localState.showInactive).toBe(false);
   });
 });
+
+describe("LocalState — fixes brutos (T5)", () => {
+  const chaveFixes = "rastro_fixes_brutos";
+
+  // Store recarregado do zero: o valor inicial vem do localStorage do momento.
+  const carregarStore = async () => {
+    vi.resetModules();
+    return (await import("../../src/store.js")).LocalState;
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("padrão é false quando não há nada salvo", async () => {
+    window.localStorage.clear();
+    const store = await carregarStore();
+    expect(store.localState.mostrarFixesBrutos).toBe(false);
+    expect(store.localState.trilhaCarregada).toBe(false);
+  });
+
+  it("setMostrarFixesBrutos persiste e relê o valor ao carregar", async () => {
+    const store = await carregarStore();
+    store.setMostrarFixesBrutos(true);
+    expect(store.localState.mostrarFixesBrutos).toBe(true);
+    expect(window.localStorage.getItem(chaveFixes)).toBe("1");
+
+    const outro = await carregarStore();
+    expect(outro.localState.mostrarFixesBrutos).toBe(true);
+
+    outro.setMostrarFixesBrutos(false);
+    expect(window.localStorage.getItem(chaveFixes)).toBe("0");
+  });
+
+  it("leitura do localStorage que lança cai no padrão false", async () => {
+    // Só a chave do toggle falha: o basemap (outro loader) não tem try/catch.
+    const lerOriginal = Storage.prototype.getItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+      this: Storage,
+      chave: string,
+    ) {
+      if (chave === chaveFixes) {
+        throw new Error("SecurityError");
+      }
+      return lerOriginal.call(this, chave);
+    });
+    const store = await carregarStore();
+    expect(store.localState.mostrarFixesBrutos).toBe(false);
+  });
+
+  it("escrita no localStorage que lança não quebra o estado", async () => {
+    const store = await carregarStore();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    expect(() => store.setMostrarFixesBrutos(true)).not.toThrow();
+    expect(store.localState.mostrarFixesBrutos).toBe(true);
+  });
+
+  it("resetViewerState desliga trilhaCarregada e mantém a preferência", () => {
+    LocalState.setMostrarFixesBrutos(true);
+    LocalState.setTrilhaCarregada(true);
+
+    LocalState.resetViewerState();
+
+    expect(LocalState.localState.trilhaCarregada).toBe(false);
+    expect(LocalState.localState.mostrarFixesBrutos).toBe(true);
+    LocalState.setMostrarFixesBrutos(false);
+  });
+});

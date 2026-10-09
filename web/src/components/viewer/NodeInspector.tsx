@@ -24,6 +24,7 @@ import {
   nodeSidebarSvgUrl,
 } from "../../lib/nodes.js";
 import type { NodeAlertType, NodeInfo, NodeKind } from "../../store.js";
+import { Switch } from "../ui/switch.jsx";
 
 const ROTULO_CATEGORIA = new Map<NodeKind, string>([
   ["boat", "Barco"],
@@ -53,6 +54,22 @@ const hexDoNo = (n: NodeInfo): string =>
 
 const textoOuNaoInformado = (v: string | number | null | undefined): string =>
   v === null || v === undefined || v === "" ? "—" : String(v);
+
+/** Liga os fixes brutos (paradas e spikes) no mapa; só aparece com trilha carregada. */
+const ToggleFixesBrutos: Component = () => {
+  const { localState, setMostrarFixesBrutos } = useStore();
+  return (
+    <Show when={localState.trilhaCarregada}>
+      <Switch
+        size="sm"
+        checked={localState.mostrarFixesBrutos}
+        onCheckedChange={(d) => setMostrarFixesBrutos(d.checked)}
+      >
+        Fixes brutos
+      </Switch>
+    </Show>
+  );
+};
 
 export interface NodeInspectorProps {
   node: () => NodeInfo | undefined;
@@ -185,6 +202,8 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
                 <span>Ver registros</span>
               </button>
             </Show>
+
+            <ToggleFixesBrutos />
 
             {/* Grupo 3: Telemetria e Especificações */}
             <div class="bg-slate-900/90 p-3 rounded-lg border border-slate-800/90 shadow-inner">

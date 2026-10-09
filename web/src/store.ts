@@ -108,7 +108,20 @@ interface LocalState {
   showInactive: boolean;
   /** Camada do mapa base ativa: google (padrão), satellite (Esri), osm ou local. */
   basemapMode: BasemapMode;
+  /** Mostra todos os fixes brutos da trilha, inclusive paradas e spikes (default: false). */
+  mostrarFixesBrutos: boolean;
+  /** A trilha do nó selecionado já foi analisada e está no mapa (ativa o toggle de fixes). */
+  trilhaCarregada: boolean;
 }
+
+const carregarFixesBrutosPadrao = (): boolean => {
+  try {
+    return window.localStorage.getItem("rastro_fixes_brutos") === "1";
+  } catch {
+    // Storage indisponível (modo privado estrito, bloqueado): usa o padrão
+    return false;
+  }
+};
 
 const carregarBasemapPadrao = (): BasemapMode => {
   if (typeof window !== "undefined" && window.localStorage) {
@@ -145,6 +158,8 @@ const [localState, setLocalState] = createStore<LocalState>({
   hasAlertUnread: false,
   showInactive: false,
   basemapMode: carregarBasemapPadrao(),
+  mostrarFixesBrutos: carregarFixesBrutosPadrao(),
+  trilhaCarregada: false,
 });
 
 // Substitui a lista inteira (reconcile remove nós que sumiram do latest).
@@ -230,7 +245,19 @@ const resetViewerState = () => {
   setLocalState("hasAlertUnread", false);
   setLocalState("showInactive", false);
   setLocalState("alerts", reconcile({}));
+  setLocalState("trilhaCarregada", false);
 };
+
+const setMostrarFixesBrutos = (mostrar: boolean) => {
+  setLocalState("mostrarFixesBrutos", mostrar);
+  try {
+    window.localStorage.setItem("rastro_fixes_brutos", mostrar ? "1" : "0");
+  } catch {
+    // Ignora falhas de localStorage (ex: quota ou modo privado estrito)
+  }
+};
+
+const setTrilhaCarregada = (b: boolean) => setLocalState("trilhaCarregada", b);
 
 const setNodeBearing = (nodeNum: number, bearing: number) => {
   if (localState.nodes[nodeNum]) {
@@ -254,6 +281,8 @@ export const LocalState = {
   setShowInactive,
   toggleShowInactive,
   setBasemapMode,
+  setMostrarFixesBrutos,
+  setTrilhaCarregada,
   tickNow,
   setLatestStatus,
   setAuth,

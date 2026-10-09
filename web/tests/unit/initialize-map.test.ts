@@ -922,4 +922,91 @@ describe("InitializeMap — paradas com dispersão (T4)", () => {
     });
     expect((popups.at(-1) as FakePopupLike).html).not.toContain("descartados");
   });
+  describe("fixes brutos (T5)", () => {
+    // Trilha com um spike: o fix 200 sai 400 m do centro da primeira parada.
+    const trilhaComSpike = (): FixDwell[] => {
+      const fixes = trilhaComDuasParadas();
+      fixes[200] = { ...fixes[200], pos: deslocar(C1, 400, 0) };
+      return fixes;
+    };
+
+    const papeis = (fonte: string) =>
+      ultimoSetData(fonte).features.map((f) => f.properties.papel);
+
+    beforeEach(() => LocalState.setMostrarFixesBrutos(false));
+    afterEach(() => LocalState.setMostrarFixesBrutos(false));
+
+    it("ligado: track-points recebe todos os fixes, com paradas e spikes", async () => {
+      const fixes = trilhaComSpike();
+      expect(simplifyTrackDwells(fixes).papel[200]).toBe("spike");
+      await selecionarComResposta(respostaDe(fixes));
+
+      LocalState.setMostrarFixesBrutos(true);
+
+      const lista = papeis("track-points");
+      expect(lista).toHaveLength(fixes.length);
+      expect(lista).toContain("parada");
+      expect(lista).toContain("spike");
+    });
+
+    it("desligado: track-points volta a ter só movimento", async () => {
+      const fixes = trilhaComSpike();
+      await selecionarComResposta(respostaDe(fixes));
+      LocalState.setMostrarFixesBrutos(true);
+
+      LocalState.setMostrarFixesBrutos(false);
+
+      const lista = papeis("track-points");
+      expect(lista.every((p) => p === "movimento")).toBe(true);
+      expect(lista).toHaveLength(
+        simplifyTrackDwells(fixes).papel.filter((p) => p === "movimento")
+          .length,
+      );
+    });
+
+    it("alternar o toggle não refaz o fetch da trilha", async () => {
+      const api = {
+        track: vi.fn().mockResolvedValue(respostaDe(trilhaComSpike())),
+      } as unknown as DataValue["api"];
+      montar(api);
+      await new Promise((r) => setTimeout(r, 0));
+      LocalState.setNodes([no(1)]);
+      LocalState.select(1);
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
+
+      LocalState.setMostrarFixesBrutos(true);
+      LocalState.setMostrarFixesBrutos(false);
+      LocalState.setMostrarFixesBrutos(true);
+
+      expect(api.track).toHaveBeenCalledTimes(1);
+      expect(papeis("track-points")).toContain("spike");
+    });
+
+    it("sem trilha analisada, ligar o toggle não envia pontos", async () => {
+      montar({} as DataValue["api"]);
+      await new Promise((r) => setTimeout(r, 0));
+      const antes = mapa().getSource("track-points").setData.mock.calls.length;
+
+      LocalState.setMostrarFixesBrutos(true);
+
+      expect(mapa().getSource("track-points").setData.mock.calls.length).toBe(
+        antes,
+      );
+    });
+
+    it("desselecionar esquece a análise: ligar o toggle depois não reaparece com os pontos antigos", async () => {
+      await selecionarComResposta(respostaDe(trilhaComSpike()));
+      LocalState.select(null);
+      const antes = mapa().getSource("track-points").setData.mock.calls.length;
+
+      LocalState.setMostrarFixesBrutos(true);
+
+      expect(mapa().getSource("track-points").setData.mock.calls.length).toBe(
+        antes,
+      );
+      expect(LocalState.localState.trilhaCarregada).toBe(false);
+    });
+  });
 });

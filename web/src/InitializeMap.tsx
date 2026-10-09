@@ -302,11 +302,35 @@ const estilo: StyleSpecification = {
       id: "track-points",
       type: "circle",
       source: "track-points",
+      // Só "movimento" por padrão; com "Fixes brutos" ligado, paradas e spikes
+      // entram com estilo próprio (spike: só contorno, sem preenchimento).
       paint: {
-        "circle-radius": 3,
-        "circle-color": "#f2b544",
-        "circle-stroke-color": "#121b14",
+        "circle-radius": ["match", ["get", "papel"], ["parada", "spike"], 2, 3],
+        "circle-color": [
+          "match",
+          ["get", "papel"],
+          "spike",
+          "#ef4444",
+          "#f2b544",
+        ],
+        "circle-opacity": [
+          "match",
+          ["get", "papel"],
+          "parada",
+          0.35,
+          "spike",
+          0,
+          1,
+        ],
+        "circle-stroke-color": [
+          "match",
+          ["get", "papel"],
+          "spike",
+          "#ef4444",
+          "#121b14",
+        ],
         "circle-stroke-width": 1,
+        "circle-stroke-opacity": ["match", ["get", "papel"], "parada", 0.35, 1],
       },
     },
     {
@@ -778,6 +802,10 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   let idsCentralizados = ""; // conjunto de nós do último enquadramento automático
   let popup: Popup | null = null; // popup do pin, para fechar ao encerrar sessão
   let cancelarCargaIcone: (() => void) | undefined;
+  // Última análise da trilha (todos os fixes com papel). Alternar "Fixes brutos"
+  // reaplica daqui, sem novo fetch; null = nenhuma trilha analisada.
+  let pontosDaTrilha: ReturnType<typeof featuresDePontos> | null = null;
+  let noDaTrilha: number | null = null; // nó dono de `pontosDaTrilha`
   // Pins reais (antes do espalhamento); reaplicados quando o zoom muda.
   let ultimosPins: Parameters<typeof espalharPinsSobrepostos>[0] | null = null;
 
@@ -799,6 +827,25 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       type: "FeatureCollection",
       features: featuresDeDispersao(simp),
     });
+  };
+
+  // Filtra pelo toggle "Fixes brutos" sobre a última análise guardada.
+  const aplicarPontos = (map: maplibregl) => {
+    const source = map.getSource("track-points") as GeoJSONSource | undefined;
+    if (source === undefined || pontosDaTrilha === null) {
+      return;
+    }
+    const features = LocalState.localState.mostrarFixesBrutos
+      ? pontosDaTrilha
+      : pontosDaTrilha.filter((f) => f.properties.papel === "movimento");
+    source.setData({ type: "FeatureCollection", features });
+  };
+
+  // Esquece a análise e o "trilha carregada" (limpar, troca de seleção, logout).
+  const esquecerTrilha = () => {
+    pontosDaTrilha = null;
+    noDaTrilha = null;
+    LocalState.setTrilhaCarregada(false);
   };
 
   const aplicarPins = (map: maplibregl) => {
@@ -1136,6 +1183,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     if (sel === null) {
       // Desseleção também deve matar a resposta em voo (mesma corrida da troca).
       trackReq++;
+      esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
       pointsSrc.setData(EMPTY_FC);
       limparParadas(map);
@@ -1149,6 +1197,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       // Seleção órfã (nó sumiu do reconcile): trilha congelada do nó velho
       // não pode ficar no mapa quando a lista some.
       trackReq++;
+      esquecerTrilha();
       lineSrc.setData(EMPTY_FC);
       pointsSrc.setData(EMPTY_FC);
       limparParadas(map);
@@ -1163,6 +1212,11 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       });
     }
     const req = ++trackReq;
+    // Troca de seleção: a análise anterior sai já. Refetch do mesmo nó (polling)
+    // mantém a análise e o toggle até a resposta nova chegar.
+    if (noDaTrilha !== sel) {
+      esquecerTrilha();
+    }
     const target = node.nodeId || String(node.nodeNum);
     api
       .track(target)
@@ -1200,13 +1254,11 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
                 features: lineFeatures,
               },
         );
-        // Por padrão, só fixes em movimento; paradas e spikes ficam fora.
-        pointsSrc.setData({
-          type: "FeatureCollection",
-          features: featuresDePontos(t, simp).filter(
-            (f) => f.properties.papel === "movimento",
-          ),
-        });
+        // Guarda a análise; o filtro do toggle decide o que vai ao mapa.
+        pontosDaTrilha = featuresDePontos(t, simp);
+        noDaTrilha = sel;
+        LocalState.setTrilhaCarregada(true);
+        aplicarPontos(map);
       })
       .catch(() => {
         // 401/rede: painel e indicador já refletem; mapa fica como está.
@@ -1218,6 +1270,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
   createEffect(() => {
     LocalState.localState.pollingGeracao;
     trackReq++;
+    esquecerTrilha();
     popup?.remove();
     popup = null;
     const map = currentView();
@@ -1235,6 +1288,16 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     lineSrc?.setData(EMPTY_FC);
     pointsSrc?.setData(EMPTY_FC);
     limparParadas(map);
+  });
+
+  // "Fixes brutos": alternar só reaplica a última análise (sem refazer o fetch).
+  createEffect(() => {
+    LocalState.localState.mostrarFixesBrutos; // rastreado: gatilho do efeito
+    const map = currentView();
+    if (map === undefined || !carregado()) {
+      return;
+    }
+    aplicarPontos(map);
   });
 
   // Mapa base: reage a mudanças em localState.basemapMode
