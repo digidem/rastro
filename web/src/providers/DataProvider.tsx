@@ -1,6 +1,7 @@
 import type { Component, JSXElement } from "solid-js";
 import { createContext, onCleanup, useContext } from "solid-js";
 import { calcularBearing } from "../lib/bearing.js";
+import { DWELL_PADRAO, distanciaM } from "../lib/dwell.js";
 import { LocalState, type NodeInfo } from "../store.js";
 import { type ApiClient, ErrTokenInvalid, createApiClient } from "./api.js";
 
@@ -33,24 +34,36 @@ const devToken = (): string | undefined =>
     ? (import.meta.env.VITE_API_TOKEN as string | undefined) || undefined
     : undefined;
 
-function atualizarBearingsDosNos(
+// Posição onde o rumo de cada nó foi definido pela última vez (âncora do deslocamento).
+const ancorasDeRumo = new Map<number, [number, number]>();
+
+/** Rumo de `node` desde a âncora; mantém o anterior em jitter ou com o nó parado. */
+function rumoPorDeslocamento(node: NodeInfo, prev: NodeInfo): number | null {
+  const ancora = ancorasDeRumo.get(node.nodeNum) ?? [prev.lon, prev.lat];
+  // Parado, ou deslocamento desde a âncora dentro do raio de saída de parada:
+  // é ruído de GPS (multipath de 20–100 m), não rumo. Medir desde a âncora (e não
+  // do poll anterior) deixa o barco lento acumular deslocamento até definir rumo.
+  const parado = LocalState.localState.movimento[node.nodeNum]?.parado === true;
+  if (
+    parado ||
+    distanciaM(ancora, [node.lon, node.lat]) <= DWELL_PADRAO.raioSaidaM
+  ) {
+    ancorasDeRumo.set(node.nodeNum, ancora);
+    return prev.bearing ?? null;
+  }
+  ancorasDeRumo.set(node.nodeNum, [node.lon, node.lat]);
+  const b = calcularBearing(ancora[0], ancora[1], node.lon, node.lat);
+  return b !== null ? b : (prev.bearing ?? null);
+}
+
+export function atualizarBearingsDosNos(
   novosNos: NodeInfo[],
   nosAnteriores: Record<number, NodeInfo>,
 ): void {
   for (const node of novosNos) {
-    if (node.bearing !== undefined && node.bearing !== null) {
-      continue;
-    }
     const prev = nosAnteriores[node.nodeNum];
-    if (!prev) {
-      continue;
-    }
-    const delta = Math.hypot(node.lon - prev.lon, node.lat - prev.lat);
-    if (delta > 0.00005) {
-      const b = calcularBearing(prev.lon, prev.lat, node.lon, node.lat);
-      node.bearing = b !== null ? b : (prev.bearing ?? null);
-    } else {
-      node.bearing = prev.bearing ?? null;
+    if ((node.bearing === undefined || node.bearing === null) && prev) {
+      node.bearing = rumoPorDeslocamento(node, prev);
     }
   }
 }
