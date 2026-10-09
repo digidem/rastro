@@ -35,6 +35,7 @@ import { resolverPontosRegua } from "./lib/regua.js";
 import {
   atualizarRegua,
   definirCursorRegua,
+  definirZoomDuploRegua,
   garantirCamadasRegua,
   instalarInteracoesRegua,
 } from "./lib/reguaMapa.js";
@@ -1488,7 +1489,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
     );
   });
 
-  // Régua: cursor de crosshair enquanto a medição estiver ligada
+  // Régua: crosshair e sem zoom de duplo clique/toque enquanto a medição estiver ligada
   createEffect(() => {
     const ativa = LocalState.localState.regua.ativa;
     const map = currentView();
@@ -1496,6 +1497,7 @@ export const InitializeMap: Component<InitializeMapProps> = (props) => {
       return;
     }
     definirCursorRegua(map, ativa);
+    definirZoomDuploRegua(map, ativa);
   });
 
   // Mapa base: reage a mudanças em localState.basemapMode

@@ -1,4 +1,5 @@
 import type {
+  FilterSpecification,
   GeoJSONSource,
   LayerSpecification,
   MapLayerMouseEvent,
@@ -47,17 +48,17 @@ const COR_LINHA = "#fbbf24";
 const COR_ANCORADO = "#34d399";
 
 // Filtros por tipo de geometria: a fonte única é separada em camadas aqui.
-const FILTRO_LINHA: LayerSpecification["filter"] = [
+const FILTRO_LINHA: FilterSpecification = [
   "==",
   ["geometry-type"],
   "LineString",
 ];
-const FILTRO_VERTICES: LayerSpecification["filter"] = [
+const FILTRO_VERTICES: FilterSpecification = [
   "all",
   ["==", ["geometry-type"], "Point"],
   ["has", "indice"],
 ];
-const FILTRO_ROTULOS: LayerSpecification["filter"] = [
+const FILTRO_ROTULOS: FilterSpecification = [
   "all",
   ["==", ["geometry-type"], "Point"],
   ["has", "rotulo"],
@@ -210,6 +211,18 @@ export function definirCursorRegua(map: maplibregl, ativa: boolean): void {
   }
 }
 
+/**
+ * Com a régua ligada, desliga o zoom de duplo clique/toque do MapLibre: o
+ * preventDefault no dblclick não cobre o duplo toque (TapZoomHandler).
+ */
+export function definirZoomDuploRegua(map: maplibregl, ativa: boolean): void {
+  if (ativa) {
+    map.doubleClickZoom?.disable();
+  } else {
+    map.doubleClickZoom?.enable();
+  }
+}
+
 /** Instala os handlers da régua. Devolve uma função que remove todos. */
 export function instalarInteracoesRegua(
   map: maplibregl,
@@ -285,7 +298,12 @@ export function instalarInteracoesRegua(
   };
 
   const aoMover = (e: MapMouseEvent | MapTouchEvent) => {
-    if (arrastando === null || !deps.ativa()) {
+    if (arrastando === null) {
+      return;
+    }
+    // Régua desligada no meio do arraste: encerra e devolve o pan.
+    if (!deps.ativa()) {
+      aoSoltar();
       return;
     }
     arrastou = true;
@@ -325,6 +343,7 @@ export function instalarInteracoesRegua(
 
   const aoTeclar = (e: KeyboardEvent) => {
     if (e.key === "Escape" && deps.ativa()) {
+      aoSoltar();
       deps.sair();
     }
   };
@@ -339,6 +358,11 @@ export function instalarInteracoesRegua(
   map.on("touchmove", aoMover);
   map.on("mouseup", aoSoltar);
   map.on("touchend", aoSoltar);
+  map.on("touchcancel", aoSoltar);
+  // Soltar fora do canvas não gera mouseup no mapa (o MapLibre usa a janela).
+  window.addEventListener("mouseup", aoSoltar);
+  window.addEventListener("touchend", aoSoltar);
+  window.addEventListener("touchcancel", aoSoltar);
   map.on("mouseenter", CAMADA_REGUA_VERTICES, aoEntrarVertice);
   map.on("mouseleave", CAMADA_REGUA_VERTICES, aoSairVertice);
   document.addEventListener("keydown", aoTeclar);
@@ -354,6 +378,10 @@ export function instalarInteracoesRegua(
     map.off("touchmove", aoMover);
     map.off("mouseup", aoSoltar);
     map.off("touchend", aoSoltar);
+    map.off("touchcancel", aoSoltar);
+    window.removeEventListener("mouseup", aoSoltar);
+    window.removeEventListener("touchend", aoSoltar);
+    window.removeEventListener("touchcancel", aoSoltar);
     map.off("mouseenter", CAMADA_REGUA_VERTICES, aoEntrarVertice);
     map.off("mouseleave", CAMADA_REGUA_VERTICES, aoSairVertice);
     document.removeEventListener("keydown", aoTeclar);

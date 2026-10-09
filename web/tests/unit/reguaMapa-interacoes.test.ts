@@ -4,6 +4,7 @@ import {
   CAMADA_REGUA_VERTICES,
   type DepsInteracoesRegua,
   definirCursorRegua,
+  definirZoomDuploRegua,
   instalarInteracoesRegua,
 } from "../../src/lib/reguaMapa.js";
 
@@ -210,6 +211,39 @@ describe("instalarInteracoesRegua — arrasto", () => {
     expect(depsPadrao.adicionar).toHaveBeenCalledTimes(1);
   });
 
+  it("soltar fora do canvas (mouseup na janela) encerra o arraste", () => {
+    instalar();
+    pressionar(1);
+    window.dispatchEvent(new MouseEvent("mouseup"));
+    expect(fake.raw.dragPan.enable).toHaveBeenCalledTimes(1);
+    fake.emit("mousemove", evento(0, 0, -70.2, -5.3));
+    expect(depsPadrao.mover).not.toHaveBeenCalled();
+  });
+
+  it("touchcancel encerra o arraste", () => {
+    instalar();
+    pressionar(0);
+    fake.emit("touchcancel", {});
+    expect(fake.raw.dragPan.enable).toHaveBeenCalledTimes(1);
+  });
+
+  it("Escape no meio do arraste devolve o dragPan", () => {
+    instalar();
+    pressionar(0);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(depsPadrao.sair).toHaveBeenCalled();
+    expect(fake.raw.dragPan.enable).toHaveBeenCalledTimes(1);
+  });
+
+  it("régua desligada no meio do arraste: o próximo movimento encerra", () => {
+    instalar();
+    pressionar(0);
+    ativa = false;
+    fake.emit("mousemove", evento(0, 0, -70.2, -5.3));
+    expect(depsPadrao.mover).not.toHaveBeenCalled();
+    expect(fake.raw.dragPan.enable).toHaveBeenCalledTimes(1);
+  });
+
   it("mousemove sem arraste em curso não chama mover", () => {
     instalar();
     fake.emit("mousemove", evento());
@@ -290,6 +324,15 @@ describe("cursor", () => {
     expect(fake.canvas.style.cursor).toBe("crosshair");
     definirCursorRegua(fake.mapa, false);
     expect(fake.canvas.style.cursor).toBe("");
+  });
+
+  it("definirZoomDuploRegua desliga e religa o zoom de duplo clique/toque", () => {
+    const doubleClickZoom = { enable: vi.fn(), disable: vi.fn() };
+    const mapa = { doubleClickZoom } as unknown as maplibregl;
+    definirZoomDuploRegua(mapa, true);
+    expect(doubleClickZoom.disable).toHaveBeenCalledTimes(1);
+    definirZoomDuploRegua(mapa, false);
+    expect(doubleClickZoom.enable).toHaveBeenCalledTimes(1);
   });
 
   it("sobre um vértice vira move; ao sair volta a crosshair com régua ativa", () => {
