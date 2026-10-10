@@ -167,14 +167,18 @@ const carregarJanelaTrilhaPadrao = (): JanelaTrilhaH => {
 
 const carregarBasemapPadrao = (): BasemapMode => {
   if (typeof window !== "undefined" && window.localStorage) {
-    const salvo = window.localStorage.getItem("rastro_basemap");
-    if (
-      salvo === "google" ||
-      salvo === "satellite" ||
-      salvo === "osm" ||
-      salvo === "local"
-    ) {
-      return salvo;
+    try {
+      const salvo = window.localStorage.getItem("rastro_basemap");
+      if (
+        salvo === "google" ||
+        salvo === "satellite" ||
+        salvo === "osm" ||
+        salvo === "local"
+      ) {
+        return salvo;
+      }
+    } catch {
+      /* storage indisponivel: usa padrao */
     }
   }
   return "google";

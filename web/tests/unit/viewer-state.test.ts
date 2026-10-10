@@ -156,6 +156,40 @@ describe("LocalState — seleção e inativos", () => {
   });
 });
 
+describe("LocalState — basemap sem storage", () => {
+  const chaveBasemap = "rastro_basemap";
+
+  const carregarStore = async () => {
+    vi.resetModules();
+    return (await import("../../src/store.js")).LocalState;
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.clear();
+  });
+
+  it("leitura do localStorage que lança cai no padrão google", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    const store = await carregarStore();
+    expect(store.localState.basemapMode).toBe("google");
+  });
+
+  it("lê basemap válido salvo", async () => {
+    window.localStorage.setItem(chaveBasemap, "osm");
+    const store = await carregarStore();
+    expect(store.localState.basemapMode).toBe("osm");
+  });
+
+  it("valor salvo inválido cai no padrão google", async () => {
+    window.localStorage.setItem(chaveBasemap, "lixo");
+    const store = await carregarStore();
+    expect(store.localState.basemapMode).toBe("google");
+  });
+});
+
 describe("LocalState — fixes brutos (T5)", () => {
   const chaveFixes = "rastro_fixes_brutos";
 
@@ -191,7 +225,7 @@ describe("LocalState — fixes brutos (T5)", () => {
   });
 
   it("leitura do localStorage que lança cai no padrão false", async () => {
-    // Só a chave do toggle falha: o basemap (outro loader) não tem try/catch.
+    // Só a chave do toggle falha: as outras chaves (ex.: basemap) leem normalmente.
     const lerOriginal = Storage.prototype.getItem;
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
       this: Storage,
