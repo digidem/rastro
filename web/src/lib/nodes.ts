@@ -409,11 +409,25 @@ export function deviceModelSvgUrl(hwModel: string | null | undefined): string {
   return "/devices/unknown.svg";
 }
 
+/** Torre usa sempre o SenseCAP Indicator, mesmo que o rádio reporte modelo não reconhecido. */
+export function hardwareEfetivo(
+  hwModel: string | null | undefined,
+  nome?: string,
+): string | null {
+  if (typeof nome === "string" && /torre/.test(normalizar(nome))) {
+    return "SENSECAP_INDICATOR";
+  }
+  return hwModel || inferHardwareFromName(nome);
+}
+
 export function inferHardwareFromName(nome?: string): string | null {
   if (!nome) {
     return null;
   }
   const n = normalizar(nome);
+  if (/torre/.test(n)) {
+    return "SENSECAP_INDICATOR";
+  }
   if (n.includes("heltec-v4") || n.includes("heltec_v4")) {
     return "HELTEC_V4";
   }
@@ -502,6 +516,5 @@ export function hardwareModelLabel(
  * apresenta a placa de hardware (Heltec, T-Beam, T1000-E, RAK, etc.).
  */
 export function nodeSidebarSvgUrl(node: NodeInfo): string {
-  const inferred = node.hwModel || inferHardwareFromName(node.nome);
-  return deviceModelSvgUrl(inferred);
+  return deviceModelSvgUrl(hardwareEfetivo(node.hwModel, node.nome));
 }

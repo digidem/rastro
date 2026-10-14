@@ -19,9 +19,9 @@ import {
 import {
   batteryLabel,
   deviceModelSvgUrl,
+  hardwareEfetivo,
   hardwareModelLabel,
   hasConfirmedPosition,
-  inferHardwareFromName,
   isAgeWarning,
   isBoatNode,
   isNodeOlderThan7Days,
@@ -574,9 +574,7 @@ const gerarHtmlPopup = (info: InfoPinPopup): string => {
     }) ??
     (info.hwModel || "Modelo não informado");
 
-  const svgUrl = deviceModelSvgUrl(
-    info.hwModel || inferHardwareFromName(info.nome),
-  );
+  const svgUrl = deviceModelSvgUrl(hardwareEfetivo(info.hwModel, info.nome));
 
   const tagCurta = info.shortName
     ? `<span class="font-semibold text-slate-200">${esc(info.shortName)}</span><span class="text-slate-500">·</span>`
