@@ -105,6 +105,14 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - `RASTRO_CLIMA_BARCOS` vazia = lista padrão SEM reservas (os barcos sem fix recente são pulados). Ao regravar, nunca passe valor vazio.
    - psycopg recusa mudar `conn.read_only` com transação aberta (qualquer SELECT abre uma): a escrita em `chat_outbox` usa conexão nova do pool, e a busca HTTP não segura conexão.
    - Teste com Postgres real: `postgres:16` descartável + `01-schema.sql` e `02-native.sql` + papel `rastro_viewer`, pool com `default_transaction_read_only=on`. O relógio falso (`agora`) tem de bater com o do banco: `created_at` vem do `now()` do Postgres e é comparado com `desde` (meia-noite local calculada no app); com datas diferentes a deduplicação parece quebrada sem estar.
+13. **Categoria e ícone de nó (`web/src/lib/nodes.ts`):**
+   - Nome com `base`, `teto`, `fixo` ou `torre` = estação fixa (`fixed_station`), nunca barco. A lista está repetida em `NAO_BARCO_RE` e `inferKindFromName`: ao incluir palavra nova, edite as duas.
+   - O ícone vem de `hwModel`; `hwModel` presente mas não reconhecido dá `unknown.svg` e BLOQUEIA o fallback por nome. Não presuma a string de modelo que o rádio reporta (a torre não reportava `SENSECAP_INDICATOR`). Overrides por nome ficam em `hardwareEfetivo`, usado pelo mapa e pela sidebar. SVGs novos vão em `web/public/devices/`, servidos localmente.
+   - `biome check` falha (erro, não aviso) com import fora de ordem e import sem uso: rode `pnpm biome check --write <arquivos>` antes de commitar.
+14. **Deploy só do web:**
+   - Push em `main` faz o CI publicar `communityfirst/rastro-web:sha-<7 chars>`; o app do visualizador no CapRover se chama `rastro` (não `rastro-web`): `scripts/rastro_caprover.py deploy-image rastro communityfirst/rastro-web:<tag> --execute`, e `status` confirma.
+   - Release de verdade: `scripts/rastro_release.sh X.Y.Z --push` (publica todas as imagens com a mesma tag; implante só as que mudaram, e o broker segue a regra da seção 5). O script não cria tag git; o remoto só tem tags até `v0.6.0`, e uma tag `v*` faz o CI reconstruir e republicar tudo.
+   - Job de build do web chegou a travar por mais de 1 h. `gh run rerun` é recusado enquanto o run está "em andamento"; `gh workflow run images.yml` abre um run novo que substitui o travado (grupo de concorrência).
 
 ---
 

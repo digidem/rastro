@@ -133,6 +133,8 @@ docker run --rm --network captain-overlay-network --user "$(id -u):$(id -g)" \
 
 Mude a versão (tag) nos apps do CapRover, ou rode `caprover deploy -i communityfirst/rastro-<serviço>:<nova tag> -a <app>-<serviço>` para cada um. Mudanças de schema: rode de novo o preparo — recrie temporariamente o app `<app>-setup` com a URL de admin, ou use `rastro-pgtools` sem `--restore` como no §7 (a migração é aditiva e idempotente).
 
+Só o visualizador mudou? O app do CapRover se chama `rastro`: `python3 scripts/rastro_caprover.py deploy-image rastro communityfirst/rastro-web:<tag> --execute` (sem `--execute` é simulação) e confira com `status`. `<tag>` pode ser `sha-<7 chars>` (publicada pelo CI a cada push em `main`) ou uma versão de `scripts/rastro_release.sh X.Y.Z --push`. Se o job de build do web travar no CI, `gh workflow run images.yml` abre um run novo que substitui o travado. Rollback: o mesmo comando com a tag anterior.
+
 Atenção: cada execução do preparo REAPLICA as quatro senhas dos papéis. Use sempre as mesmas dos apps `<app>-ingest`/`<app>-api`; senha diferente derruba o ingest e a API até as variáveis serem atualizadas.
 
 ## 9. Problemas comuns
