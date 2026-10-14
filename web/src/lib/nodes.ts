@@ -95,7 +95,7 @@ export function isBoatNode(node: NodeInfo): boolean {
   return nome.includes("barco");
 }
 
-const NAO_BARCO_RE = /movel|handheld|cartao|teto|base|fixo|t1000/;
+const NAO_BARCO_RE = /movel|handheld|cartao|teto|base|torre|fixo|t1000/;
 
 /** Infere kind pelo nome quando o backend não informa um explícito. */
 function inferKindFromName(nome?: string): NodeKind | null {
@@ -103,7 +103,7 @@ function inferKindFromName(nome?: string): NodeKind | null {
     return null;
   }
   const n = normalizar(nome);
-  if (/teto|fixo|base/.test(n)) {
+  if (/teto|fixo|base|torre/.test(n)) {
     return "fixed_station";
   }
   if (/movel|handheld|cartao|t1000/.test(n)) {
@@ -382,6 +382,9 @@ export function deviceModelSvgUrl(hwModel: string | null | undefined): string {
     return "/devices/unknown.svg";
   }
   const m = hwModel.toUpperCase().replace(/[- ]/g, "_");
+  if (m.includes("INDICATOR")) {
+    return "/devices/seeed-sensecap-indicator.svg";
+  }
   if (m.includes("HELTEC_V4")) {
     return "/devices/heltec_v4.svg";
   }
