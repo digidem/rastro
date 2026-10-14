@@ -10,6 +10,8 @@ API (`services/rastro_api`, endpoint autenticado) -> fila (tabela de saída, com
 - Cripto/envelope nativo (`native/crypto.py`, `native/envelope.py`).
 - NOVO (esta execução): `services/rastro_gateway/native/remote_cmd.py` com modelo, validação e política (reboot/shutdown; factory reset recusado como `bad_action`; shutdown só em barco com tripulação por perto; desligado por padrão, `RASTRO_REMOTE_CMD_ENABLED=1`). Testes: `tests/test_native_remote_cmd.py`. Não envia nada.
 
+Códigos de erro (`CommandError.code`), para a API futura mapear: `disabled`, `bad_node`, `bad_action`, `bad_crew`, `shutdown_denied_kind`, `shutdown_denied_crew`.
+
 ## O que falta
 1. Tipo do nó (barco/solar/fixo) e "tripulação por perto": hoje não há fonte. Definir (registry da frota ou proximidade entre nós) e alimentar `NodeKind`/`crew_nearby` no servidor, nunca confiar no cliente.
 2. Endpoint na API + autorização do operador + auditoria (quem, quando, nó, ação).

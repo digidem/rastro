@@ -35,7 +35,11 @@ def test_shutdown_boat_needs_crew():
     rc.authorize(mk("shutdown", "boat", True), ON)
 
 
-@pytest.mark.parametrize("a", ["factory_reset", "factory-reset", "wipe", "", "REBOOT_OTA", None, 1])
+@pytest.mark.parametrize(
+    "a",
+    ["factory_reset", "FACTORY RESET", " factory_reset ", "factory-reset", "wipe", "",
+     "REBOOT_OTA", "reboot;shutdown", None, 1],
+)
 def test_other_actions_rejected(a):
     with pytest.raises(rc.CommandError) as e:
         rc.parse_command("!a35a8024", a, "boat", True)

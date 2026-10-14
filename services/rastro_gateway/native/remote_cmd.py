@@ -79,6 +79,9 @@ def authorize(cmd: RemoteCommand, env: dict[str, str] | None = None) -> None:
         return
     # shutdown
     if cmd.kind is not NodeKind.BOAT:
-        raise CommandError("shutdown_denied_kind", "desligar só em nó de barco (solar/fixo/desconhecido só reinicia)")
+        raise CommandError(
+            "shutdown_denied_kind",
+            "desligar só em nó de barco (solar/fixo/desconhecido só reinicia)",
+        )
     if not cmd.crew_nearby:
         raise CommandError("shutdown_denied_crew", "desligar exige tripulação por perto")
