@@ -56,7 +56,7 @@ class Cap:
             headers=cab,
         )
         try:
-            resp = json.load(urllib.request.urlopen(req, timeout=60))
+            resp = json.load(urllib.request.urlopen(req, timeout=120))
         except urllib.error.HTTPError as exc:  # corpo pode ter detalhe útil, nunca credencial
             raise SystemExit(f"ERRO HTTP {exc.code} em {caminho}: {exc.read()[:300]!r}") from None
         if resp.get("status") not in (100, 101, 102, 200):
