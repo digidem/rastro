@@ -11,7 +11,7 @@ const nf = (casas: number) =>
 const um = nf(1);
 const zero = nf(0);
 
-/** "27,3 °C · umidade 82 % · 1009 hPa"; medidas ausentes ficam de fora; sem nenhuma → "—". */
+/** "27,3 °C · umidade 82 % · 1.009 hPa" (agrupamento pt-BR); medidas ausentes ficam de fora; sem nenhuma → "—". */
 export function formatarAmbiente(l: LeituraAmbiente): string {
   const partes: string[] = [];
   if (l.temperaturaC !== null) {

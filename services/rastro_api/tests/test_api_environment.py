@@ -16,6 +16,25 @@ def test_environment_do_no_em_ordem_cronologica(client, dados):
     assert feats[0]["properties"]["pressure_hpa"] == 1008.0
 
 
+def test_environment_janela_from_to(client, dados):
+    # padrão = últimas 24 h: ambas as leituras de S1 estão dentro; janela antiga não tem nenhuma
+    todas = client.get("/api/nodes/!5e550001/environment", headers=AUTH).json()["features"]
+    assert len(todas) == 2
+    antiga = client.get(
+        "/api/nodes/!5e550001/environment",
+        headers=AUTH,
+        params={"from": "2020-01-01T00:00:00Z", "to": "2020-01-02T00:00:00Z"},
+    ).json()["features"]
+    assert antiga == []
+    # limites inclusivos: janela exata da leitura mais nova devolve só ela
+    t3 = dados["t3"].isoformat()
+    exata = client.get(
+        "/api/nodes/!5e550001/environment", headers=AUTH, params={"from": t3, "to": t3}
+    ).json()["features"]
+    assert len(exata) == 1
+    assert exata[0]["properties"]["temperature_c"] == 27.5
+
+
 def test_environment_limit_devolve_os_mais_novos(client, dados):
     resposta = client.get("/api/nodes/!5e550001/environment", headers=AUTH, params={"limit": 1})
     feats = resposta.json()["features"]

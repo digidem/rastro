@@ -1088,6 +1088,14 @@ def test_ambiente_lote_misto_com_posicao_sem_keyerror(db_ingest, db):
     assert counts["environment"] == 1
 
 
+def test_ambiente_sem_remetente_nao_grava_nem_levanta(db_ingest, db):
+    env = _env_ambiente(7600, 731, 1728500000)
+    env.from_num = None
+    counts = db_ingest.store_native([env])
+    assert counts["environment"] == 0
+    assert counts["raw"] == 1
+
+
 def test_ambiente_papeis_ingest_e_viewer(db, db_ingest, pg_session):
     db_ingest.store_native([_env_ambiente(7500, 721, 1728500000)])
     # ingest: não lê os valores, não apaga

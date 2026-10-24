@@ -29,8 +29,83 @@ DB="${RASTRO_DB:-rastro}"
 [[ "$DB" =~ ^[a-z][a-z0-9_]{0,30}$ ]] || erro "RASTRO_DB inválido (use ^[a-z][a-z0-9_]{0,30}\$)"
 OWNER="${DB}_owner"; INGEST="${DB}_ingest"; VIEWER="${DB}_viewer"; MAINT="${DB}_maint"; BACKUP="${DB}_backup"
 
-ALVO="${RASTRO_PG_ADMIN_URL:-$DB}"
-unset RASTRO_PG_ADMIN_URL
+# A URL de admin é desmontada em variáveis libpq (PGHOST/PGPASSWORD...): a senha nunca vai em argv.
+# O banco alvo é sempre RASTRO_DB, qualquer que seja o caminho da URL.
+ADMIN_DB="$DB"
+if [ -n "${RASTRO_PG_ADMIN_URL:-}" ]; then
+  if command -v python3 >/dev/null; then
+    analisado="$(python3 - <<'PY'
+import os, shlex, sys
+from urllib.parse import urlsplit, unquote, parse_qsl
+
+def erro(motivo):
+    print("ERRO: RASTRO_PG_ADMIN_URL inválida (%s)." % motivo, file=sys.stderr)
+    sys.exit(1)
+
+bruto = os.environ["RASTRO_PG_ADMIN_URL"].strip()
+try:
+    u = urlsplit(bruto)
+    porta = u.port
+    host = u.hostname
+except ValueError:
+    erro("não foi possível interpretar host/porta")
+if u.scheme not in ("postgres", "postgresql"):
+    erro("o esquema deve ser postgresql:// ou postgres://")
+if u.fragment:
+    erro("há '#' sem percent-encoding")
+if not host:
+    erro("host ausente")
+if not u.username:
+    erro("usuário ausente")
+if not u.password:
+    erro("senha ausente")
+porta = 5432 if porta is None else porta
+if not 1 <= porta <= 65535:
+    erro("porta fora do intervalo")
+usuario, senha = unquote(u.username), unquote(u.password)
+banco = unquote(u.path.lstrip("/")) or os.environ.get("RASTRO_ADMIN_DB") or "postgres"
+sslmode = ""
+try:
+    pares = parse_qsl(u.query, keep_blank_values=True, strict_parsing=bool(u.query))
+except ValueError:
+    erro("parâmetros ilegíveis")
+for k, v in pares:
+    if k == "sslmode":
+        if v not in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
+            erro("sslmode inválido")
+        sslmode = v
+for nome, valor in (("ph", host), ("pp", str(porta)), ("pu", usuario), ("pw", senha), ("pdb", banco), ("psm", sslmode)):
+    print("%s=%s" % (nome, shlex.quote(valor)))
+PY
+)" || erro "falha ao interpretar RASTRO_PG_ADMIN_URL"
+    eval "$analisado"; analisado=""
+  else
+    # Fallback em bash puro se python3 não estiver no PATH
+    bruto="${RASTRO_PG_ADMIN_URL}"
+    [[ "$bruto" =~ ^postgres(ql)?:// ]] || erro "esquema deve ser postgresql:// ou postgres://"
+    sem_proto="${bruto#*://}"
+    cred="${sem_proto%%@*}"
+    resto="${sem_proto#*@}"
+    pu="${cred%%:*}"
+    pw="${cred#*:}"
+    hp="${resto%%/*}"
+    ph="${hp%%:*}"
+    if [[ "$hp" == *:* ]]; then pp="${hp#*:}"; else pp="5432"; fi
+    caminho_query="${resto#*/}"
+    pdb="${caminho_query%%\?*}"
+    [ -n "$pdb" ] || pdb="${RASTRO_ADMIN_DB:-postgres}"
+    psm=""
+    if [[ "$caminho_query" == *\?* ]]; then
+      q="${caminho_query#*\?}"
+      if [[ "$q" =~ sslmode=([^&]+) ]]; then psm="${BASH_REMATCH[1]}"; fi
+    fi
+  fi
+  export PGHOST="$ph" PGPORT="$pp" PGUSER="$pu" PGPASSWORD="$pw"
+  [ -z "$psm" ] || export PGSSLMODE="$psm"
+  ADMIN_DB="$pdb"
+  unset RASTRO_PG_ADMIN_URL
+fi
+ALVO="$DB"
 
 psql_em() { psql -X -q -At -v ON_ERROR_STOP=1 -d "$ALVO" "$@"; }
 VARS=(-v db="$DB" -v owner="$OWNER" -v ingest="$INGEST" -v viewer="$VIEWER" -v maint="$MAINT" -v backup="$BACKUP")
@@ -78,6 +153,19 @@ SELECT format('GRANT SELECT, DELETE ON %I.environment_telemetry TO %I', :'db', :
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'maint') \gexec
 SELECT format('GRANT SELECT ON %I.environment_telemetry TO %I', :'db', :'backup')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'backup') \gexec
+-- pg_dump lê o estado de cada sequência: o papel backup precisa de SELECT na do IDENTITY
+SELECT format('GRANT SELECT ON SEQUENCE %I.environment_telemetry_id_seq TO %I', :'db', :'backup')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'backup') \gexec
+
+-- Dono da tabela nova = dono de device_telemetry (sem o papel owner a tabela ficaria com o admin):
+-- diferença aborta a transação inteira, antes do COMMIT.
+SELECT (SELECT relowner FROM pg_class WHERE oid = to_regclass(format('%I.environment_telemetry', :'db')))
+     IS NOT DISTINCT FROM (SELECT relowner FROM pg_class WHERE oid = to_regclass(format('%I.device_telemetry', :'db'))) AS dono_ok \gset
+\if :dono_ok
+\else
+\echo ERRO: dono de environment_telemetry difere do de device_telemetry (papel owner ausente?)
+SELECT 1/0;
+\endif
 COMMIT;
 SQL
 

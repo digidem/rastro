@@ -106,7 +106,7 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - psycopg recusa mudar `conn.read_only` com transação aberta (qualquer SELECT abre uma): a escrita em `chat_outbox` usa conexão nova do pool, e a busca HTTP não segura conexão.
    - Teste com Postgres real: `postgres:16` descartável + `01-schema.sql` e `02-native.sql` + papel `rastro_viewer`, pool com `default_transaction_read_only=on`. O relógio falso (`agora`) tem de bater com o do banco: `created_at` vem do `now()` do Postgres e é comparado com `desde` (meia-noite local calculada no app); com datas diferentes a deduplicação parece quebrada sem estar.
 13. **Categoria e ícone de nó (`web/src/lib/nodes.ts`):**
-   - Nome com `base`, `teto`, `fixo` ou `torre` = estação fixa (`fixed_station`), nunca barco. A lista está repetida em `NAO_BARCO_RE` e `inferKindFromName`: ao incluir palavra nova, edite as duas.
+   - Nome com `base`, `teto`, `fixo` ou `torre` = estação fixa (`fixed_station`), nunca barco. A lista está repetida em `NAO_BARCO_RE` e `inferKindFromName`: ao incluir palavra nova, edite as duas (exceção: `sensor` só está em `NAO_BARCO_RE`, pois bloqueia a categoria barco e o nó sensor não é estação fixa; lição 15).
    - O ícone vem de `hwModel`; `hwModel` presente mas não reconhecido dá `unknown.svg` e BLOQUEIA o fallback por nome. Não presuma a string de modelo que o rádio reporta (a torre não reportava `SENSECAP_INDICATOR`). Overrides por nome ficam em `hardwareEfetivo`, usado pelo mapa e pela sidebar. SVGs novos vão em `web/public/devices/`, servidos localmente.
    - `biome check` falha (erro, não aviso) com import fora de ordem e import sem uso: rode `pnpm biome check --write <arquivos>` antes de commitar.
 14. **Deploy só do web:**
