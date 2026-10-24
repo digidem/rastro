@@ -31,7 +31,7 @@ testável localmente (pytest + rig Docker). Dados de teste: PSK descartável e n
   Nonce de 16 bytes: `id` como uint64 little-endian (8 B) + `from` como uint32 LE (4 B) + 4 bytes zero.
   Plaintext = `Data` serializado. Pacote já `decoded` (sem cifra) é aceito como está.
 - `Data.portnum`: 1 = TEXT_MESSAGE_APP (UTF-8), 3 = POSITION_APP (`Position`), 4 = NODEINFO_APP (`User`),
-  67 = TELEMETRY_APP (`Telemetry`, só `device_metrics`), demais = `unhandled` (conta, não grava domínio; bruto sim).
+  67 = TELEMETRY_APP (`Telemetry`: `device_metrics` → `telemetry`; `environment_metrics` → `environment`, grava `environment_telemetry`), demais = `unhandled` (conta, não grava domínio; bruto sim).
 - Horário: `Position.time` (epoch s, relógio do dispositivo). Inválido se `0`, `< 1_600_000_000`, ou `> agora + 300 s`.
   Fallback sinalizado: `MeshPacket.rx_time` se válido (janela [agora−7d, agora+300s]) senão `agora` (chegada); marca
   `time_flag` = `invalid_zero|invalid_past|invalid_future` e `time_source='gateway'`.
@@ -89,6 +89,7 @@ canal `PKI` → `Opaque`. Cifra com chave errada produz protobuf inválido → `
 - `chat_messages(id, direction CHECK in ('in','out'), boat_id TEXT, from_num, packet_id, text TEXT, is_alert BOOL, observed_at, received_at, UNIQUE(from_num,packet_id))`.
 - `chat_outbox(id, boat_id TEXT, text TEXT, created_by TEXT, created_at, expires_at, status CHECK in ('queued','sent','expired','failed'), sent_at, packet_id BIGINT, error TEXT)`.
 - `virtual_gateways(boat_id PK, gateway_id TEXT UNIQUE, virtual_node_num BIGINT, active BOOL)`; `boat_devices(node_num, boat_id, valid_from, valid_to)`.
+- `environment_telemetry(id, node_num FK, telem_time, time_source, temperature_c, relative_humidity, pressure_hpa, received_at, UNIQUE(node_num, telem_time))` — BME280 do nó sensor; migração dedicada `deploy/postgres/migrate-04-ambiente.sh`.
 - `node_power(node_num PK, battery_level, voltage, updated_at)` (hook p/ alertas de energia — só gravar, sem alerta ainda).
 - `alert_state(key PK, node_num, kind, since, last_notified, cleared_at)`.
 - Grants: papéis `rastro_ingest` (INSERT/SELECT/UPDATE nas novas tabelas), `rastro_viewer` (SELECT em `chat_messages`, `chat_outbox`, `alert_state`, `virtual_gateways`; INSERT em `chat_outbox` via função/grant de coluna), um papel novo NÃO é criado. Conferir como `01-schema.sql` trata grants (provavelmente no entrypoint).
@@ -136,3 +137,4 @@ canal `PKI` → `Opaque`. Cifra com chave errada produz protobuf inválido → `
   `age_s`, `time_flag`; trilha quebra em lacunas > `RASTRO_TRACK_GAP_SECS` (default 1800) — `GET /api/nodes/{n}/track`
   devolve múltiplos LineStrings por padrão (MultiLineString somente com ?format=multi).
   Previsão diária por barco (envs `RASTRO_CLIMA_*`, insere em `chat_outbox` com `created_by='clima'`): ver lição 12 do `AGENTS.md`.
+  `GET /api/nodes/{node}/environment` (histórico de leituras ambientais) e `GET /api/environment/latest` (última leitura por nó, 14 dias); a web lista em "Sensores" e no inspetor.

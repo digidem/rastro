@@ -39,12 +39,12 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 
 | Tarefa | Comando |
 |---|---|
-| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 430 testes) |
+| Testes unitários do visualizador | `cd web && pnpm test` (Vitest, 460 testes) |
 | Servidor dev com dados reais da API | `cd web && pnpm dev` (proxy para `VITE_API_TARGET`, definido em `web/.env.development`, não versionado: num worktree novo, copie do checkout principal e apague antes de remover o worktree, pois guarda o token da API) |
 | Servidor dev com dados de teste (fixtures) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:test` (acessível via LAN/VPN; `dev:mock` é alias) |
 | Lint / Formatação do frontend | `cd web && pnpm biome check` |
 | Typecheck do frontend | `cd web && timeout 400 npx tsc --noEmit -p .` — conclui em ~4,3 min (2026-10-09) e é gate: inclua nos briefs de subagente por tarefa (na régua, pulá-lo deixou 3 erros de tipo para o fim) |
-| Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (314 testes) |
+| Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (375 testes) |
 | Simulação de deploy CapRover | `deploy/sim/run.sh <template.yml>` |
 | Script de limpeza de banco legado | `python3 scripts/rastro_cleanup_legacy_db.py --dry-run` |
 
@@ -113,6 +113,12 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
    - Push em `main` faz o CI publicar `communityfirst/rastro-web:sha-<7 chars>`; o app do visualizador no CapRover se chama `rastro` (não `rastro-web`): `scripts/rastro_caprover.py deploy-image rastro communityfirst/rastro-web:<tag> --execute`, e `status` confirma.
    - Release de verdade: `scripts/rastro_release.sh X.Y.Z --push` (publica todas as imagens com a mesma tag; implante só as que mudaram, e o broker segue a regra da seção 5). O script não cria tag git; o remoto só tem tags até `v0.6.0`, e uma tag `v*` faz o CI reconstruir e republicar tudo.
    - Job de build do web chegou a travar por mais de 1 h. `gh run rerun` é recusado enquanto o run está "em andamento"; `gh workflow run images.yml` abre um run novo que substitui o travado (grupo de concorrência).
+
+15. **Nó sensor (telemetria ambiental, BME280):**
+   - `TELEMETRY_APP` com `environment_metrics` vira `kind="environment"` (`native/envelope.py`): temperatura, umidade e pressão, cada uma anulável; fora da faixa física (−60..100 °C, 0..100 %, 300..1100 hPa) ou NaN vira `None`; exatamente (0, 0, 0) nos valores brutos (I2C solto) é descartado. Grava em `environment_telemetry` (dedupe `(node_num, telem_time)`, só `time_source`, sem `time_flag`).
+   - O sensor (`univaja-sensor-<n>`) NÃO é barco: não tem conta MQTT, não entra em `RASTRO_NATIVE_NODES` (o filtro exige `-barco-`) e `sensor` está em `NAO_BARCO_RE` (lição 13). Sobe só pelo uplink do barco.
+   - API: `GET /api/nodes/{node}/environment` (histórico, janela e teto como `/telemetry`) e `GET /api/environment/latest` (uma leitura por nó dos últimos 14 dias, com `node_num`; sensor sem fix não está em `/api/nodes/latest`, por isso o bloco "Sensores" da web lista a partir daqui).
+   - Banco: a tabela está no `02-native.sql` (instalação nova) e na migração dedicada `deploy/postgres/migrate-04-ambiente.sh` (produção; NÃO reexecute o `migrate-02-native.sh` em produção: ele derruba e recria o CHECK de `chat_outbox`). O `check_ready()` do ingest exige a tabela e os privilégios: migre ANTES de implantar o ingest.
 
 ---
 
