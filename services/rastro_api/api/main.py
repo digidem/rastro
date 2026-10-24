@@ -153,6 +153,10 @@ def _fetch(request: Request, fn, *args):
         raise HTTPException(status_code=503, detail="banco indisponível") from None
 
 
+# Janela do /environment/latest: sensor que parou de reportar sai da lista após esse prazo.
+_ENVIRONMENT_LATEST_DIAS = 14
+
+
 def _window(from_s: str | None, to_s: str | None) -> tuple[datetime, datetime]:
     """Janela temporal; default = últimas 24 h (ambos os lados independentes)."""
     def parse(bruto: str, name: str) -> datetime:
@@ -607,6 +611,50 @@ def create_app() -> FastAPI:
             })
             for r in rows
         ]
+        return geojson.collection(features)
+
+    def _props_ambiente(r: dict) -> dict:
+        """Medidas ausentes (NULL) ficam fora, como no resto da API."""
+        props = {
+            chave: r[chave]
+            for chave in ("temperature_c", "relative_humidity", "pressure_hpa")
+            if r[chave] is not None
+        }
+        props["telem_time"] = geojson.iso_utc(r["telem_time"])
+        return props
+
+    @router.get("/nodes/{node}/environment")
+    def environment(
+        node: str,
+        request: Request,
+        from_: Annotated[str | None, Query(alias="from")] = None,
+        to: str | None = None,
+        limit: Annotated[int, Query(ge=1)] = _MAX_LIMIT,
+    ) -> dict:
+        ts_from, ts_to = _window(from_, to)
+        rows = _fetch(request, queries.environment, node, ts_from, ts_to, min(limit, _MAX_LIMIT))
+        return geojson.collection(
+            [geojson.telemetry_feature(_props_ambiente(r)) for r in rows]
+        )
+
+    @router.get("/environment/latest")
+    def environment_latest(request: Request) -> dict:
+        agora = datetime.now(timezone.utc)
+        desde = agora - timedelta(days=_ENVIRONMENT_LATEST_DIAS)
+        rows = _fetch(request, queries.environment_latest, desde)
+        features = []
+        for r in rows:
+            props = _props_ambiente(r)
+            telem_time = r["telem_time"]
+            if telem_time.tzinfo is None:
+                telem_time = telem_time.replace(tzinfo=timezone.utc)
+            props.update({
+                "node_num": r["node_num"],
+                "node": r["node_id"],
+                "nome": r["nome"],
+                "age_s": max(0, int((agora - telem_time).total_seconds())),
+            })
+            features.append(geojson.telemetry_feature(props))
         return geojson.collection(features)
 
     def _parse_cursor(bruto: str) -> tuple[datetime, str, int]:

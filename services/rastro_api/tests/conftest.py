@@ -32,6 +32,9 @@ os.environ.setdefault("RASTRO_PG_USER", "rastro")
 
 _NUM_A = int("aaaa0001", 16)
 _NUM_B = int("bbbb0002", 16)
+_NUM_S1 = int("5e550001", 16)  # sensor sintético, sem posição
+_NUM_S2 = int("5e550002", 16)  # sensor parado há mais de 14 dias
+_NUM_S3 = int("5e550003", 16)  # sensor com relógio adiantado
 
 
 def _pg_connect(dbname: str):
@@ -99,8 +102,27 @@ def dados(banco_teste):
             " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (_NUM_A, t2, "device", 87.5, 4.1, 2.5, 0.12, 3600),
         )
+        cur.execute(
+            "INSERT INTO nodes (node_num, node_id, friendly_name) VALUES"
+            " (%s, '!5e550001', 'Sensor 1'), (%s, '!5e550002', NULL), (%s, '!5e550003', NULL)",
+            (_NUM_S1, _NUM_S2, _NUM_S3),
+        )
+        cur.executemany(
+            "INSERT INTO environment_telemetry"
+            " (node_num, telem_time, time_source, temperature_c, relative_humidity, pressure_hpa)"
+            " VALUES (%s, %s, 'device', %s, %s, %s)",
+            [
+                (_NUM_S1, t1, 26.0, 90.0, 1008.0),
+                (_NUM_S1, t3, 27.5, 82.0, None),
+                (_NUM_S2, agora - timedelta(days=20), 25.0, 70.0, 1010.0),
+                (_NUM_S3, agora + timedelta(minutes=4), 24.0, 60.0, 1011.0),
+            ],
+        )
         conn.commit()
-    return {"num_a": _NUM_A, "num_b": _NUM_B, "t1": t1, "t2": t2, "t3": t3}
+    return {
+        "num_a": _NUM_A, "num_b": _NUM_B, "t1": t1, "t2": t2, "t3": t3,
+        "num_s1": _NUM_S1, "num_s3": _NUM_S3,
+    }
 
 
 @pytest.fixture()

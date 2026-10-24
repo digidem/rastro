@@ -110,6 +110,47 @@ def telemetry(
     ).fetchall()
 
 
+_SQL_ENVIRONMENT = """
+    SELECT * FROM (
+        SELECT temperature_c, relative_humidity, pressure_hpa, telem_time
+        FROM environment_telemetry
+        WHERE node_num = %s
+          AND telem_time >= %s
+          AND telem_time <= %s
+        ORDER BY telem_time DESC
+        LIMIT %s
+    ) sub ORDER BY telem_time ASC
+"""
+
+# Uma leitura (a mais recente) por nó, só dos últimos N dias (nó aposentado sai da tela).
+_SQL_ENVIRONMENT_LATEST = """
+    SELECT DISTINCT ON (e.node_num)
+           e.node_num, n.node_id, COALESCE(n.friendly_name, n.node_id) AS nome,
+           e.temperature_c, e.relative_humidity, e.pressure_hpa, e.telem_time
+    FROM environment_telemetry e
+    JOIN nodes n ON n.node_num = e.node_num
+    WHERE e.telem_time >= %s
+    ORDER BY e.node_num, e.telem_time DESC
+"""
+
+
+def environment(
+    conn: Any, node: str, ts_from: dt.datetime, ts_to: dt.datetime, limit: int,
+) -> list[dict]:
+    """Leituras ambientais do nó na janela (as mais novas até ``limit``), ASC; [] se nó desconhecido."""
+    node_num = resolve_node(conn, node)
+    if node_num is None:
+        return []
+    return conn.execute(
+        _SQL_ENVIRONMENT, (node_num, ts_from, ts_to, limit)
+    ).fetchall()
+
+
+def environment_latest(conn: Any, desde: dt.datetime) -> list[dict]:
+    """Leitura ambiental mais recente de cada nó desde ``desde``, ordenada por node_num."""
+    return conn.execute(_SQL_ENVIRONMENT_LATEST, (desde,)).fetchall()
+
+
 _SQL_CHAT_MESSAGES_SINCE = """
     SELECT id, direction, boat_id, from_num, text, is_alert, observed_at, received_at
     FROM chat_messages
