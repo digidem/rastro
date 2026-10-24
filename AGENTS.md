@@ -44,7 +44,7 @@ O repositório `rastro` é o monorepo do produto de rastreamento (imagens públi
 | Servidor dev com dados de teste (fixtures) | `cd web && VITE_HOST=0.0.0.0 pnpm dev:test` (acessível via LAN/VPN; `dev:mock` é alias) |
 | Lint / Formatação do frontend | `cd web && pnpm biome check` |
 | Typecheck do frontend | `cd web && timeout 400 npx tsc --noEmit -p .` — conclui em ~4,3 min (2026-10-09) e é gate: inclua nos briefs de subagente por tarefa (na régua, pulá-lo deixou 3 erros de tipo para o fim) |
-| Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (375 testes) |
+| Testes unitários do Gateway / Ingest | `cd services/rastro_gateway && .venv/bin/pytest -q` (376 testes) |
 | Simulação de deploy CapRover | `deploy/sim/run.sh <template.yml>` |
 | Script de limpeza de banco legado | `python3 scripts/rastro_cleanup_legacy_db.py --dry-run` |
 
