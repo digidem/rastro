@@ -31,6 +31,7 @@ OWNER="${DB}_owner"; INGEST="${DB}_ingest"; VIEWER="${DB}_viewer"; MAINT="${DB}_
 
 # A URL de admin é desmontada em variáveis libpq (PGHOST/PGPASSWORD...): a senha nunca vai em argv.
 # O banco alvo é sempre RASTRO_DB, qualquer que seja o caminho da URL.
+# O banco da URL é ignorado de propósito (ADMIN_DB/pdb só existem por causa do bloco copiado do migrate-02).
 ADMIN_DB="$DB"
 if [ -n "${RASTRO_PG_ADMIN_URL:-}" ]; then
   if command -v python3 >/dev/null; then
@@ -116,6 +117,9 @@ SQL
 )" || erro "não foi possível conectar ao banco '$DB'"
 [ "$EXISTE" = "t" ] || erro "tabela $DB.nodes não existe (rode o bootstrap antes)"
 
+if [ -z "${RASTRO_BACKUP_DIR:-}" ] && [ "$AQUI" = "/rastro" ]; then
+  erro "dentro da imagem rastro-pgtools defina RASTRO_BACKUP_DIR com um volume montado (o padrão se perderia com o contêiner)"
+fi
 BACKUP_DIR="${RASTRO_BACKUP_DIR:-$AQUI/../backups}"
 mkdir -p "$BACKUP_DIR"
 ARQUIVO="$BACKUP_DIR/${DB}-pre-04-$(date -u +%Y%m%dT%H%M%SZ).dump"

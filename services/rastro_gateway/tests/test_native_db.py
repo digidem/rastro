@@ -1198,7 +1198,7 @@ def test_migrate_04_grants_iguais_ao_conjunto_canonico():
         g for g in _grants_canonicos(REPO_ROOT / "deploy" / "postgres" / "migrate-04-ambiente.sh")
         if "environment_telemetry" in g[0]
     }
-    # o script também concede leitura ao backup (no canônico isso vem do ALL TABLES)
+    # o script também concede leitura ao backup (nos caminhos canônicos vem de ALL TABLES / ALL SEQUENCES)
     obtido_sem_backup = {g for g in obtido if g[1] != "backup"}
     assert obtido_sem_backup == ref
     assert any(g[1] == "backup" for g in obtido)
