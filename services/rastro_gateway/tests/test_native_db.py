@@ -26,6 +26,7 @@ from psycopg import sql
 from rastro_gateway.ingest.db import Db, PgConfig
 from rastro_gateway.native.model import (
     DecodedEnvelope,
+    EnvironmentFix,
     NodeInfo,
     PositionFix,
     TelemetryFix,
@@ -199,7 +200,7 @@ def db(pg_session):
                     positions, device_telemetry, nodes, raw_envelopes,
                     packet_seen, gateway_status, node_info, chat_messages,
                     chat_outbox, virtual_gateways, boat_devices, node_power,
-                    alert_state
+                    alert_state, environment_telemetry
                 CASCADE
                 """
             )
@@ -1020,6 +1021,179 @@ def test_ingest_role_store_native_node_power(db, db_ingest):
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with db_ingest._pool.connection() as conn:
             conn.execute("SELECT lat_i FROM positions")
+
+
+def _env_ambiente(
+    from_num: int,
+    packet_id: int,
+    time: int,
+    *,
+    temperatura: float | None = 27.5,
+    gateway_num: int = 1001,
+) -> DecodedEnvelope:
+    return DecodedEnvelope(
+        kind="environment",
+        channel="EVU",
+        gateway_id=f"!{gateway_num:08x}",
+        gateway_num=gateway_num,
+        from_num=from_num,
+        packet_id=packet_id,
+        rx_time=time,
+        environment=EnvironmentFix(
+            time=time,
+            time_source="device",
+            temperature_c=temperatura,
+            relative_humidity=82.0,
+            pressure_hpa=None,
+        ),
+        extra={"raw": f"raw-{from_num}-{packet_id}".encode()},
+    )
+
+
+def _linhas_ambiente(db, from_num: int) -> list[tuple]:
+    with db._pool.connection() as conn:
+        return conn.execute(
+            "SELECT temperature_c, relative_humidity, pressure_hpa, time_source"
+            " FROM environment_telemetry WHERE node_num = %s ORDER BY telem_time",
+            (from_num,),
+        ).fetchall()
+
+
+def test_ambiente_grava_cria_no_e_deduplica(db_ingest, db):
+    """store_native real, como rastro_ingest: grava, cria o nó e dedupe por tempo e por pacote."""
+    db_ingest.check_ready()
+    counts = db_ingest.store_native(
+        [
+            _env_ambiente(7300, 701, 1728500000),
+            _env_ambiente(7300, 701, 1728500000, gateway_num=1002),  # mesmo pacote por outro gateway
+            _env_ambiente(7300, 702, 1728500000),  # outro pacote, mesmo telem_time
+            _env_ambiente(7300, 703, 1728500060, temperatura=28.0),
+        ]
+    )
+    assert counts["environment"] == 2
+    assert counts["duplicates"] == 1
+    assert counts["raw"] == 4
+    linhas = _linhas_ambiente(db, 7300)
+    assert [round(l[0], 1) for l in linhas] == [27.5, 28.0]
+    assert linhas[0][1:] == (82.0, None, "device")
+    with db._pool.connection() as conn:
+        assert conn.execute("SELECT node_id FROM nodes WHERE node_num = 7300").fetchone() == ("!00001c84",)
+
+
+def test_ambiente_lote_misto_com_posicao_sem_keyerror(db_ingest, db):
+    counts = db_ingest.store_native(
+        [_env_posicao(7400, 711, 1728500000), _env_ambiente(7401, 712, 1728500000)]
+    )
+    assert counts["positions"] == 1
+    assert counts["environment"] == 1
+
+
+def test_ambiente_papeis_ingest_e_viewer(db, db_ingest, pg_session):
+    db_ingest.store_native([_env_ambiente(7500, 721, 1728500000)])
+    # ingest: não lê os valores, não apaga
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with db_ingest._pool.connection() as conn:
+            conn.execute("SELECT temperature_c FROM environment_telemetry")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        with db_ingest._pool.connection() as conn:
+            conn.execute("DELETE FROM environment_telemetry")
+    # viewer: lê, não insere
+    with psycopg.connect(_conn_de(pg_session, f"{pg_session['dbname']}_viewer", SENHA_VIEWER)) as conn:
+        assert conn.execute("SELECT count(*) FROM environment_telemetry").fetchone()[0] == 1
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(
+                "INSERT INTO environment_telemetry (node_num, telem_time) VALUES (7500, now())"
+            )
+
+
+def _check_ready_com_revogacao(pg_session, revoga_sql: str, regrant_sql: str):
+    admin = (
+        f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} "
+        f"password={pg_session['password']} dbname={pg_session['dbname']} options='-c search_path=rastro,public'"
+    )
+    ingest = f"{pg_session['dbname']}_ingest"
+    cfg = PgConfig(
+        host=pg_session["host"], port=pg_session["port"], dbname=pg_session["dbname"],
+        user=ingest, password=SENHA_INGEST,
+    )
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute(revoga_sql.format(role=ingest))
+    database = Db(cfg)
+    try:
+        with pytest.raises(RuntimeError, match="environment_telemetry"):
+            database.check_ready()
+    finally:
+        database.close()
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(regrant_sql.format(role=ingest))
+
+
+@pytest.mark.parametrize(
+    "revoga,regrant",
+    [
+        ("REVOKE INSERT ON environment_telemetry FROM {role}", "GRANT INSERT ON environment_telemetry TO {role}"),
+        (
+            "REVOKE SELECT (node_num) ON environment_telemetry FROM {role}",
+            "GRANT SELECT (node_num) ON environment_telemetry TO {role}",
+        ),
+        (
+            "REVOKE SELECT (telem_time) ON environment_telemetry FROM {role}",
+            "GRANT SELECT (telem_time) ON environment_telemetry TO {role}",
+        ),
+    ],
+)
+def test_check_ready_exige_privilegios_do_ambiente(pg_session, revoga, regrant):
+    _check_ready_com_revogacao(pg_session, revoga, regrant)
+
+
+def test_check_ready_falha_sem_a_tabela_ambiente(pg_session):
+    admin = (
+        f"host={pg_session['host']} port={pg_session['port']} user={pg_session['user']} "
+        f"password={pg_session['password']} dbname={pg_session['dbname']} options='-c search_path=rastro,public'"
+    )
+    cfg = PgConfig(
+        host=pg_session["host"], port=pg_session["port"], dbname=pg_session["dbname"],
+        user=f"{pg_session['dbname']}_ingest", password=SENHA_INGEST,
+    )
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("ALTER TABLE environment_telemetry RENAME TO environment_telemetry_off")
+    database = Db(cfg)
+    try:
+        with pytest.raises(RuntimeError, match="environment_telemetry não existe"):
+            database.check_ready()
+    finally:
+        database.close()
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute("ALTER TABLE environment_telemetry_off RENAME TO environment_telemetry")
+
+
+def _create_table_ambiente(texto: str) -> str:
+    m = re.search(r"CREATE TABLE IF NOT EXISTS environment_telemetry \(.*?\n\);", texto, re.S)
+    assert m, "CREATE TABLE environment_telemetry não encontrado"
+    return re.sub(r"\s+", " ", m.group(0))
+
+
+def test_migrate_04_ddl_igual_ao_02_native():
+    migrate = (REPO_ROOT / "deploy" / "postgres" / "migrate-04-ambiente.sh").read_text(encoding="utf-8")
+    assert _create_table_ambiente(migrate) == _create_table_ambiente(SCHEMA_02.read_text(encoding="utf-8"))
+    assert "environment_telem_time_brin" in migrate
+
+
+def test_migrate_04_grants_iguais_ao_conjunto_canonico():
+    """Os grants da tabela nova no script dedicado batem com os dos três caminhos canônicos."""
+    ref = {
+        g for g in _grants_canonicos(SCHEMA_02)
+        if "environment_telemetry" in g[0]
+    }
+    assert ref, "nenhum grant de environment_telemetry no 02-native.sql"
+    obtido = {
+        g for g in _grants_canonicos(REPO_ROOT / "deploy" / "postgres" / "migrate-04-ambiente.sh")
+        if "environment_telemetry" in g[0]
+    }
+    # o script também concede leitura ao backup (no canônico isso vem do ALL TABLES)
+    obtido_sem_backup = {g for g in obtido if g[1] != "backup"}
+    assert obtido_sem_backup == ref
+    assert any(g[1] == "backup" for g in obtido)
 
 
 def test_viewer_role_reads_and_inserts_outbox(db, pg_session):

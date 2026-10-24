@@ -173,6 +173,12 @@ WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
 SELECT format('GRANT SELECT (node_num, telem_time) ON %I.device_telemetry TO %I', :'db', :'ingest')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
 
+SELECT format('GRANT INSERT ON %I.environment_telemetry TO %I', :'db', :'ingest')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
+
+SELECT format('GRANT SELECT (node_num, telem_time) ON %I.environment_telemetry TO %I', :'db', :'ingest')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
+
 SELECT format('GRANT SELECT (node_num, node_id, friendly_name, fleet_id) ON %I.nodes TO %I', :'db', :'ingest')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'ingest') \gexec
 
@@ -190,8 +196,14 @@ WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'viewer') \gexec
 SELECT format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.vw_ultima_posicao TO %I', :'db', :'db', :'db', :'db', :'viewer')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'viewer') \gexec
 
+SELECT format('GRANT SELECT ON %I.environment_telemetry TO %I', :'db', :'viewer')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'viewer') \gexec
+
 -- maint: retenção e limpeza (legado + nativo, idêntico ao bootstrap)
 SELECT format('GRANT SELECT, DELETE ON %I.nodes, %I.positions, %I.device_telemetry TO %I', :'db', :'db', :'db', :'maint')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'maint') \gexec
+
+SELECT format('GRANT SELECT, DELETE ON %I.environment_telemetry TO %I', :'db', :'maint')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'maint') \gexec
 
 SELECT format('GRANT SELECT, DELETE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.chat_messages, %I.chat_outbox, %I.virtual_gateways, %I.boat_devices, %I.node_power, %I.alert_state TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'maint')

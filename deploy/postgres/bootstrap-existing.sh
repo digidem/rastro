@@ -263,6 +263,8 @@ SELECT format('GRANT INSERT, SELECT, UPDATE ON %I.virtual_gateways, %I.boat_devi
 SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.boat_devices_id_seq TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT SELECT, UPDATE ON %I.chat_outbox TO %I', :'db', :'ingest') \gexec
 SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.raw_envelopes_id_seq, %I.chat_messages_id_seq TO %I', :'db', :'db', :'ingest') \gexec
+SELECT format('GRANT INSERT ON %I.environment_telemetry TO %I', :'db', :'ingest') \gexec
+SELECT format('GRANT SELECT (node_num, telem_time) ON %I.environment_telemetry TO %I', :'db', :'ingest') \gexec
 \endif
 -- viewer: leitura
 SELECT format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.vw_ultima_posicao TO %I', :'db', :'db', :'db', :'db', :'viewer') \gexec
@@ -270,11 +272,13 @@ SELECT format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.v
 SELECT format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.gateway_status, %I.boat_devices TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'viewer') \gexec
 SELECT format('GRANT INSERT (boat_id, text, created_by, expires_at) ON %I.chat_outbox TO %I', :'db', :'viewer') \gexec
 SELECT format('GRANT USAGE, SELECT ON SEQUENCE %I.chat_outbox_id_seq TO %I', :'db', :'viewer') \gexec
+SELECT format('GRANT SELECT ON %I.environment_telemetry TO %I', :'db', :'viewer') \gexec
 \endif
 -- maint: retenção e limpeza de teste
 SELECT format('GRANT SELECT, DELETE ON %I.nodes, %I.positions, %I.device_telemetry TO %I', :'db', :'db', :'db', :'maint') \gexec
 \if :tem_native
 SELECT format('GRANT SELECT, DELETE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.chat_messages, %I.chat_outbox, %I.virtual_gateways, %I.boat_devices, %I.node_power, %I.alert_state TO %I', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'db', :'maint') \gexec
+SELECT format('GRANT SELECT, DELETE ON %I.environment_telemetry TO %I', :'db', :'maint') \gexec
 \endif
 -- backup: pg_dump do schema (tabelas, view e sequências de identidade)
 SELECT format('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO %I', :'db', :'backup') \gexec

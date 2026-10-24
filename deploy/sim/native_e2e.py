@@ -20,6 +20,8 @@ Verificações (linhas PASS/FAIL, exit != 0 em falha):
  8. outbox publica SÓ para o barco alvo, texto certo ao decifrar, status 'sent'
  9. outbox row com expires_at no passado vira 'expired' sem publicar
 10. logs do ingest/outbox sem PSK (base64/hex) e sem texto de mensagem
+11. environment_metrics de um sensor (from ≠ gateway, fora do inventário de barcos)
+    grava environment_telemetry com o node_num do sensor
 
 NUNCA loga payload, chave/PSK ou texto de mensagem. Coordenadas sintéticas.
 """
@@ -48,7 +50,7 @@ if str(AQUI) not in sys.path:
 
 import native_rig_test  # noqa: E402  (mesmo diretório: reutiliza MqttTestClient)
 
-from meshtastic.protobuf import mesh_pb2, mqtt_pb2  # noqa: E402
+from meshtastic.protobuf import mesh_pb2, mqtt_pb2, telemetry_pb2  # noqa: E402
 from rastro_gateway.native import crypto  # noqa: E402
 
 # --- Constantes do cenário ---------------------------------------------------
@@ -57,6 +59,7 @@ ROOT = "univaja/mesh"
 CANAL = "EVU"
 PORTNUM_TEXTO = 1
 PORTNUM_POSICAO = 3
+PORTNUM_TELEMETRIA = 67
 BROADCAST = 0xFFFFFFFF
 DB = "rastro"
 ESPERA_BD = 30.0
@@ -68,6 +71,8 @@ NOS = {b: f"!a{i:07d}" for i, b in enumerate(BARCOS, start=1)}
 VGWS = {b: f"!f{i:07d}" for i, b in enumerate(BARCOS, start=1)}
 NUM_A = {b: int(NOS[b][1:], 16) for b in BARCOS}
 NUM_VGW = {b: int(VGWS[b][1:], 16) for b in BARCOS}
+# Nó sensor sintético: fora do inventário de barcos, nunca é gateway; seus pacotes sobem pelo uplink de b2
+NUM_SENSOR = 0x5E550001
 
 # Coordenadas sintéticas delimitadas (não são de campo): lat -22.5°±, lon -40.1°±
 LAT = {b: -(22_500_000 + i * 10_000) for i, b in enumerate(BARCOS, start=1)}
@@ -258,6 +263,26 @@ def envelope_posicao(
     ).SerializeToString()
 
 
+def envelope_ambiente(
+    psk: bytes,
+    packet_id: int,
+    from_num: int,
+    gateway_id: str,
+    temperatura: float,
+    umidade: float,
+    pressao: float,
+) -> bytes:
+    """ServiceEnvelope de TELEMETRY (portnum 67) com environment_metrics, `from_num` ≠ gateway."""
+    tel = telemetry_pb2.Telemetry(
+        time=agora(),
+        environment_metrics=telemetry_pb2.EnvironmentMetrics(
+            temperature=temperatura, relative_humidity=umidade, barometric_pressure=pressao
+        ),
+    )
+    mp = _pacote(psk, packet_id, from_num, PORTNUM_TELEMETRIA, tel.SerializeToString())
+    return mqtt_pb2.ServiceEnvelope(packet=mp, channel_id=CANAL, gateway_id=gateway_id).SerializeToString()
+
+
 def envelope_texto(
     psk: bytes,
     packet_id: int,
@@ -363,6 +388,9 @@ def preparar_banco(
             cur.execute("GRANT INSERT ON rastro.positions, rastro.device_telemetry TO rastro_ingest")
             cur.execute("GRANT SELECT (node_num, pos_time) ON rastro.positions TO rastro_ingest")
             cur.execute("GRANT SELECT (node_num, telem_time) ON rastro.device_telemetry TO rastro_ingest")
+            cur.execute("GRANT INSERT ON rastro.environment_telemetry TO rastro_ingest")
+            cur.execute("GRANT SELECT (node_num, telem_time) ON rastro.environment_telemetry TO rastro_ingest")
+            cur.execute("GRANT SELECT ON rastro.environment_telemetry TO rastro_viewer")
             cur.execute("GRANT INSERT ON rastro.nodes TO rastro_ingest")
             cur.execute("GRANT UPDATE (node_id, friendly_name, fleet_id, last_seen, updated_at) ON rastro.nodes TO rastro_ingest")
             cur.execute("GRANT SELECT (node_num, node_id, friendly_name, fleet_id) ON rastro.nodes TO rastro_ingest")
@@ -729,6 +757,30 @@ def main() -> int:
             v.passou("5. texto 'ajuda' grava is_alert=true", ok5, "direction=in")
         except Exception as exc:
             v.passou("5. texto 'ajuda' grava is_alert=true", False, _resumo(exc))
+
+        # --- Checagem 11: leitura ambiental de um sensor (remetente ≠ gateway, fora do inventário)
+        try:
+            p11 = secrets.randbits(32) | 1
+            env11 = envelope_ambiente(psk, p11, NUM_SENSOR, NOS["b2"], 27.5, 82.0, 1009.0)
+            publicar(clientes["b2"], topicos_up["b2"], env11)
+            def _c11():
+                linhas = consultar(
+                    pg,
+                    "SELECT node_num, temperature_c, relative_humidity, pressure_hpa FROM environment_telemetry WHERE node_num = %s",
+                    (NUM_SENSOR,),
+                )
+                return linhas[0] if len(linhas) == 1 else None
+            r11 = esperar("leitura ambiental em environment_telemetry", _c11)
+            ok11 = (
+                r11[0] == NUM_SENSOR
+                and r11[0] != NUM_A["b2"]
+                and abs(r11[1] - 27.5) < 1e-3
+                and abs(r11[2] - 82.0) < 1e-3
+                and abs(r11[3] - 1009.0) < 1e-2
+            )
+            v.passou("11. environment_metrics do sensor (≠ gateway) grava em environment_telemetry", ok11, f"node={r11[0]:#x}")
+        except Exception as exc:
+            v.passou("11. environment_metrics do sensor (≠ gateway) grava em environment_telemetry", False, _resumo(exc))
 
         # --- Checagem 6: restart do ingest no meio do fluxo
         try:

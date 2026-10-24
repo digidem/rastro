@@ -161,6 +161,22 @@ END
 $$;
 REVOKE ALL ON FUNCTION node_activity_summary() FROM PUBLIC;
 
+-- 10c. Leituras ambientais (BME280 do nó sensor): temperatura, umidade, pressão.
+-- Aditivo: tabela nova, nenhuma existente muda. Mesmo CREATE TABLE do
+-- migrate-04-ambiente.sh (teste de paridade em tests/test_native_db.py).
+CREATE TABLE IF NOT EXISTS environment_telemetry (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    node_num          BIGINT NOT NULL REFERENCES nodes(node_num),
+    telem_time        TIMESTAMPTZ NOT NULL,
+    time_source       TEXT NOT NULL DEFAULT 'device' CHECK (time_source IN ('device','gateway')),
+    temperature_c     REAL,
+    relative_humidity REAL,
+    pressure_hpa      REAL,
+    received_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT environment_dedupe UNIQUE (node_num, telem_time)
+);
+CREATE INDEX IF NOT EXISTS environment_telem_time_brin ON environment_telemetry USING brin (telem_time);
+
 -- 11. Grants canônicos (mesmo conjunto dos scripts de deploy — manter idênticos).
 -- Papéis: <db>_ingest / <db>_viewer / <db>_maint / <db>_backup, onde <db> = nome
 -- do banco = nome do schema (convenção do bootstrap-existing.sh). Idempotente e
@@ -195,18 +211,22 @@ BEGIN
         EXECUTE format('GRANT SELECT (node_num, pos_time) ON %I.positions TO %I', esquema, ingest_role);
         EXECUTE format('GRANT EXECUTE ON FUNCTION %I.node_activity_summary() TO %I', esquema, ingest_role);
         EXECUTE format('GRANT SELECT (node_num, telem_time) ON %I.device_telemetry TO %I', esquema, ingest_role);
+        EXECUTE format('GRANT INSERT ON %I.environment_telemetry TO %I', esquema, ingest_role);
+        EXECUTE format('GRANT SELECT (node_num, telem_time) ON %I.environment_telemetry TO %I', esquema, ingest_role);
         EXECUTE format('GRANT SELECT (node_num, node_id, friendly_name, fleet_id) ON %I.nodes TO %I', esquema, ingest_role);
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = viewer_role) THEN
         -- viewer: leitura das tabelas nativas + legado; INSERT limitado no outbox
         EXECUTE format('GRANT SELECT ON %I.chat_messages, %I.chat_outbox, %I.alert_state, %I.virtual_gateways, %I.node_info, %I.node_power, %I.gateway_status, %I.boat_devices TO %I', esquema, esquema, esquema, esquema, esquema, esquema, esquema, esquema, viewer_role);
         EXECUTE format('GRANT SELECT ON %I.nodes, %I.positions, %I.device_telemetry, %I.vw_ultima_posicao TO %I', esquema, esquema, esquema, esquema, viewer_role);
+        EXECUTE format('GRANT SELECT ON %I.environment_telemetry TO %I', esquema, viewer_role);
         EXECUTE format('GRANT INSERT (boat_id, text, created_by, expires_at) ON %I.chat_outbox TO %I', esquema, viewer_role);
         EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %I.chat_outbox_id_seq TO %I', esquema, viewer_role);
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = maint_role) THEN
         -- maint: retenção e limpeza (legado + nativo, idêntico ao bootstrap §8)
         EXECUTE format('GRANT SELECT, DELETE ON %I.nodes, %I.positions, %I.device_telemetry TO %I', esquema, esquema, esquema, maint_role);
+        EXECUTE format('GRANT SELECT, DELETE ON %I.environment_telemetry TO %I', esquema, maint_role);
         EXECUTE format('GRANT SELECT, DELETE ON %I.raw_envelopes, %I.packet_seen, %I.gateway_status, %I.node_info, %I.chat_messages, %I.chat_outbox, %I.virtual_gateways, %I.boat_devices, %I.node_power, %I.alert_state TO %I', esquema, esquema, esquema, esquema, esquema, esquema, esquema, esquema, esquema, esquema, maint_role);
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = backup_role) THEN

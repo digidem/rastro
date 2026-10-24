@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # Kinds que decodificam para dado de domínio (base do dedupe ``packet_seen``):
 # undecryptable/malformed/opaque NUNCA reclamam o (from_num, packet_id) — o
 # pacote opaco pode chegar de novo com PSK válida e aí sim virar domínio.
-_KINDS_DE_DOMINIO = ("position", "telemetry", "nodeinfo", "text")
+_KINDS_DE_DOMINIO = ("position", "telemetry", "environment", "nodeinfo", "text")
 
 # Janela do dedupe entre gateways: ``packet_seen`` mais velho que isso é
 # re-claimado (id reutilizado nunca vira "duplicado eterno") e é o alvo de
@@ -164,10 +164,17 @@ SELECT
          ELSE has_column_privilege('device_telemetry', 'telem_time', 'SELECT') END,
     CASE WHEN to_regclass('nodes') IS NULL THEN false
          ELSE has_column_privilege('nodes', 'node_id', 'UPDATE') END,
+    to_regclass('environment_telemetry') IS NOT NULL,
+    CASE WHEN to_regclass('environment_telemetry') IS NULL THEN false
+         ELSE has_table_privilege('environment_telemetry', 'INSERT') END,
+    CASE WHEN to_regclass('environment_telemetry') IS NULL THEN false
+         ELSE has_column_privilege('environment_telemetry', 'node_num', 'SELECT') END,
+    CASE WHEN to_regclass('environment_telemetry') IS NULL THEN false
+         ELSE has_column_privilege('environment_telemetry', 'telem_time', 'SELECT') END,
     current_schemas(false)::text
 """
 
-# O que cada um dos 9 booleanos acima representa — a ordem TEM que bater com a
+# O que cada um dos booleanos acima representa — a ordem TEM que bater com a
 # do SELECT (é o que aparece no log de boot; ver _CHECK_READY_SQL).
 _CHECK_READY_ITENS = (
     "tabela nodes não existe",
@@ -179,6 +186,10 @@ _CHECK_READY_ITENS = (
     "falta SELECT em positions.pos_time",
     "falta SELECT em device_telemetry.telem_time",
     "falta UPDATE em nodes.node_id",
+    "tabela environment_telemetry não existe (rode migrate-04-ambiente.sh antes de implantar o ingest)",
+    "falta INSERT em environment_telemetry",
+    "falta SELECT em environment_telemetry.node_num",
+    "falta SELECT em environment_telemetry.telem_time",
 )
 
 
@@ -475,6 +486,7 @@ class Db:
             "chat": 0,
             "nodeinfo": 0,
             "telemetry": 0,
+            "environment": 0,
             "own_downlink": 0,
             "poison": 0,
         }
@@ -568,6 +580,7 @@ class Db:
             "chat": 0,
             "nodeinfo": 0,
             "telemetry": 0,
+            "environment": 0,
             "own_downlink": 0,
         }
         # Gateway numérico (do campo explícito ou do ID '!xxxxxxxx')
@@ -873,6 +886,46 @@ class Db:
                     (env.from_num, telem.battery_level, telem.voltage),
                 )
             deltas["telemetry"] += 1
+
+        # (e) Leitura ambiental (BME280 do nó sensor)
+        elif env.kind == "environment" and env.environment is not None and env.from_num is not None:
+            amb = env.environment
+            node_id = f"!{env.from_num:08x}"
+            cur.execute(
+                """
+                INSERT INTO nodes (node_num, node_id, last_seen, updated_at)
+                VALUES (%s, %s, now(), now())
+                ON CONFLICT (node_num) DO UPDATE SET
+                    last_seen = now(),
+                    updated_at = now()
+                """,
+                (env.from_num, node_id),
+            )
+            cur.execute(
+                """
+                INSERT INTO environment_telemetry (
+                    node_num, telem_time, time_source,
+                    temperature_c, relative_humidity, pressure_hpa, received_at
+                ) VALUES (
+                    %s, to_timestamp(%s::double precision), %s,
+                    %s, %s, %s,
+                    CASE WHEN %s::double precision IS NULL THEN now() ELSE to_timestamp(%s::double precision) END
+                )
+                ON CONFLICT (node_num, telem_time) DO NOTHING
+                """,
+                (
+                    env.from_num,
+                    amb.time,
+                    amb.time_source,
+                    amb.temperature_c,
+                    amb.relative_humidity,
+                    amb.pressure_hpa,
+                    env.rx_time,
+                    env.rx_time,
+                ),
+            )
+            if cur.rowcount > 0:
+                deltas["environment"] += 1
 
         return deltas
 
