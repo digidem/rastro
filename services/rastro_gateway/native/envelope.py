@@ -6,6 +6,7 @@ levanta: qualquer entrada de bytes resulta em um `DecodedEnvelope`; erro vira
 """
 from __future__ import annotations
 
+import math
 import os
 import unicodedata
 
@@ -16,6 +17,7 @@ from rastro_gateway.common.records import qualidade_do_firmware
 from rastro_gateway.native import crypto
 from rastro_gateway.native.model import (
     DecodedEnvelope,
+    EnvironmentFix,
     NodeInfo,
     PositionFix,
     TelemetryFix,
@@ -32,6 +34,11 @@ _PORTNUM_TELEMETRIA = 67  # TELEMETRY_APP
 _EPOCH_MINIMO = 1_600_000_000
 _TOLERANCIA_FUTURO_S = 300
 _JANELA_GATEWAY_S = 7 * 24 * 3600
+
+# Faixas físicas das medidas ambientais; fora delas (ou NaN/inf) a medida é descartada.
+_FAIXA_TEMPERATURA_C = (-60.0, 100.0)
+_FAIXA_UMIDADE = (0.0, 100.0)
+_FAIXA_PRESSAO_HPA = (300.0, 1100.0)
 
 # Alerta de ajuda no chat: palavras sem acento, caixa baixa, lidas do ambiente
 # a cada chamada (testes sobrescrevem sem reiniciar o processo).
@@ -195,8 +202,11 @@ def _decodificar_conteudo(
         except DecodeError:
             dec.reason = "payload_invalido"
             return
+        if telemetria.HasField("environment_metrics"):
+            _decodificar_ambiente(dec, telemetria, now)
+            return
         if not telemetria.HasField("device_metrics"):
-            dec.kind = "unhandled"  # design §1: só device_metrics entra no domínio
+            dec.kind = "unhandled"  # design §1: demais variantes não entram no domínio
             return
         metricas = telemetria.device_metrics
         tempo, origem, flag = _resolver_tempo(telemetria.time, dec.rx_time, now)
@@ -214,6 +224,45 @@ def _decodificar_conteudo(
         return
 
     dec.kind = "unhandled"
+
+
+def _decodificar_ambiente(dec: DecodedEnvelope, telemetria: "telemetry_pb2.Telemetry", now: float) -> None:
+    """`environment_metrics` → `EnvironmentFix`; sem nenhuma medida válida fica `unhandled`."""
+    metricas = telemetria.environment_metrics
+    temperatura = _medida_ambiente(metricas, "temperature")
+    umidade = _medida_ambiente(metricas, "relative_humidity")
+    pressao = _medida_ambiente(metricas, "barometric_pressure")
+    # Barramento I2C solto costuma reportar exatamente 0/0/0: no valor BRUTO, antes da
+    # faixa (a pressão 0 sozinha já cairia fora dela e deixaria passar 0 °C / 0 %).
+    if (temperatura, umidade, pressao) == (0.0, 0.0, 0.0):
+        dec.kind = "unhandled"
+        return
+    temperatura = _na_faixa(temperatura, _FAIXA_TEMPERATURA_C)
+    umidade = _na_faixa(umidade, _FAIXA_UMIDADE)
+    pressao = _na_faixa(pressao, _FAIXA_PRESSAO_HPA)
+    if temperatura is None and umidade is None and pressao is None:
+        dec.kind = "unhandled"
+        return
+    tempo, origem, _flag = _resolver_tempo(telemetria.time, dec.rx_time, now)
+    dec.kind = "environment"
+    dec.environment = EnvironmentFix(
+        time=tempo,
+        time_source=origem,
+        temperature_c=temperatura,
+        relative_humidity=umidade,
+        pressure_hpa=pressao,
+    )
+
+
+def _medida_ambiente(metricas: "telemetry_pb2.EnvironmentMetrics", campo: str) -> float | None:
+    """Valor bruto de um campo de EnvironmentMetrics; ausente → None (presença explícita)."""
+    return float(getattr(metricas, campo)) if metricas.HasField(campo) else None
+
+
+def _na_faixa(valor: float | None, faixa: tuple[float, float]) -> float | None:
+    if valor is None or not math.isfinite(valor) or not faixa[0] <= valor <= faixa[1]:
+        return None
+    return valor
 
 
 def _campo_metrica(metricas: "telemetry_pb2.DeviceMetrics", campo: str) -> float | int | None:

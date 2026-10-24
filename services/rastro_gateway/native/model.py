@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# kind: 'position' | 'telemetry' | 'nodeinfo' | 'text' | 'unhandled' | 'opaque' |
-#       'undecryptable' | 'malformed'
+# kind: 'position' | 'telemetry' | 'environment' | 'nodeinfo' | 'text' | 'unhandled' |
+#       'opaque' | 'undecryptable' | 'malformed'
 
 
 @dataclass
@@ -37,6 +37,17 @@ class TelemetryFix:
 
 
 @dataclass
+class EnvironmentFix:
+    """Leitura ambiental (BME280): cada medida é anulável (ausente ou fora da faixa física)."""
+
+    time: int
+    time_source: str
+    temperature_c: float | None = None
+    relative_humidity: float | None = None
+    pressure_hpa: float | None = None
+
+
+@dataclass
 class NodeInfo:
     user_id: str
     long_name: str
@@ -66,6 +77,7 @@ class DecodedEnvelope:
     portnum: int | None = None
     position: PositionFix | None = None
     telemetry: TelemetryFix | None = None
+    environment: EnvironmentFix | None = None
     nodeinfo: NodeInfo | None = None
     text: TextMessage | None = None
     reason: str = ""  # só para malformed/undecryptable; sem conteúdo do payload

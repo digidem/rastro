@@ -187,13 +187,124 @@ def test_telemetria_device_metrics_mapeados() -> None:
     assert t.time_flag is None
 
 
-def test_telemetria_sem_device_metrics_vira_unhandled() -> None:
-    tel = telemetry_pb2.Telemetry(
-        environment_metrics=telemetry_pb2.EnvironmentMetrics(temperature=25.0)
-    )
+def test_telemetria_outras_variantes_viram_unhandled() -> None:
+    tel = telemetry_pb2.Telemetry(power_metrics=telemetry_pb2.PowerMetrics(ch1_voltage=3.3))
     dec = _decodificar(_montar_envelope(mesh_pb2.Data(portnum=67, payload=tel.SerializeToString())))
     assert dec.kind == "unhandled"
     assert dec.telemetry is None
+    assert dec.environment is None
+
+
+# ------------------------------------------------------------------ ambiente
+
+
+def _env_ambiente(tel: telemetry_pb2.Telemetry, **kwargs) -> DecodedEnvelope:
+    return _decodificar(
+        _montar_envelope(mesh_pb2.Data(portnum=67, payload=tel.SerializeToString()), **kwargs)
+    )
+
+
+def test_ambiente_tres_medidas_mapeadas() -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW - 90,
+        environment_metrics=telemetry_pb2.EnvironmentMetrics(
+            temperature=27.35, relative_humidity=82.0, barometric_pressure=1009.4
+        ),
+    )
+    dec = _env_ambiente(tel)
+    assert dec.kind == "environment"
+    assert dec.telemetry is None
+    e = dec.environment
+    assert e is not None
+    assert e.temperature_c == pytest.approx(27.35, abs=1e-4)
+    assert e.relative_humidity == pytest.approx(82.0)
+    assert e.pressure_hpa == pytest.approx(1009.4, abs=1e-2)
+    assert e.time == NOW - 90
+    assert e.time_source == "device"
+    assert dec.from_num == FROM
+
+
+def test_ambiente_so_temperatura_outras_none() -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW - 5, environment_metrics=telemetry_pb2.EnvironmentMetrics(temperature=0.0)
+    )
+    dec = _env_ambiente(tel)
+    # 0 °C isolado é leitura real (presença explícita), não ausência
+    assert dec.kind == "environment"
+    assert dec.environment.temperature_c == 0.0
+    assert dec.environment.relative_humidity is None
+    assert dec.environment.pressure_hpa is None
+
+
+def test_ambiente_zero_zero_zero_barramento_solto_vira_unhandled() -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW - 5,
+        environment_metrics=telemetry_pb2.EnvironmentMetrics(
+            temperature=0.0, relative_humidity=0.0, barometric_pressure=0.0
+        ),
+    )
+    dec = _env_ambiente(tel)
+    assert dec.kind == "unhandled"
+    assert dec.environment is None
+
+
+def test_ambiente_zero_zero_sem_pressao_e_leitura_valida() -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW - 5,
+        environment_metrics=telemetry_pb2.EnvironmentMetrics(temperature=0.0, relative_humidity=0.0),
+    )
+    dec = _env_ambiente(tel)
+    assert dec.kind == "environment"
+    assert dec.environment.temperature_c == 0.0
+    assert dec.environment.relative_humidity == 0.0
+    assert dec.environment.pressure_hpa is None
+
+
+@pytest.mark.parametrize(
+    "campos",
+    [
+        {"temperature": 150.0, "relative_humidity": 130.0, "barometric_pressure": 50.0},
+        {"temperature": float("nan"), "relative_humidity": float("inf"), "barometric_pressure": -3.0},
+    ],
+)
+def test_ambiente_fora_da_faixa_todas_invalidas_vira_unhandled(campos) -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW - 5, environment_metrics=telemetry_pb2.EnvironmentMetrics(**campos)
+    )
+    dec = _env_ambiente(tel)
+    assert dec.kind == "unhandled"
+    assert dec.environment is None
+
+
+def test_ambiente_medida_fora_da_faixa_vira_none_e_as_outras_ficam() -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW - 5,
+        environment_metrics=telemetry_pb2.EnvironmentMetrics(
+            temperature=float("nan"), relative_humidity=64.0, barometric_pressure=1500.0
+        ),
+    )
+    dec = _env_ambiente(tel)
+    assert dec.kind == "environment"
+    assert dec.environment.temperature_c is None
+    assert dec.environment.relative_humidity == pytest.approx(64.0)
+    assert dec.environment.pressure_hpa is None
+
+
+def test_ambiente_relogio_no_futuro_cai_no_fallback_do_gateway() -> None:
+    tel = telemetry_pb2.Telemetry(
+        time=NOW + 3600, environment_metrics=telemetry_pb2.EnvironmentMetrics(temperature=21.0)
+    )
+    dec = _env_ambiente(tel)
+    assert dec.kind == "environment"
+    assert dec.environment.time_source == "gateway"
+    assert dec.environment.time == RX_TIME  # rx_time válido do gateway
+
+
+def test_ambiente_relogio_zero_usa_rx_time() -> None:
+    tel = telemetry_pb2.Telemetry(environment_metrics=telemetry_pb2.EnvironmentMetrics(temperature=21.0))
+    dec = _env_ambiente(tel)
+    assert dec.environment.time_source == "gateway"
+    assert dec.environment.time == RX_TIME
 
 
 def test_telemetria_somente_tensao_ausentes_viram_none() -> None:
