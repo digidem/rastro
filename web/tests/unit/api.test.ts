@@ -661,3 +661,65 @@ describe("track() com qualidade do fix", () => {
     });
   });
 });
+
+describe("environmentLatest()", () => {
+  const feature = (...kv: [string, unknown][]) => ({
+    type: "Feature",
+    geometry: null,
+    properties: props(...kv),
+  });
+
+  it("normaliza as medidas e envia Bearer", async () => {
+    fetchMock.mockResolvedValue(
+      jsonRes({
+        type: "FeatureCollection",
+        features: [
+          feature(
+            ["node_num", 1],
+            ["node", "!00000001"],
+            ["nome", "Sensor 1"],
+            ["temperature_c", 27.5],
+            ["relative_humidity", 82],
+            ["telem_time", "2026-10-24T12:00:00Z"],
+          ),
+          feature(["node_num", 2], ["telem_time", "2026-10-24T12:00:00Z"]),
+          feature(["telem_time", "2026-10-24T12:00:00Z"]), // sem node_num: descartada
+        ],
+      }),
+    );
+    const api = createApiClient({ getToken: () => "tok" });
+    const out = await api.environmentLatest();
+    const [url, init] = ultimaChamada();
+    expect(url).toBe("/api/environment/latest");
+    expect(JSON.stringify(init.headers)).toContain("Bearer tok");
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({
+      nodeNum: 1,
+      nodeId: "!00000001",
+      nome: "Sensor 1",
+      temperaturaC: 27.5,
+      umidade: 82,
+      pressaoHpa: null,
+      telemTime: "2026-10-24T12:00:00Z",
+    });
+    expect(out[1].nodeId).toBe("!00000002");
+    expect(out[1].nome).toBe("!00000002");
+  });
+
+  it("404 (API antiga) devolve lista vazia", async () => {
+    fetchMock.mockResolvedValue(jsonRes({}, 404));
+    expect(await createApiClient({}).environmentLatest()).toEqual([]);
+  });
+
+  it("corpo malformado num 200 falha (o polling mantém as leituras)", async () => {
+    fetchMock.mockResolvedValue(jsonRes({ oi: 1 }));
+    await expect(createApiClient({}).environmentLatest()).rejects.toThrow();
+  });
+
+  it("401 vira ErrTokenInvalid", async () => {
+    fetchMock.mockResolvedValue(jsonRes({}, 401));
+    await expect(
+      createApiClient({}).environmentLatest(),
+    ).rejects.toBeInstanceOf(ErrTokenInvalid);
+  });
+});

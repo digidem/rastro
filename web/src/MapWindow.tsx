@@ -9,6 +9,7 @@ import { NodeInspector } from "./components/viewer/NodeInspector.jsx";
 import { NodeList } from "./components/viewer/NodeList.jsx";
 import { NodeLog } from "./components/viewer/NodeLog.jsx";
 import { ReguaPainel } from "./components/viewer/ReguaPainel.jsx";
+import { SensoresAmbiente } from "./components/viewer/SensoresAmbiente.jsx";
 import { useMap } from "./hooks/useMap.jsx";
 import { useStore } from "./hooks/useStore.jsx";
 import { useViewerNodes } from "./hooks/useViewerNodes.js";
@@ -160,6 +161,8 @@ export const MapWindow: Component = () => {
                         nowMs={nowMs}
                       />
                     </div>
+
+                    <SensoresAmbiente nowMs={nowMs} />
                   </>
                 }
               >

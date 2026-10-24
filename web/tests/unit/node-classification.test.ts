@@ -56,3 +56,22 @@ describe("detecção de barcos (Tarefa 18)", () => {
     );
   });
 });
+
+describe("nó sensor (BME280)", () => {
+  it.each([
+    ["univaja-sensor-1", {}],
+    ["univaja-sensor-1", { kind: "boat" }],
+    ["univaja-sensor-1", { hwModel: "HELTEC_V4" }],
+    ["univaja-sensor-1", { hwModel: "ALGO_NAO_MAPEADO", kind: "boat" }],
+  ])("%s nunca é barco (%o)", (nome, extra) => {
+    const no = n(nome, extra);
+    expect(isBoatNode(no)).toBe(false);
+    expect(nodeKind(no)).not.toBe("boat");
+  });
+
+  it("o ícone do sensor não é a silhueta de barco", () => {
+    expect(
+      nodeSidebarSvgUrl(n("univaja-sensor-1", { kind: "boat" })),
+    ).not.toMatch(/boat|barco/i);
+  });
+});

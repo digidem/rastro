@@ -1,5 +1,10 @@
 import { type Loc, credenciaisPermitidas } from "../lib/credenciais.js";
-import type { NodeAlert, NodeInfo, NodeKind } from "../store.js";
+import type {
+  LeituraAmbiente,
+  NodeAlert,
+  NodeInfo,
+  NodeKind,
+} from "../store.js";
 
 /** Token ausente/rejeitado (HTTP 401) — a UI deve pedir o token de novo. */
 export class ErrTokenInvalid extends Error {
@@ -104,6 +109,8 @@ export interface ApiClient {
   }>;
   /** Registros do nó (posição, telemetria, mensagem), mais novos primeiro. */
   events(node: string, query?: NodeEventsQuery): Promise<NodeEventsPage>;
+  /** Leitura ambiental mais recente de cada sensor (GET /api/environment/latest); API sem a rota → []. */
+  environmentLatest(): Promise<LeituraAmbiente[]>;
   ping(): Promise<boolean>;
   /** Estado de autenticação público (cookie/token ainda não enviado). */
   authEstado(): Promise<AuthEstado>;
@@ -246,6 +253,29 @@ const alertFromRaw = (o: Record<string, unknown>): NodeAlert | null => {
       typeof o.details === "object" && o.details !== null
         ? (o.details as Record<string, unknown>)
         : null,
+  };
+};
+
+/** Leitura ambiental crua (propriedades da feature, snake_case); sem node_num ou horário → null. */
+const ambienteFromFeature = (f: ApiFeature): LeituraAmbiente | null => {
+  const p = f.properties;
+  if (p === null || p === undefined) {
+    return null;
+  }
+  const nodeNum = num(p.node_num);
+  const telemTime = str(p.telem_time);
+  if (nodeNum === null || telemTime === null) {
+    return null;
+  }
+  const nodeId = str(p.node) ?? `!${nodeNum.toString(16).padStart(8, "0")}`;
+  return {
+    nodeNum,
+    nodeId,
+    nome: str(p.nome) ?? nodeId,
+    temperaturaC: num(p.temperature_c),
+    umidade: num(p.relative_humidity),
+    pressaoHpa: num(p.pressure_hpa),
+    telemTime,
   };
 };
 
@@ -431,6 +461,29 @@ export function createApiClient(opts: ApiClientOptions = {}): ApiClient {
           if (a !== null) {
             out.push(a);
           }
+        }
+      }
+      return out;
+    },
+
+    async environmentLatest() {
+      const res = await request("/api/environment/latest", opts.getToken?.());
+      if (res.status === 404) {
+        // API antiga sem a rota: zero sensores.
+        return [];
+      }
+      if (!res.ok) {
+        throw new Error(`/api/environment/latest: ${res.status}`);
+      }
+      const fc = (await res.json().catch(() => null)) as ApiFc | null;
+      if (fc === null || !Array.isArray(fc.features)) {
+        throw new Error("/api/environment/latest: corpo inesperado");
+      }
+      const out: LeituraAmbiente[] = [];
+      for (const f of fc.features) {
+        const l = ambienteFromFeature(f);
+        if (l !== null) {
+          out.push(l);
         }
       }
       return out;

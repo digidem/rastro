@@ -11,14 +11,20 @@ import { LocalState } from "../../src/store.js";
 
 // O DataProvider importa "./api.js"; mockamos o módulo inteiro para
 // controlar o que createApiClient().latest() devolve, sem rede.
-const { latestMock } = vi.hoisted(() => ({ latestMock: vi.fn() }));
+const { latestMock, ambienteMock } = vi.hoisted(() => ({
+  latestMock: vi.fn(),
+  ambienteMock: vi.fn(),
+}));
 
 vi.mock("../../src/providers/api.js", () => ({
   // biome-ignore lint/style/useNamingConvention: nomes devem casar com os exports originais
   ErrTokenInvalid: class ErrTokenInvalid extends Error {},
   // biome-ignore lint/style/useNamingConvention: nomes devem casar com os exports originais
   ErrOffline: class ErrOffline extends Error {},
-  createApiClient: () => ({ latest: latestMock }),
+  createApiClient: () => ({
+    latest: latestMock,
+    environmentLatest: ambienteMock,
+  }),
 }));
 
 // Intervalo curto para fake timers; VITE_API_POLL_SECS não entra nos testes.
@@ -64,6 +70,8 @@ const montar = () =>
 
 beforeEach(() => {
   latestMock.mockReset();
+  ambienteMock.mockReset();
+  ambienteMock.mockResolvedValue([]);
   vi.useFakeTimers();
   // Sessão "logada" de partida, como após o entrar() bem-sucedido.
   LocalState.setAuth("ok");
@@ -141,5 +149,48 @@ describe("DataProvider — sessão trocou durante o fetch", () => {
     expect(LocalState.localState.auth).toBe("ok");
     await vi.advanceTimersByTimeAsync(POLL_MS * 2);
     expect(latestMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DataProvider — leituras ambientais", () => {
+  const leitura = {
+    nodeNum: 9,
+    nodeId: "!00000009",
+    nome: "Sensor",
+    temperaturaC: 25,
+    umidade: 70,
+    pressaoHpa: 1010,
+    telemTime: "2026-10-24T12:00:00Z",
+  };
+
+  it("grava no store no mesmo tick do latest", async () => {
+    latestMock.mockResolvedValue([no(7)]);
+    ambienteMock.mockResolvedValue([leitura]);
+    montar();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(LocalState.localState.ambiente[9]?.temperaturaC).toBe(25);
+  });
+
+  it("erro transitório mantém as leituras anteriores", async () => {
+    latestMock.mockResolvedValue([no(7)]);
+    ambienteMock
+      .mockResolvedValueOnce([leitura])
+      .mockRejectedValue(new Error("x"));
+    montar();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(POLL_MS);
+    expect(LocalState.localState.ambiente[9]).toBeDefined();
+  });
+
+  it("resposta atrasada de sessão antiga (logout) não reintroduz leituras", async () => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    latestMock.mockResolvedValue([no(7)]);
+    ambienteMock.mockReturnValue(promise);
+    montar();
+    await vi.advanceTimersByTimeAsync(0);
+    dados().clearSessionData();
+    resolve([leitura]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(LocalState.localState.ambiente).toEqual({});
   });
 });

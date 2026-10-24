@@ -95,7 +95,7 @@ export function isBoatNode(node: NodeInfo): boolean {
   return nome.includes("barco");
 }
 
-const NAO_BARCO_RE = /movel|handheld|cartao|teto|base|torre|fixo|t1000/;
+const NAO_BARCO_RE = /movel|handheld|cartao|teto|base|torre|fixo|t1000|sensor/;
 
 /** Infere kind pelo nome quando o backend não informa um explícito. */
 function inferKindFromName(nome?: string): NodeKind | null {

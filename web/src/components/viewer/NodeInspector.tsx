@@ -26,6 +26,7 @@ import {
 } from "../../lib/nodes.js";
 import type { NodeAlertType, NodeInfo, NodeKind } from "../../store.js";
 import { Switch } from "../ui/switch.jsx";
+import { LeituraAmbienteLinha } from "./LeituraAmbienteLinha.jsx";
 
 const ROTULO_CATEGORIA = new Map<NodeKind, string>([
   ["boat", "Barco"],
@@ -283,6 +284,19 @@ export const NodeInspector: Component<NodeInspectorProps> = (props) => {
                 </Show>
               </div>
             </div>
+
+            {/* Ambiente (BME280), quando o nó reporta */}
+            <Show when={localState.ambiente[node().nodeNum]}>
+              {(leitura) => (
+                <div class="flex items-center gap-2 text-xs px-1">
+                  <span class="text-slate-400 text-[11px]">Ambiente</span>
+                  <LeituraAmbienteLinha
+                    leitura={leitura()}
+                    nowMs={props.nowMs()}
+                  />
+                </div>
+              )}
+            </Show>
 
             {/* Frescor & Timestamp */}
             <div class="flex items-center justify-between text-xs px-1 text-slate-400">

@@ -35,6 +35,18 @@ export interface NodeAlert {
   details: Record<string, unknown> | null;
 }
 
+/** Última leitura ambiental de um nó (GET /api/environment/latest). */
+export interface LeituraAmbiente {
+  nodeNum: number;
+  nodeId: string;
+  nome: string;
+  temperaturaC: number | null;
+  umidade: number | null;
+  pressaoHpa: number | null;
+  /** Horário da leitura (ISO 8601 UTC). */
+  telemTime: string;
+}
+
 /** Nó visto pela última rodada de /api/nodes/latest. */
 export interface NodeInfo {
   nodeNum: number;
@@ -104,6 +116,8 @@ interface LocalState {
   nodes: Record<number, NodeInfo>;
   /** Alertas ativos por nodeNum (GET /api/alerts, polling do DataProvider). */
   alerts: Record<number, NodeAlert[]>;
+  /** Leitura ambiental mais recente por nodeNum (polling do DataProvider). */
+  ambiente: Record<number, LeituraAmbiente>;
   movimento: Record<number, Movimento>;
   selected: number | null;
   /** Busca textual: nome, nome curto, nodeId ou hex do nodeNum. */
@@ -187,6 +201,7 @@ const carregarBasemapPadrao = (): BasemapMode => {
 const [localState, setLocalState] = createStore<LocalState>({
   nodes: {},
   alerts: {},
+  ambiente: {},
   movimento: {},
   selected: null,
   query: "",
@@ -233,6 +248,14 @@ const setAlerts = (list: NodeAlert[]) => {
     }
   }
   setLocalState("alerts", reconcile(mapa));
+};
+
+/** Substitui as leituras ambientais por nodeNum (reconcile remove os sensores que sumiram). */
+const setAmbiente = (list: LeituraAmbiente[]) => {
+  setLocalState(
+    "ambiente",
+    reconcile(Object.fromEntries(list.map((l) => [l.nodeNum, l]))),
+  );
 };
 
 const select = (nodeNum: number | null) => setLocalState("selected", nodeNum);
@@ -293,6 +316,7 @@ const resetViewerState = () => {
   setLocalState("hasAlertUnread", false);
   setLocalState("showInactive", false);
   setLocalState("alerts", reconcile({}));
+  setLocalState("ambiente", reconcile({}));
   setLocalState("movimento", reconcile({})); // estado de parada da sessão velha não vaza
   setLocalState("trilhaCarregada", false);
   desativarRegua();
@@ -399,6 +423,7 @@ export const LocalState = {
   localState,
   setNodes,
   setAlerts,
+  setAmbiente,
   select,
   setNodeBearing,
   setNodeMovimento,
