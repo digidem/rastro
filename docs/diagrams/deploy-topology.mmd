@@ -1,0 +1,41 @@
+flowchart TB
+  subgraph prod["Production — CapRover"]
+    subgraph apps["Apps (one container each)"]
+      web["rastro — web<br/>communityfirst/rastro-web"]
+      api["rastro-api<br/>communityfirst/rastro-api"]
+      brk["rastro-broker<br/>Mosquitto 2 — own image"]
+      ing["rastro-ingest<br/>communityfirst/rastro-ingest"]
+      chat["rastro-chat<br/>communityfirst/rastro-chat"]
+    end
+    pgshared[("Shared PostgreSQL<br/>srv-captain--postgres<br/>database rastro, schema rastro")]
+    vols["Volumes<br/>rastro-pki · rastro-pgconn ·<br/>rastro-tiles · rastro-broker-data"]
+  end
+
+  subgraph pi["Base — Pi"]
+    gwsys["systemd rastro-gateway.service<br/>serial bridge → MQTT"]
+    bkpsys["systemd rastro-backup.timer<br/>daily pg_dump 03:30"]
+  end
+
+  subgraph lab["Lab / simulation"]
+    comp["deploy/docker-compose.yml<br/>postgres 17 + mosquitto + caddy"]
+    sim["deploy/sim<br/>nginx TLS + WebSocket rig"]
+  end
+
+  browsers["Monitors — browsers"]
+  boats["Boat radios<br/>native nodes !hex"]
+
+  browsers -->|"HTTPS 443"| web
+  boats -->|"MQTT TLS 8883 direct / WSS 443 via nginx"| brk
+  web --> api
+  api --> pgshared
+  ing --> pgshared
+  chat --> pgshared
+  ing -->|"internal MQTT"| brk
+  chat -->|"internal MQTT"| brk
+  brk ---|"rastro-pki · rastro-broker-data"| vols
+  api ---|"rastro-pgconn"| vols
+  ing ---|"rastro-pki · rastro-pgconn"| vols
+  chat ---|"rastro-pki · rastro-pgconn"| vols
+  web ---|"rastro-tiles · rastro-pki"| vols
+  gwsys -->|"443 WSS via nginx / 8883 direct"| brk
+  bkpsys -->|"pg_dump"| pgshared

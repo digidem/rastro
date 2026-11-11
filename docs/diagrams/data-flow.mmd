@@ -1,0 +1,40 @@
+flowchart LR
+  subgraph field["Field — Meshtastic LoRa mesh"]
+    sensor["BME280 sensor node<br/>univaja-sensor-N"]
+    boat["Boat radio<br/>native node !hex"]
+    baseradio["Base radio<br/>USB serial"]
+  end
+
+  subgraph base["Base — Pi"]
+    gw["rastro_gateway<br/>on-disk spool + watermark<br/>at-least-once"]
+  end
+
+  subgraph server["Server — CapRover"]
+    ngx["nginx TLS<br/>443 WSS"]
+    brk["rastro-broker<br/>Mosquitto 2 + per-node ACL"]
+    ing["rastro-ingest<br/>transactional batches + dedupe"]
+    pg[("PostgreSQL<br/>database rastro")]
+    api["rastro-api<br/>FastAPI read-only"]
+    chat["rastro-chat<br/>drains chat_outbox"]
+    web["rastro web<br/>SolidJS + MapLibre"]
+  end
+
+  monitor["Monitor — browser"]
+  ext1["api.open-meteo.com"]
+  ext2["tile.openstreetmap.org"]
+
+  sensor -->|"LoRa"| boat
+  baseradio -->|"serial"| gw
+  gw -->|"MQTT v5 — WSS 443"| ngx
+  boat -->|"MQTT v5 — TLS 8883 (direct)"| brk
+  ngx -->|"listener 9001, non-TLS"| brk
+  brk -->|"subscribes; ack only after commit"| ing
+  ing --> pg
+  chat -->|"poll chat_outbox"| pg
+  chat -->|"publishes to boat topics"| brk
+  api -->|"queries"| pg
+  monitor -->|"HTTPS"| web
+  web -->|"/api"| api
+  api -.->|"weather: reads position, writes chat_outbox"| pg
+  api -.->|"forecast"| ext1
+  api -.->|"tile proxy with cache"| ext2
